@@ -1,54 +1,229 @@
 <script setup>
-import { provide, ref } from 'vue';
-import { FileMusic, AudioLines, History, Download, SkipBack, SkipForward, Play, Pause, Square, Repeat2, Volume2, Drum, LocateFixed } from '@lucide/vue';
+import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue';
+import { FileMusic, FilePlus2, FolderOpen, X, AudioLines, History, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Repeat2, Volume2, Info, LocateFixed } from '@lucide/vue';
 import { useStudio, formatTime } from './useStudio.js';
+import { SONG_FIELDS } from './metadata.js';
+import productIcon from './assets/icon.png';
 import TimelineEditor from './TimelineEditor.vue';
 import MeasureEditor from './MeasureEditor.vue';
 
 const studio = useStudio();
 provide('studio', studio);
-const { state, controls, range } = studio;
-const chartFile = ref(null), audioFile = ref(null);
+const { state, controls, range, duration } = studio;
+const chartFile = ref(null), audioFile = ref(null), mediaFolder = ref(null);
+const metadataDialog = ref(null), metadataDraft = ref({}), metadataError = ref('');
+const loopDraft = ref(['1', '1']), loopEditing = ref(false), loopDirty = ref(false);
+function resetLoopDraft() {
+  loopEditing.value = false; loopDirty.value = false; loopDraft.value = range.value.map(String);
+}
+watch(() => [state.activeId, ...range.value], (value, previous) => {
+  if (!loopEditing.value || value[0] !== previous?.[0]) resetLoopDraft();
+}, { immediate: true });
+function applyLoopDraft() {
+  studio.setLoop(...loopDraft.value.map(Number)); resetLoopDraft();
+}
+function finishLoopEdit(event) {
+  if (loopEditing.value && !event.currentTarget.contains(event.relatedTarget)) {
+    if (loopDirty.value) applyLoopDraft(); else resetLoopDraft();
+  }
+}
+function openMetadata() {
+  metadataDraft.value = { ...studio.metadata.value }; metadataError.value = '';
+  metadataDialog.value.showModal();
+}
+function applyMetadata() {
+  if (!studio.setMetadata(metadataDraft.value)) { metadataError.value = state.notice; return false; }
+  metadataDialog.value.close(); return true;
+}
+function metadataKeydown(event) {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
+    event.preventDefault(); event.stopPropagation();
+    if (!event.repeat && applyMetadata()) void studio.saveChart(event.shiftKey);
+  }
+}
+const tabsViewport = ref(null), tabsContent = ref(null), tabsWidth = ref(0), tabsScrollWidth = ref(0), tabsScrollLeft = ref(0), scrollbarDrag = ref(null);
+const tabsScrollMax = computed(() => Math.max(0, tabsScrollWidth.value - tabsWidth.value));
+const scrollbarThumb = computed(() => {
+  const width = Math.min(tabsWidth.value, Math.max(24, tabsWidth.value * tabsWidth.value / (tabsScrollWidth.value || 1)));
+  return { width: `${width}px`, transform: `translateX(${tabsScrollMax.value ? tabsScrollLeft.value / tabsScrollMax.value * (tabsWidth.value - width) : 0}px)` };
+});
+let tabsObserver;
+function measureTabs() {
+  const viewport = tabsViewport.value;
+  tabsWidth.value = viewport.clientWidth; tabsScrollWidth.value = viewport.scrollWidth; tabsScrollLeft.value = viewport.scrollLeft;
+}
+function scrollTabsBy(distance) {
+  tabsViewport.value.scrollLeft = Math.max(0, Math.min(tabsScrollMax.value, tabsViewport.value.scrollLeft + distance));
+  measureTabs();
+}
+function wheelTabs(event) {
+  if (event.ctrlKey || !tabsScrollMax.value) return;
+  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+  if (!delta) return;
+  event.preventDefault();
+  scrollTabsBy(delta * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? tabsWidth.value : 1));
+}
+function moveScrollbar(event) {
+  if (scrollbarDrag.value?.pointerId !== event.pointerId) return;
+  const track = event.currentTarget, thumbWidth = Number.parseFloat(scrollbarThumb.value.width), travel = track.clientWidth - thumbWidth;
+  if (travel <= 0) return;
+  const left = event.clientX - track.getBoundingClientRect().left - scrollbarDrag.value.offset;
+  tabsViewport.value.scrollLeft = Math.max(0, Math.min(1, left / travel)) * tabsScrollMax.value;
+  measureTabs();
+}
+function startScrollbar(event) {
+  if (event.button !== 0 || !event.isPrimary) return;
+  event.preventDefault();
+  const track = event.currentTarget, thumbWidth = Number.parseFloat(scrollbarThumb.value.width);
+  const thumbLeft = tabsScrollMax.value ? tabsScrollLeft.value / tabsScrollMax.value * (track.clientWidth - thumbWidth) : 0;
+  scrollbarDrag.value = { pointerId: event.pointerId, offset: event.target === track ? thumbWidth / 2 : event.clientX - track.getBoundingClientRect().left - thumbLeft };
+  track.setPointerCapture(event.pointerId); moveScrollbar(event);
+}
+function stopScrollbar(event) {
+  if (scrollbarDrag.value?.pointerId === event.pointerId) scrollbarDrag.value = null;
+}
+function keydownScrollbar(event) {
+  const distances = { ArrowLeft: -40, ArrowRight: 40, PageUp: -tabsWidth.value, PageDown: tabsWidth.value, Home: -tabsScrollMax.value, End: tabsScrollMax.value };
+  if (!(event.key in distances)) return;
+  event.preventDefault(); event.stopPropagation(); scrollTabsBy(distances[event.key]);
+}
+onMounted(() => {
+  tabsObserver = new ResizeObserver(measureTabs);
+  tabsObserver.observe(tabsViewport.value); tabsObserver.observe(tabsContent.value); measureTabs();
+});
+onUnmounted(() => tabsObserver.disconnect());
+function chooseCharts() {
+  if (typeof window.showOpenFilePicker === 'function') void studio.openCharts();
+  else chartFile.value.click();
+}
+function chooseMediaFolder() {
+  if (typeof window.showDirectoryPicker === 'function') void studio.chooseMediaDirectory();
+  else mediaFolder.value.click();
+}
+async function openMediaFolder(event) {
+  await studio.setMediaFiles([...event.target.files]);
+  event.target.value = '';
+}
 async function openFile(event, audio = false) {
-  const file = event.target.files[0];
-  if (audio) await studio.openAudio(file); else await studio.openChart(file);
+  const files = [...event.target.files];
+  if (audio) await studio.openAudio(files[0]); else for (const file of files) await studio.openChart(file);
   event.target.value = '';
 }
 </script>
 
 <template>
   <header>
-    <div class="brand"><span class="brand-mark">波</span><div>TJA <strong>WAVE STUDIO</strong><small>谱面工作台</small></div></div>
-    <div class="file-actions"><button id="open-chart" title="打开谱面" aria-label="打开谱面" @click="chartFile.click()"><FileMusic /><span>打开谱面</span></button><button id="open-audio" title="载入音频" aria-label="载入音频" @click="audioFile.click()"><AudioLines /><span>载入音频</span></button><button id="restore" title="恢复本地草稿" aria-label="恢复本地草稿" @click="studio.restore"><History /></button><button id="export" class="primary" title="导出 TJA" aria-label="导出 TJA" :disabled="!state.chart || state.invalid" @click="studio.exportChart"><Download /><span>导出 TJA</span></button></div>
+    <div class="brand"><img class="product-icon" :src="productIcon" alt="" width="36" height="36"><div><strong>Web TJA Studio</strong><small>谱面编辑器</small></div></div>
+    <div class="file-actions"><button id="new-chart" title="新建谱面" aria-label="新建谱面" @click="studio.newChart"><FilePlus2 /><span>新建</span></button><button id="open-chart" title="打开谱面" aria-label="打开谱面" @click="chooseCharts"><FileMusic /><span>打开谱面</span></button><button id="media-directory" :title="state.mediaDirectoryName ? `已关联：${state.mediaDirectoryName}` : '授权谱面所在文件夹，自动匹配 WAVE 音频'" aria-label="关联音频文件夹" @click="chooseMediaFolder"><FolderOpen /><span>关联音频文件夹</span></button><button id="open-audio" title="载入音频" aria-label="载入音频" :disabled="!state.chart" @click="audioFile.click()"><AudioLines /><span>载入音频</span></button><button id="restore" title="恢复本地草稿" aria-label="恢复本地草稿" @click="studio.restore"><History /></button><button id="save" class="primary" title="保存（Ctrl+S）" aria-label="保存" :disabled="!state.chart || state.saving" @click="studio.saveChart()"><Save /><span>保存</span></button><button id="save-as" title="另存为（Ctrl+Shift+S）" aria-label="另存为" :disabled="!state.chart || state.saving" @click="studio.saveAs"><FilePenLine /><span>另存为</span></button></div>
   </header>
-  <input id="chart-file" ref="chartFile" type="file" accept=".tja" hidden @change="openFile($event)"><input id="audio-file" ref="audioFile" type="file" accept="audio/*,.mp3,.ogg,.wav" hidden @change="openFile($event, true)">
+  <input id="chart-file" ref="chartFile" type="file" accept=".tja" multiple hidden @change="openFile($event)"><input id="audio-file" ref="audioFile" type="file" accept="audio/*,.mp3,.ogg,.wav" hidden @change="openFile($event, true)">
+  <input id="media-folder" ref="mediaFolder" type="file" webkitdirectory hidden @change="openMediaFolder">
+  <dialog ref="metadataDialog" class="metadata-dialog" aria-labelledby="metadata-heading" @keydown="metadataKeydown">
+    <form novalidate @submit.prevent="applyMetadata">
+      <div class="metadata-heading"><h2 id="metadata-heading">歌曲信息</h2><button type="button" class="icon" aria-label="关闭歌曲信息" @click="metadataDialog.close()"><X /></button></div>
+      <p>修改歌曲的 TJA 元数据，应用后支持撤销。更改 WAVE 会重新匹配音频。</p>
+      <div class="metadata-grid">
+        <label v-for="field in SONG_FIELDS" :key="field.key" :class="{ wide: field.key === 'WAVE' }">{{ field.label }}<input :id="`metadata-${field.key.toLowerCase()}`" v-model="metadataDraft[field.key]" :type="field.numeric ? 'number' : 'text'" :step="field.numeric ? 'any' : undefined" :aria-label="field.label" autocomplete="off"></label>
+      </div>
+      <p v-if="metadataError" class="metadata-error" role="alert">{{ metadataError }}</p>
+      <div class="metadata-actions"><button type="button" @click="metadataDialog.close()">取消</button><button type="submit" class="primary">应用歌曲信息</button></div>
+    </form>
+  </dialog>
   <main>
-    <section class="song-heading"><div><div class="eyebrow">CHART SESSION <span id="encoding">{{ state.encoding }}</span></div><h1 id="song-title">{{ state.chart?.title || 'TJA WAVE STUDIO' }}</h1><p id="audio-name">{{ state.audioName }}</p></div><div class="song-meta">
-      <label>难度<select id="course" :value="state.course" :disabled="!state.chart || state.invalid" @change="studio.changeCourse(Number($event.target.value))"><option v-for="(course, index) in state.chart?.courses || []" :key="index" :value="index">{{ course }}</option></select></label>
-      <label>基础 BPM<input id="base-bpm" type="number" min="0.001" step="any" aria-label="基础 BPM" :value="state.chart?.baseBpm" :disabled="!state.chart || state.invalid" @change="studio.setBpm(Number($event.target.value)); $event.target.value = state.chart.baseBpm"></label>
-      <label>偏移 / s<input id="offset" type="number" step="0.001" :value="state.chart?.offset" :disabled="!state.chart || state.invalid" @change="studio.setOffset(Number($event.target.value)); $event.target.value = state.chart.offset"></label>
-      <div><span>小节数</span><strong id="bar-count">{{ state.chart?.bars.length || '—' }}</strong></div>
-    </div></section>
+    <section class="studio-panel" aria-label="谱面编辑器">
+    <nav class="chart-tabs" :class="{ dragging: scrollbarDrag }" aria-label="已打开谱面" @wheel="wheelTabs">
+      <div id="chart-tabs-viewport" ref="tabsViewport" class="chart-tabs-viewport" @scroll="measureTabs">
+        <div ref="tabsContent" class="chart-tabs-content">
+          <div v-for="document in state.documents" :key="document.id" class="chart-tab" :class="{ active: document.id === state.activeId }">
+            <button :aria-current="document.id === state.activeId ? 'page' : undefined" @click="studio.switchChart(document.id)">{{ document.id === state.activeId ? state.filename : document.filename }}<span v-if="document.id === state.activeId ? state.dirty || state.invalid : document.dirty || document.invalid" aria-label="未保存">*</span></button>
+            <button class="icon" :aria-label="`关闭 ${document.id === state.activeId ? state.filename : document.filename}`" title="关闭谱面" :disabled="document.saving" @click="studio.closeChart(document.id)"><X /></button>
+          </div>
+          <span v-if="!state.documents.length" class="empty-session">尚未打开谱面，选择“新建”或“打开谱面”开始。</span>
+        </div>
+      </div>
+      <div v-if="tabsScrollMax > 0" class="chart-tabs-scrollbar" role="scrollbar" tabindex="0" aria-label="谱面标签横向滚动" aria-orientation="horizontal" aria-controls="chart-tabs-viewport" :aria-valuemin="0" :aria-valuemax="tabsScrollMax" :aria-valuenow="Math.round(tabsScrollLeft)" @pointerdown="startScrollbar" @pointermove="moveScrollbar" @pointerup="stopScrollbar" @pointercancel="stopScrollbar" @lostpointercapture="stopScrollbar" @keydown="keydownScrollbar"><span class="chart-tabs-thumb" :style="scrollbarThumb"></span></div>
+    </nav>
+    <div class="studio-panel-body">
+    <section class="document-toolbar">
+      <h1 id="song-title" :title="state.chart?.title">{{ state.chart?.title || 'Web TJA Studio' }}</h1>
+      <button id="song-metadata" :disabled="!state.chart || state.invalid" @click="openMetadata"><Info />歌曲信息</button>
+      <label class="course-control">难度<select id="course" :value="state.course" :disabled="!state.chart || state.invalid" @change="studio.changeCourse(Number($event.target.value))"><option v-for="(course, index) in state.chart?.courses || []" :key="index" :value="index">{{ course }}</option></select></label>
+      <span class="bar-count"><b id="bar-count">{{ state.chart?.bars.length || '—' }}</b> 小节</span>
+      <label v-if="state.chart" class="filename-control">文件名<input id="chart-name" aria-label="谱面文件名" :value="state.filename" :disabled="state.saving" @change="studio.renameChart($event.target.value); $event.target.value = state.filename"></label>
+      <span id="encoding">{{ state.encoding }}</span><span class="document-status">{{ state.saving ? '保存中…' : state.fileHandle ? '已关联文件' : '未关联文件' }} · 撤销 {{ state.undo.length }}/50 · 重做 {{ state.redo.length }}</span>
+    </section>
     <div id="notice" role="status" aria-live="polite" :class="{ error: state.error }">{{ state.notice }}</div>
     <section class="transport"><div class="transport-left">
       <button id="previous" class="icon" title="上一小节" aria-label="上一小节" :disabled="!state.chart" @click="studio.select(state.selected - 1)"><SkipBack /></button>
-      <button id="play" class="play icon" title="播放 / 暂停（空格）" :aria-label="state.playing ? '暂停' : '播放'" :disabled="!state.buffer" @click="state.playing ? studio.pause() : studio.play()"><Pause v-if="state.playing" /><Play v-else /></button>
+      <button id="play" class="play icon" title="播放 / 暂停（空格）" :aria-label="state.playing ? '暂停' : '播放'" :disabled="!state.chart" @click="state.playing ? studio.pause() : studio.play()"><Pause v-if="state.playing" /><Play v-else /></button>
       <button id="stop" class="icon" title="停止" aria-label="停止" :disabled="!state.chart" @click="studio.stop"><Square /></button>
       <button id="next" class="icon" title="下一小节" aria-label="下一小节" :disabled="!state.chart" @click="studio.select(state.selected + 1)"><SkipForward /></button>
-      <div class="time"><b id="time">{{ formatTime(state.position) }}</b><span id="duration">/ {{ formatTime(state.buffer?.duration || 0) }}</span></div>
+      <div class="time"><b id="time">{{ formatTime(state.position) }}</b><span id="duration">/ {{ formatTime(duration) }}</span></div>
     </div><div class="transport-right">
-      <label class="check"><input id="loop" v-model="controls.loop" type="checkbox"><Repeat2 />范围循环</label><label class="check"><input id="hits" v-model="controls.hits" type="checkbox">音符音</label>
       <label>速度<select id="rate" v-model.number="controls.rate"><option :value="0.5">0.5×</option><option :value="0.75">0.75×</option><option :value="1">1.0×</option><option :value="1.25">1.25×</option></select></label>
-      <label class="volume"><Volume2 /><input id="volume" v-model.number="controls.volume" aria-label="音乐音量" title="原曲音量" type="range" min="0" max="100"></label>
+      <details class="volume-popover">
+        <summary :title="state.audioName"><Volume2 />音量</summary>
+        <div class="volume-panel">
+          <label for="volume">音乐音量<input id="volume" v-model.number="controls.volume" aria-label="音乐音量" type="range" min="0" max="100"><output for="volume">{{ controls.volume }}%</output></label>
+          <label for="hit-volume">咚咔音量<input id="hit-volume" v-model.number="controls.hitVolume" aria-label="咚咔音量" type="range" min="0" max="300"><output id="hit-level" for="hit-volume">{{ controls.hitVolume }}%</output></label>
+          <label class="check"><input id="hits" v-model="controls.hits" type="checkbox">播放音符音</label>
+          <p id="audio-name">{{ state.audioName }}<span v-if="state.chart?.wave"> · WAVE: {{ state.chart.wave }}</span></p><p v-if="state.mediaDirectoryName">音频文件夹：{{ state.mediaDirectoryName }}</p>
+        </div>
+      </details>
+    </div><div class="loop-controls">
+      <label class="check"><input id="loop" v-model="controls.loop" type="checkbox"><Repeat2 />循环</label>
+      <div class="loop-range-inputs" @focusin="loopEditing = true" @input="loopEditing = true; loopDirty = true" @focusout="finishLoopEdit" @keydown.enter.prevent="applyLoopDraft" @keydown.esc.prevent.stop="resetLoopDraft">
+        <label>小节<input id="loop-first" v-model="loopDraft[0]" aria-label="循环起始小节" inputmode="numeric" :disabled="!state.chart"></label><span>–</span>
+        <input id="loop-last" v-model="loopDraft[1]" aria-label="结束小节" inputmode="numeric" :disabled="!state.chart">
+        <button id="apply-loop" :disabled="!state.chart" title="应用循环范围（Enter 或离开输入区域）" @click="applyLoopDraft">应用</button>
+      </div>
+      <button id="loop-current" class="icon" title="循环范围设为当前小节" aria-label="循环范围设为当前小节" :disabled="!state.chart" @click="studio.loopCurrent()"><LocateFixed /></button><button id="preview-range" :disabled="!state.chart" @click="studio.previewRange"><Repeat2 />试听范围</button>
+      <output id="loop-summary">第 {{ range[0] }}–{{ range[1] }} 小节</output>
     </div></section>
-    <section class="sound-mixer"><label for="hit-volume">咚咔音量</label><input id="hit-volume" v-model.number="controls.hitVolume" type="range" min="0" max="300" aria-label="咚咔音量"><output id="hit-level" for="hit-volume">{{ controls.hitVolume }}%</output><button id="test-hits" title="单独试听咚、咔" @click="studio.testHits"><Drum />咚咔试音</button></section>
-    <section class="loop-controls">
-      <label>循环起始小节<input id="loop-first" type="number" min="1" :max="state.chart?.bars.length" :value="range[0]" step="1" :disabled="!state.chart" @change="studio.setLoop(Number($event.target.value), range[1]); $event.target.value = range[0]"></label><span>至</span>
-      <label>结束小节<input id="loop-last" type="number" min="1" :max="state.chart?.bars.length" :value="range[1]" step="1" :disabled="!state.chart" @change="studio.setLoop(range[0], Number($event.target.value)); $event.target.value = range[1]"></label>
-      <button id="loop-current" title="循环范围设为当前小节" :disabled="!state.chart" @click="studio.loopCurrent()"><LocateFixed />当前小节</button><button id="preview-range" :disabled="!state.buffer" @click="studio.previewRange"><Repeat2 />试听范围</button>
-      <output id="loop-summary">第 {{ range[0] }}–{{ range[1] }} 小节 · {{ range[1] - range[0] + 1 }} 小节</output>
-    </section>
     <TimelineEditor><MeasureEditor /></TimelineEditor>
+    </div>
+    </section>
   </main>
-  <footer><span><span class="status-dot"></span>LOCAL SESSION</span><span id="save-state">{{ state.saveState }}</span><span>TJA / WS — 01</span></footer>
+  <footer><span><span class="status-dot"></span>LOCAL SESSION</span><span id="save-state">{{ state.saveState }}</span><span>Web TJA Studio</span></footer>
 </template>
+
+<style>
+.file-actions{flex-wrap:wrap;justify-content:flex-end}
+header{min-height:64px;padding:10px 3%;gap:16px}
+.brand{font-size:17px;gap:10px;white-space:nowrap}.brand strong{font-weight:600}.brand small{margin-top:2px}.product-icon{border-radius:8px;display:block}
+main{max-width:none;margin:0;padding:0}
+.document-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px;padding:8px 12px 0;font-size:11px;color:var(--muted)}
+.document-toolbar h1{font-size:16px;line-height:1.4;margin:0;min-width:80px;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.document-toolbar button{min-height:30px;padding:4px 8px;font-size:12px}.course-control,.filename-control{display:flex;align-items:center;gap:6px}
+.filename-control{margin-left:auto}.filename-control input{width:180px;min-width:0;padding:5px 7px;border:1px solid var(--line);border-radius:4px;font-size:11px}
+.document-toolbar #encoding{margin-left:0;font-size:10px}.bar-count{white-space:nowrap}.document-status{font-size:10px}
+#notice{min-height:22px;padding:3px 12px 5px;font-size:11px;overflow-wrap:anywhere}
+.transport{padding:7px 12px;gap:8px 18px;justify-content:flex-start}.transport-left{gap:6px}.transport-right{margin-left:auto;order:2}.transport button{min-height:30px;padding:4px 8px}.transport .play{width:36px;height:34px}.time{margin-left:4px}.time b{font-size:17px}
+.transport .loop-controls{padding:0;border:0;gap:7px;order:1}.loop-range-inputs{display:flex;align-items:center;gap:6px}.loop-range-inputs input{width:48px;min-width:0;padding:5px;border:1px solid var(--line);border-radius:4px;font-size:12px}.loop-range-inputs label{gap:5px}
+.volume-popover{position:relative;font-size:12px}.volume-popover summary{display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--line);border-radius:4px;cursor:pointer;list-style:none;background:#fff}.volume-popover summary::-webkit-details-marker{display:none}.volume-popover summary:focus-visible{outline:2px solid var(--green);outline-offset:3px}
+.volume-panel{position:absolute;right:0;top:calc(100% + 6px);z-index:20;width:310px;max-width:85vw;padding:15px;border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 6px 24px #202a2820;display:grid;gap:14px}.volume-panel>label:not(.check){display:grid;grid-template-columns:58px minmax(0,1fr) 36px;gap:8px}.volume-panel input[type=range]{width:100%;margin:0}.volume-panel output{text-align:right;font-size:11px;color:var(--muted)}.volume-panel p{overflow-wrap:anywhere;line-height:1.5}
+.overview{padding:10px 12px}.overview canvas{height:40px;margin-top:5px}.measure-section{padding-inline:12px}
+.metadata-dialog{width:540px;max-width:calc(100vw - 32px);max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:22px;color:var(--ink);box-shadow:0 18px 70px #202a2840}.metadata-dialog::backdrop{background:#202a2866}.metadata-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}.metadata-dialog p{line-height:1.6}.metadata-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin:20px 0}.metadata-grid label{display:grid;gap:7px;font-size:12px;color:var(--muted);min-width:0}.metadata-grid .wide{grid-column:1/-1}.metadata-grid input{width:100%;min-width:0;border:1px solid var(--line);border-radius:4px;padding:8px;background:#fff}.metadata-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}.metadata-dialog .metadata-error{color:#bd352b}
+.studio-panel{background:#fff;overflow:hidden}
+.studio-panel-body{padding:0}
+.chart-tabs{position:relative;margin:0;border-bottom:1px solid var(--line);background:#edf1ee}
+.chart-tabs-viewport{overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain}
+.chart-tabs-viewport::-webkit-scrollbar{display:none}
+.chart-tabs-content{display:flex;width:max-content;min-width:100%}
+.chart-tabs-scrollbar{position:absolute;left:0;right:0;bottom:0;height:7px;opacity:0;pointer-events:none;transition:opacity .15s;touch-action:none;user-select:none;outline-offset:1px}
+.chart-tabs:hover .chart-tabs-scrollbar,.chart-tabs-scrollbar:focus-visible,.chart-tabs.dragging .chart-tabs-scrollbar{opacity:1;pointer-events:auto}
+.chart-tabs-thumb{display:block;height:100%;border-radius:4px;background:rgba(80,90,85,.35);cursor:default}
+.chart-tabs-scrollbar:hover .chart-tabs-thumb,.chart-tabs.dragging .chart-tabs-thumb{background:rgba(80,90,85,.6)}
+@media(prefers-reduced-motion:reduce){.chart-tabs-scrollbar{transition:none}}
+.chart-tab{display:flex;flex-shrink:0;max-width:320px;min-height:43px;border-right:1px solid var(--line);border-top:2px solid transparent}
+.chart-tab.active{border-top-color:var(--green);background:#fff}
+.chart-tab:not(.active):hover{background:#dfe8e2}
+.chart-tab.active:hover{background:#f0f6f2}
+.chart-tab button{border:0;background:transparent;min-width:0;overflow-wrap:anywhere}
+.chart-tab.active button{color:var(--green)}
+.chart-tab .icon{flex-shrink:0}
+.chart-tab .icon:hover{background:#cfddd4}
+.empty-session{color:var(--muted);padding:13px 20px}
+@media(max-width:1000px){.document-status{display:none}.transport-right{order:2}.transport .loop-controls{flex-wrap:wrap}}
+@media(max-width:720px){header{padding:8px 3%;gap:8px}.brand{font-size:15px}.document-toolbar{gap:7px}.document-toolbar h1{max-width:180px}.filename-control{margin-left:0}.filename-control input{width:150px}.transport .loop-controls{order:3;flex-basis:100%}.transport-right{margin-left:auto}.metadata-grid{grid-template-columns:minmax(0,1fr)}}
+</style>

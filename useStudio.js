@@ -7,6 +7,19 @@ import { GRID_DIVISIONS, MAX_SNAP_DIVISIONS } from './grid.js';
 import { NOTE_TYPES, cellValue, setCellNote, longNoteSpans } from './note-model.js';
 import { longHitTimes } from './long-audio.js';
 import { balloonCounts, balloonIndex, setBalloonCount, replaceBarWithBalloons, replaceBarSourceWithBalloons } from './balloon.js';
+import { HISTORY_LIMIT, textDiff, applyDiff } from './history.js';
+import { findWaveFile, indexMediaFiles } from './media-files.js';
+import { songMetadata, setSongMetadata } from './metadata.js';
+
+const WORKSPACE_KEY = 'tja-wave-workspace';
+const chartFileTypes = [{ description: 'TJA 谱面', accept: { 'text/plain': ['.tja'] } }];
+const documentFields = ['text', 'chart', 'selected', 'course', 'buffer', 'peaks', 'position', 'undo', 'redo', 'filename', 'savedText', 'fileHandle', 'sourceHandle', 'chartPath', 'saving', 'dirty', 'invalid', 'selectedCell', 'commandCell', 'source', 'sourceState', 'encoding', 'audioName', 'customLoop'];
+const emptyDocument = () => ({ text: '', chart: null, selected: 0, course: 0, buffer: null, peaks: [], position: 0, undo: [], redo: [], filename: 'chart.tja', savedText: null, fileHandle: null, sourceHandle: null, chartPath: '', saving: false, dirty: false, invalid: false, selectedCell: null, commandCell: null, source: '', sourceState: '已同步', encoding: '', audioName: '无伴奏 · 可直接播放谱面', customLoop: null });
+function chartFilename(name) {
+  name = name.trim();
+  if (!name || /[\\/:*?"<>|\r\n]/.test(name)) throw new Error('请输入有效的谱面文件名。');
+  return /\.tja$/i.test(name) ? name : `${name}.tja`;
+}
 
 export const formatTime = value => {
   const sign = value < 0 ? '-' : '';
@@ -15,11 +28,15 @@ export const formatTime = value => {
 };
 
 export function useStudio() {
-  const state = shallowReactive({ text: '', chart: null, selected: 0, course: 0, buffer: null, peaks: [], playing: false, position: 0, undo: [], redo: [], filename: 'chart.tja', dirty: false, invalid: false, selectedCell: null, commandCell: null, source: '', sourceState: '已同步', encoding: '', audioName: '未载入音频', saveState: '原文件未修改', notice: '正在准备工作台…', error: false, customLoop: null });
+  const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, mediaDirectoryName: '', playing: false, saveState: '尚未打开谱面', notice: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', error: false });
+  let nextDocumentId = 1;
+  let mediaDirectory = null, mediaFiles = null;
   const controls = reactive({ loop: true, hits: true, rate: 1, volume: MIX_DEFAULTS.music, hitVolume: MIX_DEFAULTS.hits, view: 2, snap: GRID_DIVISIONS, snapChoice: '16', customSnap: GRID_DIVISIONS });
   const bar = computed(() => state.chart?.bars[state.selected]);
   const spans = computed(() => state.chart ? longNoteSpans(state.chart.bars) : []);
   const range = computed(() => state.customLoop || [state.selected + 1, state.selected + 1]);
+  const metadata = computed(() => songMetadata(state.text));
+  const duration = computed(() => state.buffer?.duration ?? state.chart?.bars.reduce((end, item) => Math.max(end, measureEnd(item)), 0) ?? 0);
   const visible = computed(() => {
     if (!state.chart) return null;
     const bars = state.chart.bars.slice(state.selected, state.selected + controls.view);
@@ -44,9 +61,9 @@ export function useStudio() {
     const commands = fraction === 0 ? bar.value.commands : bar.value.events.filter(event => event.slot * position.denominator === position.numerator * bar.value.notes.length);
     return { ...position, fraction, commands, timing: barStateAt(bar.value, fraction), time: barTimeAt(bar.value, fraction) };
   });
-  let context, music, gain, musicDuck, hitGain, output, anchor = 0, origin = 0, loopStart = 0, loopEnd = 0, scheduledUntil = 0;
-  let sourceTimer, scheduler, frame, disposed = false, audioRequest = 0, chartRequest = 0, playRequest = 0;
-  const voices = new Set(), hitBuffers = new Map(), controller = new AbortController();
+  let context, music, gain, musicDuck, hitGain, output, anchor = 0, origin = 0, loopStart = 0, loopEnd = 0, scheduledUntil = 0, playbackRate = 1, looping = false;
+  let sourceTimer, scheduler, frame, disposed = false, audioRequest = 0, playRequest = 0;
+  const voices = new Set(), hitBuffers = new Map();
   const notice = (message, error = false) => { state.notice = message; state.error = error; };
   const guard = action => { try { return action(); } catch (error) { notice(error.message, true); } };
   function audioContext() {
@@ -61,9 +78,9 @@ export function useStudio() {
   }
   function currentTime() {
     if (!state.playing) return state.position;
-    let time = origin + (context.currentTime - anchor) * (music?.playbackRate.value || controls.rate);
-    if (music?.loop && time >= loopEnd) time = loopStart + (time - loopStart) % (loopEnd - loopStart);
-    return time;
+    let time = origin + Math.max(0, context.currentTime - anchor) * playbackRate;
+    if (looping && time >= loopEnd) time = loopStart + (time - loopStart) % (loopEnd - loopStart);
+    return Math.min(time, loopEnd);
   }
   function silence() {
     for (const voice of voices) { try { voice.stop(); } catch {} }
@@ -78,23 +95,29 @@ export function useStudio() {
     silence();
   }
   async function play(from) {
-    if (!state.buffer || !state.chart) { notice('请先载入谱面和音频。', true); return; }
+    if (!state.chart) { notice('请先载入谱面。', true); return; }
+    if (!(duration.value > 0)) { notice('谱面没有可播放的正时间区间，请检查 OFFSET 和 DELAY。', true); return; }
     pause();
     const request = ++playRequest;
     try { await audioContext().resume(); } catch (error) { notice(`播放失败：${error.message}`, true); return; }
     if (disposed || request !== playRequest) return;
     if (controls.loop) {
-      try { const result = resolveLoop(state.chart.bars, ...range.value, state.buffer.duration); loopStart = result.start; loopEnd = result.end; }
+      try { const result = resolveLoop(state.chart.bars, ...range.value, duration.value); loopStart = result.start; loopEnd = result.end; }
       catch (error) { notice(error.message, true); return; }
-    } else { loopStart = 0; loopEnd = state.buffer.duration; }
+    } else { loopStart = 0; loopEnd = duration.value; }
+    playbackRate = controls.rate; looping = controls.loop;
     let position = from ?? state.position;
     if (controls.loop && (position < loopStart || position >= loopEnd)) position = loopStart;
-    position = Math.max(0, Math.min(position, state.buffer.duration - .001));
-    music = context.createBufferSource(); music.buffer = state.buffer; music.playbackRate.value = controls.rate; music.connect(gain);
-    music.loop = controls.loop; music.loopStart = loopStart; music.loopEnd = loopEnd;
+    if (!looping && position >= loopEnd) position = 0;
+    position = Math.max(0, Math.min(position, Math.max(0, duration.value - .001)));
     origin = position; anchor = context.currentTime + .035; scheduledUntil = anchor; state.position = position; state.playing = true;
-    music.onended = () => { if (state.playing) { pause(); state.position = state.buffer.duration; } };
-    music.start(anchor, position);
+    if (state.buffer) {
+      music = context.createBufferSource(); music.buffer = state.buffer; music.playbackRate.value = playbackRate; music.connect(gain);
+      music.loop = looping; music.loopStart = loopStart; music.loopEnd = loopEnd;
+      music.onended = () => { if (state.playing) { pause(); state.position = loopEnd; } };
+      music.start(anchor, position);
+    } else notice(controls.hits && controls.hitVolume > 0 ? '无伴奏播放：正在播放谱面音符音。' : '无伴奏播放：音符音已关闭或音量为零，当前仅运行播放头。');
+    schedule();
   }
   function tone(note, when) {
     const key = '24'.includes(note) ? 'ka' : 'don';
@@ -106,26 +129,37 @@ export function useStudio() {
     voice.onended = () => { voices.delete(voice); voice.disconnect(); level.disconnect(); };
   }
   function schedule() {
-    if (!state.playing || !controls.hits) return;
-    const rate = controls.rate, until = context.currentTime + .12, from = Math.max(scheduledUntil, context.currentTime);
+    if (!state.playing) return;
+    if (!looping && context.currentTime >= anchor + (loopEnd - origin) / playbackRate) { pause(); state.position = loopEnd; return; }
+    if (!controls.hits) return;
+    const rate = playbackRate, until = context.currentTime + .12, from = Math.max(scheduledUntil, context.currentTime);
     const cycle = (loopEnd - loopStart) / rate;
-    const bars = controls.loop ? state.chart.bars.slice(range.value[0] - 1, range.value[1]) : state.chart.bars;
+    const bars = looping ? state.chart.bars.slice(range.value[0] - 1, range.value[1]) : state.chart.bars;
     for (const item of bars) for (let index = 0; index < item.notes.length; index++) {
       const note = item.notes[index]; if (!'1234'.includes(note)) continue;
       const time = barTimeAt(item, index / item.notes.length);
-      if (time < 0 || time >= state.buffer.duration || (controls.loop && (time < loopStart || time >= loopEnd))) continue;
+      if (time < 0 || time >= loopEnd || (looping && time < loopStart)) continue;
       let when = anchor + (time - origin) / rate;
-      if (controls.loop) {
+      if (looping) {
         when += Math.max(0, Math.ceil((from - when) / cycle)) * cycle;
         for (; when < until; when += cycle) if (when >= from) tone(note, when);
       } else if (when >= from && when < until) tone(note, when);
     }
-    for (const when of longHitTimes(spans.value, { from, until, anchor, origin, rate, start: loopStart, end: loopEnd, loop: controls.loop })) tone('1', when);
+    for (const when of longHitTimes(spans.value, { from, until, anchor, origin, rate, start: loopStart, end: loopEnd, loop: looping })) tone('1', when);
     scheduledUntil = until;
   }
+  function snapshot() {
+    const active = state.documents.find(item => item.id === state.activeId);
+    if (active) Object.assign(active, Object.fromEntries(documentFields.map(key => [key, state[key]])));
+  }
   function persist() {
-    try { localStorage.setItem('tja-wave-draft', JSON.stringify({ text: state.text, filename: state.filename, course: state.course, selected: state.selected })); state.saveState = '草稿已保存在此浏览器 · 原文件未修改'; }
-    catch { state.saveState = '草稿存储不可用 · 请及时导出'; }
+    snapshot();
+    try {
+      const documents = state.documents.map(({ id, text, filename, savedText, course, selected, undo, redo, dirty, invalid, source, encoding }) => ({ id, text, filename, savedText, course, selected, undo, redo, dirty, invalid, source, encoding }));
+      localStorage.setItem(WORKSPACE_KEY, JSON.stringify({ version: 1, activeId: state.activeId, documents }));
+      state.saveState = '所有谱面及历史已存为浏览器草稿';
+      return true;
+    } catch (error) { state.saveState = '草稿存储不可用 · 请及时保存文件'; notice(`草稿保存失败：${error.message}`, true); return false; }
   }
   function syncSource() {
     clearTimeout(sourceTimer);
@@ -136,12 +170,16 @@ export function useStudio() {
   }
   function commit(text, keepSource = false) {
     const chart = parseChart(text, parser, state.course);
-    if (text === state.text) { state.invalid = false; state.sourceState = '已同步'; notice('更改已同步。'); return; }
+    if (text === state.text) { state.invalid = false; state.sourceState = '已同步'; if (persist()) notice('更改已同步。'); return; }
+    const waveChanged = chart.wave !== state.chart.wave;
     const playing = state.playing, position = currentTime(); pause();
-    state.undo = [...state.undo.slice(-149), state.text]; state.redo = [];
-    state.text = text; state.chart = chart; state.dirty = true; state.invalid = false; persist();
+    state.undo = [...state.undo.slice(-(HISTORY_LIMIT - 1)), textDiff(state.text, text)]; state.redo = [];
+    state.text = text; state.chart = chart; state.dirty = text !== state.savedText; state.invalid = false;
+    state.selected = Math.min(state.selected, chart.bars.length - 1);
+    if (waveChanged) clearAudio();
     if (!keepSource) syncSource(); else state.sourceState = '已同步';
-    notice('更改已同步。'); if (playing) void play(position);
+    if (persist()) notice('更改已同步。');
+    if (waveChanged) void autoAudio(); else if (playing) void play(position);
   }
   function requireValid() { if (state.invalid) throw new Error('请先修正当前小节源码。'); }
   function select(index, seek = true) {
@@ -151,13 +189,13 @@ export function useStudio() {
       const playing = state.playing; pause(); state.selectedCell = null; state.commandCell = null;
       state.selected = Math.max(0, Math.min(state.chart.bars.length - 1, index));
       if (seek) state.position = Math.max(0, measureStart(bar.value));
-      syncSource(); if (playing) void play();
+      syncSource(); persist(); if (playing) void play();
     });
   }
   function seek(time) { const playing = state.playing; pause(); state.position = Math.max(0, time); if (playing) void play(); }
   function selectCell(position) {
     if (state.invalid) return;
-    pause(); state.selected = position.bar; state.selectedCell = position; state.commandCell = { ...position }; syncSource();
+    pause(); state.selected = position.bar; state.selectedCell = position; state.commandCell = { ...position }; syncSource(); persist();
   }
   function setCommandPosition(numerator, denominator) {
     guard(() => {
@@ -176,25 +214,41 @@ export function useStudio() {
   }
   function editSource(value) {
     clearTimeout(sourceTimer); pause(); state.selectedCell = null; state.commandCell = null; state.source = value; state.invalid = true; state.sourceState = '编辑中';
-    sourceTimer = setTimeout(() => {
-      try { commit(replaceBarSourceWithBalloons(state.text, state.chart, bar.value, state.source, parser), true); }
-      catch (error) { state.sourceState = '格式错误'; notice(error.message, true); }
-    }, 250);
+    persist(); sourceTimer = setTimeout(flushSource, 250);
+  }
+  function flushSource() {
+    clearTimeout(sourceTimer);
+    if (!state.invalid) return;
+    try { commit(replaceBarSourceWithBalloons(state.text, state.chart, bar.value, state.source, parser), true); }
+    catch (error) { state.sourceState = '格式错误'; persist(); notice(error.message, true); }
   }
   function history(redo = false) {
     const from = redo ? state.redo : state.undo;
     if (!from.length) return;
-    pause(); clearTimeout(sourceTimer);
-    const text = from.at(-1), chart = parseChart(text, parser, state.course);
-    if (redo) { state.redo = from.slice(0, -1); state.undo = [...state.undo, state.text]; }
-    else { state.undo = from.slice(0, -1); state.redo = [...state.redo, state.text]; }
-    state.text = text; state.chart = chart; state.invalid = false; state.dirty = true; persist(); syncSource();
+    guard(() => {
+      pause(); clearTimeout(sourceTimer);
+      const diff = from.at(-1), text = applyDiff(state.text, diff, !redo), chart = parseChart(text, parser, state.course);
+      const waveChanged = chart.wave !== state.chart.wave;
+      if (redo) { state.redo = from.slice(0, -1); state.undo = [...state.undo, diff]; }
+      else { state.undo = from.slice(0, -1); state.redo = [...state.redo, diff]; }
+      state.text = text; state.chart = chart; state.selected = Math.min(state.selected, chart.bars.length - 1);
+      if (waveChanged) clearAudio();
+      state.selectedCell = null; state.commandCell = null; state.invalid = false; state.dirty = text !== state.savedText; syncSource(); persist();
+      if (waveChanged) void autoAudio();
+    });
   }
   function setLoop(first, last) {
-    guard(() => {
+    return guard(() => {
+      if (!state.chart) throw new Error('请先载入谱面。');
+      if (!Number.isInteger(first) || !Number.isInteger(last)) throw new Error('循环小节须为整数。');
+      first = Math.max(1, Math.min(state.chart.bars.length, first));
+      last = Math.max(1, Math.min(state.chart.bars.length, last));
       const resolved = resolveLoop(state.chart.bars, first, last, Infinity);
       const playing = state.playing; pause(); state.customLoop = [first, last]; state.position = resolved.start;
-      notice(`循环范围已设为第 ${first}–${last} 小节。`); if (playing) void play();
+      if (!state.invalid) { state.selected = first - 1; state.selectedCell = null; state.commandCell = null; syncSource(); }
+      if (persist()) notice(`循环范围已设为第 ${first}–${last} 小节。`);
+      if (playing) void play(resolved.start);
+      return true;
     });
   }
   function loopCurrent(preview = false) {
@@ -220,18 +274,65 @@ export function useStudio() {
     guard(() => {
       requireValid(); const chart = parseChart(state.text, parser, value); pause();
       state.course = value; state.chart = chart; state.selected = 0; state.selectedCell = null; state.commandCell = null; state.customLoop = null;
-      state.position = Math.max(0, measureStart(chart.bars[0])); syncSource();
+      state.position = Math.max(0, measureStart(chart.bars[0])); syncSource(); persist();
     });
   }
-  function loadChart(bytes, name) {
-    const decoded = decodeChart(bytes), chart = parseChart(decoded.text, parser, 0);
-    pause(); state.text = decoded.text; state.chart = chart; state.course = 0; state.selected = 0;
-    state.selectedCell = null; state.commandCell = null; state.customLoop = null;
-    state.position = Math.max(0, measureStart(chart.bars[0])); state.filename = name; state.undo = []; state.redo = [];
-    state.dirty = false; state.invalid = false; state.encoding = decoded.encoding; state.saveState = '原文件未修改'; syncSource(); notice('谱面已载入。');
+  function leaveDocument() {
+    pause(); flushSource(); snapshot(); ++audioRequest;
   }
-  async function loadAudio(bytes, name) {
-    const request = ++audioRequest; pause(); notice('正在解析音频波形…');
+  function activate(document) {
+    state.activeId = document.id;
+    Object.assign(state, Object.fromEntries(documentFields.map(key => [key, document[key]])));
+  }
+  function switchChart(id) {
+    if (id === state.activeId) return;
+    const document = state.documents.find(item => item.id === id);
+    if (!document) { notice('找不到此谱面。', true); return; }
+    leaveDocument(); activate(document);
+    if (persist()) notice(state.invalid ? '已切换谱面；请修正保留的小节源码。' : '已切换谱面。', state.invalid);
+    if (!state.invalid) void autoAudio();
+  }
+  function closeChart(id) {
+    const document = state.documents.find(item => item.id === id);
+    if (!document) return;
+    const active = id === state.activeId;
+    if (document.saving) { notice('谱面正在保存，请完成后再关闭。', true); return; }
+    if (active) { pause(); flushSource(); snapshot(); }
+    if ((document.dirty || document.invalid) && !confirm(`关闭 ${document.filename} 将移除此谱面及其草稿和历史。请先保存需要的内容，是否继续？`)) return;
+    const index = state.documents.indexOf(document);
+    if (active) { clearTimeout(sourceTimer); ++audioRequest; }
+    state.documents = state.documents.filter(item => item.id !== id);
+    if (active) {
+      const next = state.documents[Math.min(index, state.documents.length - 1)];
+      if (next) activate(next);
+      else { state.activeId = null; Object.assign(state, emptyDocument()); }
+    }
+    if (persist()) notice('谱面已关闭。');
+    if (active && !state.invalid) void autoAudio();
+  }
+  function renameChart(name) {
+    return guard(() => {
+      if (!state.chart) throw new Error('请先打开谱面。');
+      if (state.saving) throw new Error('请等待保存完成后再修改文件名。');
+      name = chartFilename(name);
+      if (name === state.filename) return true;
+      state.filename = name; state.fileHandle = null; state.savedText = null; state.dirty = true; persist();
+      return true;
+    });
+  }
+  function newChart() {
+    loadChart(new TextEncoder().encode('TITLE:Untitled\nBPM:120\nOFFSET:0\nCOURSE:Oni\nLEVEL:1\n#START\n0000,\n#END\n'), 'untitled.tja');
+    state.savedText = null; state.dirty = true; persist();
+  }
+  function loadChart(bytes, name, fileHandle = null, chartPath = '') {
+    const decoded = decodeChart(bytes), chart = parseChart(decoded.text, parser, 0);
+    leaveDocument();
+    const document = shallowReactive({ ...emptyDocument(), id: nextDocumentId++, text: decoded.text, savedText: decoded.text, fileHandle, sourceHandle: fileHandle, chartPath, chart, filename: name, encoding: decoded.encoding, position: Math.max(0, measureStart(chart.bars[0])) });
+    state.documents = [...state.documents, document]; activate(document);
+    syncSource(); if (persist()) notice('谱面已载入，可直接播放音符音或载入伴奏。');
+  }
+  async function loadAudio(bytes, name, request) {
+    pause(); notice('正在解析音频波形…');
     const buffer = await audioContext().decodeAudioData(bytes);
     if (disposed || request !== audioRequest) return;
     const count = Math.min(120000, buffer.length), peaks = new Float32Array(count), step = buffer.length / count;
@@ -239,56 +340,191 @@ export function useStudio() {
       const samples = buffer.getChannelData(channel);
       for (let index = 0; index < count; index++) for (let sample = Math.floor(index * step); sample < Math.floor((index + 1) * step); sample++) peaks[index] = Math.max(peaks[index], Math.abs(samples[sample]));
     }
-    state.buffer = buffer; state.peaks = peaks; state.audioName = name; notice('音频已就绪。');
+    pause(); state.buffer = buffer; state.peaks = peaks; state.audioName = name; state.position = Math.max(0, Math.min(state.position, buffer.duration)); notice('音频已就绪。');
   }
-  async function tryAudio() {
-    const name = state.chart.wave, request = audioRequest;
-    if (!name) return;
-    const response = await fetch('/media/' + encodeURIComponent(name), { signal: controller.signal });
-    if (disposed || request !== audioRequest) return;
-    if (response.ok) {
-      const bytes = await response.arrayBuffer();
-      if (!disposed && request === audioRequest) await loadAudio(bytes, name);
-    }
-    else notice(`未找到 ${name}，请载入对应音频。`, true);
+  function clearAudio() {
+    ++audioRequest; state.buffer = null; state.peaks = []; state.audioName = emptyDocument().audioName;
   }
-  async function openChart(file) {
-    if (!file || ((state.dirty || state.invalid) && !confirm('当前有效更改已存为草稿。是否打开其他谱面？'))) return;
-    const request = ++chartRequest;
+  async function openChart(file, fileHandle = null) {
+    if (!file) return;
     try {
-      const bytes = await file.arrayBuffer(); if (disposed || request !== chartRequest) return;
-      loadChart(bytes, file.name); ++audioRequest; state.buffer = null; state.peaks = []; state.audioName = '未载入音频'; await tryAudio();
+      const bytes = await file.arrayBuffer(); if (disposed) return;
+      loadChart(bytes, file.name, fileHandle, file.webkitRelativePath?.split('/').slice(1).join('/') || '');
+      await autoAudio();
     } catch (error) { if (!disposed) notice(error.message, true); }
   }
-  async function openAudio(file) { if (file) try { await loadAudio(await file.arrayBuffer(), file.name); } catch (error) { if (!disposed) notice(`音频读取失败：${error.message}`, true); } }
+  async function openCharts() {
+    try {
+      const handles = await window.showOpenFilePicker({ multiple: true, types: chartFileTypes });
+      for (const handle of handles) {
+        const file = await handle.getFile();
+        if (disposed) return;
+        await openChart(file, handle);
+      }
+    } catch (error) {
+      if (!disposed) notice(error.name === 'AbortError' ? '已取消打开谱面。' : `打开谱面失败：${error.message}`, error.name !== 'AbortError');
+    }
+  }
+  async function openAudio(file) {
+    if (!file) return;
+    if (!state.chart) { notice('请先打开谱面，再载入对应音频。', true); return; }
+    const request = ++audioRequest;
+    try {
+      const bytes = await file.arrayBuffer();
+      if (!disposed && request === audioRequest) await loadAudio(bytes, file.name, request);
+    } catch (error) { if (!disposed && request === audioRequest) notice(`音频读取失败：${error.message}`, true); }
+  }
+  async function autoAudio() {
+    if (!state.chart?.wave || state.buffer) return false;
+    const wave = state.chart.wave;
+    if (!mediaDirectory && !mediaFiles) {
+      notice(`WAVE: ${wave}；关联音频文件夹后可自动载入，也可直接无伴奏播放。`);
+      return false;
+    }
+    const request = ++audioRequest;
+    const options = { directory: mediaDirectory, files: mediaFiles, chartHandle: state.sourceHandle || state.fileHandle, chartPath: state.chartPath, chartName: state.filename };
+    try {
+      const file = await findWaveFile(wave, options);
+      if (disposed || request !== audioRequest) return false;
+      const bytes = await file.arrayBuffer();
+      if (disposed || request !== audioRequest) return false;
+      await loadAudio(bytes, file.name, request);
+      return !disposed && request === audioRequest;
+    } catch (error) {
+      if (!disposed && request === audioRequest) notice(`自动载入 ${wave} 失败：${error.message} 可继续无伴奏播放或手动载入音频。`, true);
+      return false;
+    }
+  }
+  async function chooseMediaDirectory() {
+    try {
+      const directory = await window.showDirectoryPicker({ id: 'tja-audio-directory', mode: 'read' });
+      if (disposed) return false;
+      mediaDirectory = directory; mediaFiles = null; ++audioRequest;
+      state.mediaDirectoryName = directory.name;
+      notice(`已关联音频文件夹 ${directory.name}，将按 WAVE 自动匹配音频。`);
+      await autoAudio();
+      return true;
+    } catch (error) {
+      if (!disposed) notice(error.name === 'AbortError' ? '已取消关联音频文件夹。' : `关联音频文件夹失败：${error.message}`, error.name !== 'AbortError');
+      return false;
+    }
+  }
+  async function setMediaFiles(files) {
+    if (!files.length) return false;
+    try {
+      const indexed = indexMediaFiles(files);
+      mediaDirectory = null; mediaFiles = indexed.files; ++audioRequest;
+      state.mediaDirectoryName = indexed.name;
+      notice(`已关联音频文件夹 ${indexed.name}，将按 WAVE 自动匹配音频。`);
+      await autoAudio();
+      return true;
+    } catch (error) { notice(`关联音频文件夹失败：${error.message}`, true); return false; }
+  }
   function restore() {
     guard(() => {
-      const saved = JSON.parse(localStorage.getItem('tja-wave-draft') || 'null');
+      if (state.documents.some(item => item.saving)) throw new Error('请等待文件保存完成后再恢复草稿。');
+      const workspace = localStorage.getItem(WORKSPACE_KEY);
+      const saved = JSON.parse(workspace || localStorage.getItem('tja-wave-draft') || 'null');
       if (!saved) throw new Error('没有本地草稿。');
-      if ((state.dirty || state.invalid) && !confirm('恢复草稿会替换当前编辑内容，是否继续？')) return;
-      const chart = parseChart(saved.text, parser, saved.course); pause();
-      state.text = saved.text; state.chart = chart; state.course = saved.course; state.filename = saved.filename;
-      state.selected = Math.max(0, Math.min(saved.selected, chart.bars.length - 1)); state.selectedCell = null; state.commandCell = null; state.customLoop = null;
-      state.undo = []; state.redo = []; state.dirty = true; state.invalid = false; syncSource(); notice('已恢复草稿；请确认载入的是对应音频。');
+      if (workspace && (saved.version !== 1 || !Array.isArray(saved.documents))) throw new Error('本地工作区格式无效。');
+      const entries = workspace ? saved.documents : [{ ...saved, dirty: true }];
+      const ids = new Set();
+      const documents = entries.map((item, index) => {
+        if (typeof item.text !== 'string' || typeof item.filename !== 'string' || !Number.isInteger(item.course) || item.course < 0 || !Number.isInteger(item.selected) || (item.invalid && typeof item.source !== 'string')) throw new Error('本地谱面草稿格式无效。');
+        const chart = parseChart(item.text, parser, item.course), undo = item.undo ?? [], redo = item.redo ?? [];
+        const savedText = item.savedText === undefined ? (item.dirty ? null : item.text) : item.savedText;
+        if (savedText !== null && typeof savedText !== 'string') throw new Error('本地谱面保存状态无效。');
+        if (!Array.isArray(undo) || !Array.isArray(redo) || undo.length + redo.length > HISTORY_LIMIT) throw new Error('本地编辑历史格式无效。');
+        let text = item.text;
+        for (const diff of [...undo].reverse()) text = applyDiff(text, diff, true);
+        text = item.text;
+        for (const diff of [...redo].reverse()) text = applyDiff(text, diff);
+        const id = workspace ? item.id : index + 1;
+        if (!Number.isSafeInteger(id) || id < 1 || ids.has(id)) throw new Error('本地谱面编号无效。');
+        ids.add(id);
+        const selected = Math.max(0, Math.min(item.selected, chart.bars.length - 1));
+        return shallowReactive({ ...emptyDocument(), id, text: item.text, savedText, filename: item.filename, course: item.course, chart, selected, undo, redo, dirty: item.text !== savedText, invalid: Boolean(item.invalid), encoding: item.encoding || '', source: item.invalid ? item.source : barSource(item.text, chart.bars[selected]), sourceState: item.invalid ? '格式错误' : '已同步', position: Math.max(0, measureStart(chart.bars[selected])) });
+      });
+      if (state.documents.length && !confirm('恢复草稿会替换所有已打开谱面，是否继续？')) return;
+      pause(); clearTimeout(sourceTimer); ++audioRequest;
+      state.documents = documents;
+      nextDocumentId = Math.max(0, ...documents.map(item => item.id)) + 1;
+      const active = documents.find(item => item.id === saved.activeId) || documents[0];
+      if (active) { activate(active); flushSource(); }
+      else { state.activeId = null; Object.assign(state, emptyDocument()); }
+      if (persist()) notice(state.invalid ? '已恢复谱面及编辑历史；当前小节源码仍有错误，请修正。' : '已恢复谱面及编辑历史；音频可重新载入或关联文件夹匹配。', state.invalid);
+      if (!state.invalid) void autoAudio();
     });
   }
-  function exportChart() {
-    if (!state.chart || state.invalid) { notice('请先修正小节源码后再导出。', true); return; }
-    const url = URL.createObjectURL(new Blob(['\ufeff', state.text], { type: 'text/plain;charset=utf-8' })), link = document.createElement('a');
-    link.href = url; link.download = state.filename.replace(/\.tja$/i, '') + ' - edited.tja'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-    state.dirty = false; notice('已导出 UTF-8 谱面，原文件未修改。');
+  function updateDocument(document, values) {
+    Object.assign(document, values);
+    if (state.activeId === document.id) Object.assign(state, values);
   }
+  async function saveChart(as = false) {
+    if (!state.chart) { notice('请先打开谱面。', true); return false; }
+    if (state.saving) { notice('此谱面正在保存，请稍候。', true); return false; }
+    flushSource();
+    if (state.invalid) { notice('请先修正小节源码后再保存。', true); return false; }
+    const input = document.activeElement;
+    if (input?.id === 'base-bpm' && !setBpm(Number(input.value))) return false;
+    if (input?.id === 'offset' && !setOffset(Number(input.value))) return false;
+    if (input?.id === 'chart-name' && !renameChart(input.value)) return false;
+    if (input?.id === 'balloon-count' && !setBalloon(Number(input.value))) return false;
+    snapshot();
+    const target = state.documents.find(item => item.id === state.activeId), text = state.text;
+    let handle = as ? null : target.fileHandle, choosing = false;
+    updateDocument(target, { saving: true });
+    try {
+      const blob = new Blob(['\ufeff', text], { type: 'text/plain;charset=utf-8' });
+      if (!handle && typeof window.showSaveFilePicker !== 'function') {
+        const requested = as ? window.prompt('另存为文件名（保存位置由浏览器下载设置决定）', target.filename) : target.filename;
+        if (requested === null) { notice('已取消另存为，修改仍保留。'); return false; }
+        const filename = chartFilename(requested), url = URL.createObjectURL(blob);
+        try {
+          const link = document.createElement('a');
+          link.href = url; link.download = filename; link.click();
+        } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+        updateDocument(target, { filename, fileHandle: null, savedText: null, dirty: true });
+        if (persist()) notice(`浏览器不支持直接写回文件，已请求下载 ${filename} 的 UTF-8 副本。请确认下载完成；未保存标记仍保留。`);
+        return true;
+      }
+      if (!handle) {
+        choosing = true;
+        handle = await window.showSaveFilePicker({ suggestedName: target.filename, types: chartFileTypes });
+        choosing = false;
+      } else {
+        const diskText = decodeChart(await (await handle.getFile()).arrayBuffer()).text;
+        if (disposed) return false;
+        if (diskText !== target.savedText && !confirm(`${target.filename} 在磁盘上已发生变化。继续保存将覆盖磁盘内容，是否继续？`)) {
+          notice('已取消覆盖，修改仍保留。'); return false;
+        }
+      }
+      if (disposed) return false;
+      const writable = await handle.createWritable();
+      if (disposed) { await writable.abort(); return false; }
+      try { await writable.write(blob); await writable.close(); }
+      catch (error) {
+        try { await writable.abort(); }
+        catch (abortError) { throw new Error(`${error.message}；中止写入失败：${abortError.message}`); }
+        throw error;
+      }
+      updateDocument(target, { fileHandle: handle, filename: handle.name, savedText: text, dirty: target.text !== text, encoding: 'UTF-8' });
+      if (persist()) notice(`已保存 ${handle.name}（UTF-8 BOM）${target.dirty || target.invalid ? '；保存期间的新修改尚未保存。' : '。'}`);
+      return true;
+    } catch (error) {
+      if (!disposed) notice(choosing && error.name === 'AbortError' ? '已取消保存，修改仍保留。' : `保存 ${target.filename} 失败：${error.message}`, !(choosing && error.name === 'AbortError'));
+      return false;
+    } finally { updateDocument(target, { saving: false }); }
+  }
+  function saveAs() { return saveChart(true); }
   function setOffset(value) {
-    guard(() => { requireValid(); if (!Number.isFinite(value)) throw new Error('偏移无效'); commit(/^OFFSET:/mi.test(state.text) ? state.text.replace(/^OFFSET:[^\r\n]*/mi, `OFFSET:${value}`) : `OFFSET:${value}\n${state.text}`); });
+    return guard(() => { requireValid(); if (!Number.isFinite(value)) throw new Error('偏移无效'); commit(/^OFFSET:/mi.test(state.text) ? state.text.replace(/^OFFSET:[^\r\n]*/mi, `OFFSET:${value}`) : `OFFSET:${value}\n${state.text}`); return true; });
   }
-  function setBpm(value) { guard(() => { requireValid(); commit(setBaseBpm(state.text, value)); }); }
+  function setBpm(value) { return guard(() => { requireValid(); commit(setBaseBpm(state.text, value)); return true; }); }
+  function setMetadata(values) { return guard(() => { requireValid(); commit(setSongMetadata(state.text, values)); return true; }); }
   function setDivision(value) { guard(() => { requireValid(); commit(replaceBarWithBalloons(state.text, state.chart, bar.value, resizeNotes(bar.value.notes, value))); }); }
   function clearBar() { guard(() => { requireValid(); commit(replaceBarWithBalloons(state.text, state.chart, bar.value, '0'.repeat(bar.value.notes.length))); }); }
-  function setBalloon(value) { guard(() => { requireValid(); if (state.selectedCell) commit(setBalloonCount(state.text, state.chart, state.selectedCell, value)); }); }
-  async function testHits() {
-    try { pause(); await audioContext().resume(); if (disposed) return; const when = context.currentTime + .04; tone('1', when); tone('2', when + .35); notice(controls.hitVolume === 0 ? '咚咔音量为 0，请调高后再次试音。' : '正在单独试听：咚、咔。'); }
-    catch (error) { notice(`试音失败：${error.message}`, true); }
-  }
+  function setBalloon(value) { return guard(() => { requireValid(); if (state.selectedCell) commit(setBalloonCount(state.text, state.chart, state.selectedCell, value)); return true; }); }
   watch(() => [controls.loop, controls.rate], () => { if (state.playing) void play(currentTime()); });
   watch(() => controls.volume, value => { if (gain) gain.gain.value = value / 100; });
   watch(() => controls.hitVolume, value => {
@@ -311,31 +547,31 @@ export function useStudio() {
     frame = requestAnimationFrame(animate);
   }
   function keydown(event) {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
+      event.preventDefault(); if (!event.repeat) void saveChart(event.shiftKey); return;
+    }
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
-    if (event.code === 'Space') { event.preventDefault(); if (state.playing) pause(); else void play(); }
+    if (event.code === 'Space') {
+      if (['BUTTON', 'SUMMARY'].includes(document.activeElement?.tagName)) return;
+      event.preventDefault(); if (state.playing) pause(); else void play();
+    }
     else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); history(event.shiftKey); }
-    else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); exportChart(); }
     else if (/^[0-9]$/.test(event.key)) chooseNote(event.key);
     else if (event.key === 'ArrowLeft') { event.preventDefault(); select(state.selected - 1); }
     else if (event.key === 'ArrowRight') { event.preventDefault(); select(state.selected + 1); }
   }
-  function beforeUnload(event) { if (state.dirty || state.invalid) { event.preventDefault(); event.returnValue = ''; } }
-  onMounted(async () => {
+  function beforeUnload(event) {
+    snapshot();
+    if (state.documents.some(item => item.dirty || item.invalid || item.saving)) { event.preventDefault(); event.returnValue = ''; }
+  }
+  onMounted(() => {
     document.addEventListener('keydown', keydown); window.addEventListener('beforeunload', beforeUnload);
     scheduler = setInterval(schedule, 25); animate();
-    const request = chartRequest;
-    try {
-      const files = await (await fetch('/api/files', { signal: controller.signal })).json(), name = files.find(file => /\.tja$/i.test(file));
-      if (!name) { notice('请选择 TJA 谱面和对应音频。'); return; }
-      const response = await fetch('/media/' + encodeURIComponent(name), { signal: controller.signal });
-      if (!response.ok) throw new Error('谱面读取失败');
-      const bytes = await response.arrayBuffer(); if (disposed || request !== chartRequest) return;
-      loadChart(bytes, name); await tryAudio();
-    } catch (error) { if (!disposed) notice(error.message, true); }
+    guard(() => { if (localStorage.getItem(WORKSPACE_KEY) || localStorage.getItem('tja-wave-draft')) restore(); });
   });
   onUnmounted(() => {
-    disposed = true; controller.abort(); clearTimeout(sourceTimer); clearInterval(scheduler); cancelAnimationFrame(frame);
+    disposed = true; clearTimeout(sourceTimer); clearInterval(scheduler); cancelAnimationFrame(frame);
     pause(); void context?.close(); document.removeEventListener('keydown', keydown); window.removeEventListener('beforeunload', beforeUnload);
   });
-  return { state, controls, bar, spans, visible, stats, cell, command, range, notice, pause, play, stop, previewRange, seek, select, selectCell, setCommandPosition, applySettings, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, loopCurrent, setSnap, changeCourse, openChart, openAudio, restore, exportChart, setOffset, setBpm, setDivision, clearBar, setBalloon, testHits };
+  return { state, controls, bar, spans, visible, stats, cell, command, range, duration, metadata, notice, pause, play, stop, previewRange, seek, select, selectCell, setCommandPosition, applySettings, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, loopCurrent, setSnap, changeCourse, openChart, openCharts, openAudio, autoAudio, chooseMediaDirectory, setMediaFiles, newChart, switchChart, closeChart, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
 }

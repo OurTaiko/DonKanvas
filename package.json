@@ -1,5 +1,5 @@
 {
-  "name": "tja-wave-studio",
+  "name": "web-tja-studio",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@lucide/vue": "^1.76.0",
+    "@lucide/vue": "^1.72.0",
     "tja": "0.1.3",
     "vue": "^3.5.0"
   },

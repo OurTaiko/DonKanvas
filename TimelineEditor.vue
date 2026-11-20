@@ -9,7 +9,7 @@ import { drawLongSpan, drawNote, drawNoteSelection, noteHitRadius } from './note
 import { formatTime } from './useStudio.js';
 
 const studio = inject('studio');
-const { state, controls, bar, spans, visible, cell, stats, range } = studio;
+const { state, controls, bar, spans, visible, cell, stats, range, duration } = studio;
 const timeline = ref(null), overview = ref(null), customSnap = ref(null), hover = ref(null);
 const snaps = [4, 8, 12, 16, 24, 32, 48, 64, 96, 192];
 let observer;
@@ -22,7 +22,7 @@ function canvasContext(canvas) {
 }
 function drawWave(brush, width, start, end, center, amplitude) {
   brush.fillStyle = '#438875';
-  if (!state.buffer) { brush.fillStyle = '#929c94'; brush.font = '12px Studio, sans-serif'; brush.fillText('未载入音频', 14, center); return; }
+  if (!state.buffer) { brush.fillStyle = '#929c94'; brush.font = '12px Studio, sans-serif'; brush.fillText('无伴奏 · 可播放谱面音符音', 14, center); return; }
   const peaks = state.peaks;
   for (let pixel = 0; pixel < width; pixel++) {
     const low = Math.floor((start + pixel / width * (end - start)) / state.buffer.duration * peaks.length);
@@ -33,7 +33,8 @@ function drawWave(brush, width, start, end, center, amplitude) {
   }
 }
 function draw() {
-  if (!state.chart || !timeline.value || !overview.value) return;
+  if (!timeline.value || !overview.value) return;
+  if (!state.chart) { canvasContext(timeline.value); canvasContext(overview.value); return; }
   const canvas = timeline.value;
   canvas.style.width = `${Math.max(canvas.parentElement.clientWidth - 24, Math.min(12000, Math.floor(24000 / (devicePixelRatio || 1)), controls.snap * 20 * controls.view))}px`;
   const { bars, start, end } = visible.value, { brush, width, height } = canvasContext(canvas);
@@ -101,7 +102,7 @@ function draw() {
   }
   const position = state.position;
   if (position >= start && position <= end) { brush.fillStyle = '#c43e35'; brush.fillRect(x(position), 20, 1.5, height - 40); brush.beginPath(); brush.moveTo(x(position) - 4, 20); brush.lineTo(x(position) + 4, 20); brush.lineTo(x(position), 26); brush.fill(); }
-  const overviewContext = canvasContext(overview.value), total = state.buffer?.duration || Math.max(.001, ...state.chart.bars.map(measureEnd));
+  const overviewContext = canvasContext(overview.value), total = Math.max(.001, duration.value);
   drawWave(overviewContext.brush, overviewContext.width, 0, total, overviewContext.height / 2, overviewContext.height * .44);
   overviewContext.brush.fillStyle = '#16745b18'; overviewContext.brush.fillRect(start / total * overviewContext.width, 0, (end - start) / total * overviewContext.width, overviewContext.height);
   overviewContext.brush.strokeStyle = '#16745b'; overviewContext.brush.strokeRect(start / total * overviewContext.width, .5, (end - start) / total * overviewContext.width, overviewContext.height - 1);
@@ -154,7 +155,7 @@ function pointerDown(event) {
 }
 function overviewClick(event) {
   if (!state.chart) return;
-  const rect = overview.value.getBoundingClientRect(), time = (event.clientX - rect.left) / rect.width * (state.buffer?.duration || Math.max(.001, ...state.chart.bars.map(measureEnd)));
+  const rect = overview.value.getBoundingClientRect(), time = (event.clientX - rect.left) / rect.width * Math.max(.001, duration.value);
   const containing = state.chart.bars.findLastIndex(item => time >= measureStart(item) && time < measureEnd(item));
   studio.select(Math.max(0, containing >= 0 ? containing : state.chart.bars.findLastIndex(item => measureStart(item) <= time)));
 }
@@ -164,7 +165,7 @@ function snapChange() {
   else customSnap.value?.focus();
 }
 watchEffect(draw, { flush: 'post' });
-watchEffect(() => { state.selected; controls.snap; hover.value = null; });
+watchEffect(() => { state.activeId; state.selected; controls.snap; hover.value = null; });
 onMounted(() => { observer = new ResizeObserver(draw); observer.observe(timeline.value.parentElement); observer.observe(overview.value.parentElement); });
 onUnmounted(() => observer?.disconnect());
 </script>
