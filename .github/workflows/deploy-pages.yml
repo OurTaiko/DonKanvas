@@ -33,7 +33,7 @@ jobs:
           registry-url: https://registry.npmjs.org/
 
       - name: Verify public dependency sources
-        run: node --test deployment.test.js
+        run: node --test tests/deployment.test.js
 
       - name: Install dependencies
         run: npm ci --registry=https://registry.npmjs.org/

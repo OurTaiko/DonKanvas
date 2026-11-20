@@ -137,7 +137,7 @@ test('the project popover shows only draft failures and retains project links an
     assert.match(links[index], /target="_blank"/);
     assert.match(links[index], /rel="noopener noreferrer"/);
   }
-  assert.match(readFileSync(new URL('LICENSE', import.meta.url), 'utf8'), /^MIT License/);
+  assert.match(readFileSync(new URL('../LICENSE', import.meta.url), 'utf8'), /^MIT License/);
   assert.match(project, /MIT 开源协议/);
 });
 

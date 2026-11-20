@@ -16,23 +16,37 @@
 
 顶层工具栏右侧的语言图标可展开语言选项，即时切换并标记当前选择；选中后、点击外部或按 Esc 会收起，支持键盘 Tab 导航。选择单独保存在 localStorage 的 `web-tja-studio-locale` 中，刷新后仍有效；选择“跟随浏览器”可恢复自动识别。语言设置不包含在谱面草稿中，切换语言不会修改谱面、文件名、歌曲信息、当前选择、播放状态或撤销历史。界面、辅助功能标签、画布提示、确认框和应用校验错误均支持翻译；操作系统的文件选择框及浏览器自身错误信息由浏览器决定语言。
 
-翻译集中在 `locales.js`，以简体中文原文作为键，其余文案按 English、日本語、繁體中文、한국어 的顺序维护。带参数的文案使用完整句子和 `{p0}` 等占位符；`i18n.js` 负责响应式翻译、参数插值、语言匹配及偏好保存。`node --test i18n.test.js useStudio.test.js` 检查文案完整性、占位符、语言回退、偏好持久化和编辑状态保持。
+翻译集中在 [src/locales.js](./src/locales.js)，以简体中文原文作为键，其余文案按 English、日本語、繁體中文、한국어 的顺序维护。带参数的文案使用完整句子和 `{p0}` 等占位符；[src/i18n.js](./src/i18n.js) 负责响应式翻译、参数插值、语言匹配及偏好保存。`node --test src/i18n.test.js src/useStudio.test.js` 检查文案完整性、占位符、语言回退、偏好持久化和编辑状态保持。
 
 ## 构建与结构
 
 运行 `npm run build` 生成 `dist/`，再运行 `npm run preview` 验证构建。将 `dist/` 部署到任意 HTTP(S) 静态托管即可，也支持部署在子目录，无需 `/api/files` 或 `/media/` 接口。Node.js 仅供开发和构建使用；浏览器运行不需要 Node.js。不要直接双击构建后的 HTML，请使用静态文件服务。
 
-- `App.vue`：应用外壳、文件操作、播放与混音控制。
-- `TimelineEditor.vue`：Canvas 波形、时间网格、格子检查器与全局导航。
-- `MeasureEditor.vue`：小节源码、任意落点指令与指令列表。
-- `courses.js` / `CourseControls.vue`：难度与单人、P1/P2 分谱识别、增删和结构管理。
-- `BranchControls.vue`：统一路线分段按钮与可搜索、定位的逐处分歧设置。
-- `useStudio.js`：多谱面状态、兼容旧版本的本地草稿、Web Audio 调度与生命周期清理。
-- `history.js`：可逆文本 diff，每份谱面最多保留 50 步编辑历史。
-- `metadata.js`：歌曲元数据读取、验证与保留未编辑内容的修改。
-- `i18n.js` / `locales.js`：五语言界面、校验提示、浏览器语言识别与独立语言偏好。
-- `chart.js` 等纯 JavaScript 模块：保留原有解析、分段时序、精确落点和音效逻辑，界面不再依赖全局解析器或手动 DOM 重建。
-- `vite.config.js`：Vue 与静态构建配置，不提供本机文件读取接口，构建产物不包含本地谱面和音频。Windows 可双击 `start.cmd` 启动开发服务器。
+- [src/](./src/)：应用源码、样式、原始图标及共置的单元测试。
+  - [App.vue](./src/App.vue)：应用外壳、文件操作、播放与混音控制。
+  - [TimelineEditor.vue](./src/TimelineEditor.vue)：Canvas 波形、时间网格、格子检查器与全局导航。
+  - [MeasureEditor.vue](./src/MeasureEditor.vue)：小节源码、任意落点指令与指令列表。
+  - [courses.js](./src/courses.js) / [CourseControls.vue](./src/CourseControls.vue)：难度与单人、P1/P2 分谱识别、增删和结构管理。
+  - [BranchControls.vue](./src/BranchControls.vue)：统一路线分段按钮与可搜索、定位的逐处分歧设置。
+  - [useStudio.js](./src/useStudio.js)：多谱面状态、兼容旧版本的本地草稿、Web Audio 调度与生命周期清理。
+  - [history.js](./src/history.js)：可逆文本 diff，每份谱面最多保留 50 步编辑历史。
+  - [metadata.js](./src/metadata.js)：歌曲元数据读取、验证与保留未编辑内容的修改。
+  - [i18n.js](./src/i18n.js) / [locales.js](./src/locales.js)：五语言界面、校验提示、浏览器语言识别与独立语言偏好。
+  - [chart.js](./src/chart.js) 等纯 JavaScript 模块：解析、分段时序、精确落点和音效逻辑。
+- [public/](./public/)：直接复制到构建产物的 PWA 安装图标。
+- [tests/](./tests/)：部署约束与 PWA 构建集成测试。
+- [vite.config.js](./vite.config.js)：Vue、PWA 与静态构建配置，不提供本机文件读取接口，构建产物不包含本地谱面和音频。Windows 可双击 [start.cmd](./start.cmd) 启动开发服务器。
+- 根目录只保留项目入口、依赖清单与锁文件、配置、说明、协议和启动脚本；构建产物与依赖目录不提交。
+
+## PWA 安装与离线使用
+
+生产构建包含 Web App Manifest、192/512 像素安装图标、Apple Touch 图标和 Service Worker。通过 HTTPS（本机可使用 localhost / 127.0.0.1）访问后，可在支持的 Chrome / Edge 中通过浏览器安装入口安装为独立窗口应用；iOS Safari 可使用“分享 → 添加到主屏幕”。入口显示和安装能力由浏览器决定，无需安装也能正常使用。
+
+首次联网打开并等待应用资源缓存完成后，即可离线再次打开、编辑本地 TJA 和手动载入本地音频。缓存仅包含构建出的应用页面、脚本、样式、清单和图标，不缓存用户谱面或音频，也不读取服务器目录。草稿沿用现有浏览器本地存储；音频刷新后仍需重新载入，草稿不能替代文件保存。首次访问或缓存被浏览器清理后需要联网。
+
+新版本在联网访问时后台下载，不会强制刷新正在编辑的页面。关闭该应用的所有标签页和独立窗口后，下一次打开使用已下载的新版本。PWA 与草稿按站点来源隔离，安装应用与同来源浏览器页面共用草稿。
+
+开发服务器不启用 Service Worker，避免离线缓存干扰热更新；本机验证请运行 `npm run build` 和 `npm run preview`。保持 HTTPS 与正常的 JavaScript / JSON MIME 类型，静态服务应让 Service Worker 脚本及时重新验证，避免对其设置长期不可变缓存。
 
 ## GitHub Pages
 
@@ -40,7 +54,7 @@
 
 首次部署前，在仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。流程使用 Node.js 24，执行 `npm ci`、`npm run build`，通过官方 Pages Actions 上传并发布 `dist/`，不需要个人访问令牌，也不需要提交构建产物或创建 `gh-pages` 分支。
 
-Actions 在 Node.js 设置和 `npm ci --registry=https://registry.npmjs.org/` 中显式指定公共 npm 源。锁文件的所有 tarball 地址均指向 `https://registry.npmjs.org/`；安装前运行 `node --test deployment.test.js` 检查，避免意外提交本机镜像或私有源地址。此配置不更改开发者本机的 npm 源；依赖版本与完整性校验值保持锁定。若本机屏蔽公共源，可使用已有依赖运行测试与构建；公共源的实际下载安装需在可访问公共源的 CI 环境验证。
+Actions 在 Node.js 设置和 `npm ci --registry=https://registry.npmjs.org/` 中显式指定公共 npm 源。锁文件的所有 tarball 地址均指向 `https://registry.npmjs.org/`；安装前运行 `node --test tests/deployment.test.js` 检查，避免意外提交本机镜像或私有源地址。此配置不更改开发者本机的 npm 源；依赖版本与完整性校验值保持锁定。若本机屏蔽公共源，可使用已有依赖运行测试与构建；公共源的实际下载安装需在可访问公共源的 CI 环境验证。
 
 如果 **Settings → Environments → github-pages** 设置了部署分支限制，请允许 `master` 部署。
 
@@ -112,7 +126,7 @@ Actions 在 Node.js 设置和 `npm ci --registry=https://registry.npmjs.org/` �
 ## 编辑
 
 - 左侧独立歌曲工作区包含可展开的歌曲信息及带音乐列表图标的“谱面列表”，可以独立纵向滚动；窄屏时移至编辑区上方。列表默认展开五种难度的单人、多人 - P1、多人 - P2，缺失项弱化显示并带加号标记；导入的其他难度及多人共用谱也会保留显示。已有分谱点击后直接编辑，正文、气球、指令与试听只针对当前分谱，保存始终包含整份 TJA。
-- 难度名称跟随界面语言；简体中文为简单 / 普通 / 困难 / 魔王 / 里魔王，TJA 中的 Easy / Normal / Hard / Oni / Edit 标识不变。难度旁使用不同颜色和符号的简洁占位图标，并非太鼓原版素材；图标集中在 DifficultyIcon.vue，便于以后替换为有权使用的素材。自定义难度保留原名并显示通用音乐图标。
+- 难度名称跟随界面语言；简体中文为简单 / 普通 / 困难 / 魔王 / 里魔王，TJA 中的 Easy / Normal / Hard / Oni / Edit 标识不变。难度旁使用不同颜色和符号的简洁占位图标，并非太鼓原版素材；图标集中在 [DifficultyIcon.vue](./src/DifficultyIcon.vue)，便于以后替换为有权使用的素材。自定义难度保留原名并显示通用音乐图标。
 - 已有谱面的模式行在名称后显示 ★n；已有谱面未设置有效星级时显示 ★—，不存在的谱面不显示星级。点击缺失项会确认创建该难度和模式的空白谱面，取消不修改内容或选择。默认 1 星；多人另一方已存在时沿用其星级，但不复制音符、气球或指令。创建 P1 不会顺带创建 P2，反之亦然。
 - 当前选中谱面的星级在上方难度、模式旁显示为 ★n，十颗星的末尾不再显示重复的数值。十颗星可点击或横向拖动，也支持方向键及 Home / End；Easy / Normal / Hard / Oni / Edit 上限依次为 5 / 7 / 8 / 10 / 10 星，不可选的星星显示灰色。单人星级独立；同一难度的多人分谱共享星级，调整任意 P1 / P2 都会同步更新另一方及共用多人谱的 LEVEL，不影响单人或其他难度。拖动时上方数值同步预览，松开后形成一次可撤销修改，取消拖动不改源码。导入时不自动改写原有 LEVEL；主动选择星级后会同步已有多人分谱。
 - 已有模式行最右侧在鼠标悬停或键盘聚焦时显示小 ×，触屏上常显；点击后弹窗确认，仅删除该行谱面，删除 P1 不影响 P2。删除非当前行不会切换正在编辑的谱面或重置其选点、分歧路线及循环范围。允许删除最后一张谱面；此时保留歌曲元数据，核心编辑区显示创建引导，并保留撤销、重做入口。仅含歌曲信息的 TJA 也能保存、另存为和恢复草稿，新增及删除谱面均可撤销恢复。
@@ -207,8 +221,8 @@ Actions 在 Node.js 设置和 `npm ci --registry=https://registry.npmjs.org/` �
 
 运行 `npm test` 和 `npm run build`。解析器测试包含真实示例谱面，因此需保留上一级的原始 TJA。Vue 状态回归覆盖精确选点、指令编辑、气球次数、多谱面隔离、50 步 diff 撤销重做、工作区与旧草稿恢复、无效源码保留、连续视窗与播放跟随、音频异步切换、无伴奏播放与时钟、WAVE 目录匹配和过期请求隔离、保存/另存为、取消与写入失败、保存期间编辑和切换、输入框内快捷键及卸载清理。
 
-`node --test deployment.test.js` 无需安装依赖或联网即可检查锁文件与 CI 的公共源约束。小节线与指令保留的回归位于 `chart.test.js`、`useStudio.test.js`；翻译完整性由 `i18n.test.js` 覆盖。
+`node --test tests/deployment.test.js` 无需安装依赖或联网即可检查锁文件与 CI 的公共源约束。[PWA 构建测试](./tests/pwa.test.js) 检查根路径及子目录下的安装清单、图标和离线预缓存，构建临时产物后自动清理。小节线与指令保留的回归位于 [src/chart.test.js](./src/chart.test.js)、[src/useStudio.test.js](./src/useStudio.test.js)；翻译完整性由 [src/i18n.test.js](./src/i18n.test.js) 覆盖。
 
-分歧解析、状态隔离、源位置、结构校验及两类气球次数列表由 `branch.test.js` 覆盖；路线切换、跨路线历史、保存、草稿和试听调度由 `useStudio.test.js` 覆盖。
+分歧解析、状态隔离、源位置、结构校验及两类气球次数列表由 [src/branch.test.js](./src/branch.test.js) 覆盖；路线切换、跨路线历史、保存、草稿和试听调度由 [src/useStudio.test.js](./src/useStudio.test.js) 覆盖。
 
-难度分组、增删、双人结构及跨声部气球隔离由 `courses.test.js` 覆盖；A/B 的精确落点、绘制、命中半径、键盘与调度由对应 note、grid 和 Vue 状态测试覆盖。
+难度分组、增删、双人结构及跨声部气球隔离由 [src/courses.test.js](./src/courses.test.js) 覆盖；A/B 的精确落点、绘制、命中半径、键盘与调度由对应 note、grid 和 Vue 状态测试覆盖。

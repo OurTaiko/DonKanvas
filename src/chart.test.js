@@ -269,7 +269,7 @@ test('course edits preserve the other difficulty', () => {
   assert.equal(parseChart(edited, TJAParser, 1).bars[0].notes, '3000');
 });
 test('real Shift-JIS chart parses with correct timing and round trips', () => {
-  const decoded = decodeChart(readFileSync(new URL('../夜想陽炎 - short ver.tja', import.meta.url)));
+  const decoded = decodeChart(readFileSync(new URL('../../夜想陽炎 - short ver.tja', import.meta.url)));
   const parsed = parseChart(decoded.text, TJAParser);
   assert.equal(parsed.title, '夜想陽炎');
   assert.equal(parsed.bars[0].start, 0.825);
