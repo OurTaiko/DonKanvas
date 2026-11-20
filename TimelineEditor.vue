@@ -1,4 +1,5 @@
 <script setup>
+import { t } from './i18n.js';
 import { computed, inject, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
 import { Undo2, Redo2 } from '@lucide/vue';
 import { barTimeAt, barFractionAt } from './chart.js';
@@ -29,14 +30,15 @@ function syncScroll() {
 function scrollTimeline() {
   if (!state.chart) return;
   const element = viewport.value, maximum = element.scrollWidth - element.clientWidth;
-  const automatic = programmaticLeft !== null && Math.abs(element.scrollLeft - programmaticLeft) < 1;
+  const expected = scrollTime.value ? (visible.value.start - timelineBounds.value.start) / scrollTime.value * maximum : 0;
+  const automatic = Math.abs(element.scrollLeft - expected) < 1 || programmaticLeft !== null && Math.abs(element.scrollLeft - programmaticLeft) < 1;
   programmaticLeft = null;
   if (wheelTarget !== null && Math.abs(element.scrollLeft - wheelTarget) < 1) wheelTarget = null;
-  studio.panTimeline(timelineBounds.value.start + (maximum ? element.scrollLeft / maximum * scrollTime.value : 0), !automatic);
+  if (!automatic) studio.panTimeline(timelineBounds.value.start + (maximum ? element.scrollLeft / maximum * scrollTime.value : 0));
 }
 function scrollByPixels(delta) {
   const element = viewport.value;
-  state.followPlayback = false; programmaticLeft = null;
+  studio.panTimeline(visible.value.start); programmaticLeft = null;
   wheelTarget = Math.max(0, Math.min(element.scrollWidth - element.clientWidth, (wheelTarget ?? element.scrollLeft) + delta));
   element.scrollTo({ left: wheelTarget, behavior: state.playing || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
 }
@@ -50,11 +52,12 @@ function wheelTimeline(event) {
 function keydownTimeline(event) {
   if (event.ctrlKey || event.metaKey || event.altKey || !state.chart) return;
   const width = viewport.value.clientWidth;
-  const deltas = { ArrowLeft: -40, ArrowRight: 40, PageUp: -width, PageDown: width, Home: -viewport.value.scrollWidth, End: viewport.value.scrollWidth };
+  const deltas = { PageUp: -width, PageDown: width, Home: -viewport.value.scrollWidth, End: viewport.value.scrollWidth };
   if (!(event.key in deltas)) return;
   event.preventDefault(); event.stopPropagation(); scrollByPixels(deltas[event.key]);
 }
 function stopScrolling() {
+  if (state.chart) studio.panTimeline(visible.value.start, false);
   wheelTarget = null; programmaticLeft = null;
   viewport.value.scrollTo({ left: viewport.value.scrollLeft, behavior: 'instant' });
 }
@@ -67,7 +70,7 @@ function canvasContext(canvas) {
 }
 function drawWave(brush, width, start, end, center, amplitude) {
   brush.fillStyle = '#438875';
-  if (!state.buffer) { brush.fillStyle = '#929c94'; brush.font = '12px Studio, sans-serif'; brush.fillText('无伴奏 · 可播放谱面音符音', 14, center); return; }
+  if (!state.buffer) { brush.fillStyle = '#929c94'; brush.font = '12px Studio, sans-serif'; brush.fillText(t('无伴奏 · 可播放谱面音符音'), 14, center); return; }
   const peaks = state.peaks;
   for (let pixel = 0; pixel < width; pixel++) {
     const low = Math.floor((start + pixel / width * (end - start)) / state.buffer.duration * peaks.length);
@@ -97,7 +100,6 @@ function draw() {
     }
     if (item.delay) {
       brush.fillStyle = '#d9a83b22'; brush.fillRect(x(measureStart(item)), 23, x(item.start) - x(measureStart(item)), height - 48);
-      brush.fillStyle = '#926b14'; brush.font = '10px Studio, sans-serif'; brush.fillText(`DELAY ${item.delay}s`, x(measureStart(item)) + 4, 36);
     }
     for (const event of item.events.filter(event => event.name === 'DELAY')) { brush.fillStyle = '#d9a83b22'; brush.fillRect(x(event.time), 23, x(event.endTime) - x(event.time), height - 48); }
     if (item.index === state.selected) { brush.fillStyle = '#16745b08'; brush.fillRect(x(measureStart(item)), 0, x(measureEnd(item)) - x(measureStart(item)), height); }
@@ -109,16 +111,17 @@ function draw() {
     }
     brush.setLineDash([]);
     for (let step = 0; step < GRID_DIVISIONS; step++) {
+      if (step === 0 && !item.barline) continue;
       const pos = x(barTimeAt(item, step / GRID_DIVISIONS));
       brush.strokeStyle = step === 0 ? '#6d9480' : step % 4 === 0 ? '#a4bcae' : '#e3e9e1'; brush.lineWidth = 1; brush.beginPath(); brush.moveTo(Math.round(pos) + .5, 23); brush.lineTo(Math.round(pos) + .5, height - 25); brush.stroke();
     }
     brush.fillStyle = '#68776e'; brush.font = '11px Studio, sans-serif'; brush.fillText(`${String(item.index + 1).padStart(3, '0')}  ${item.gogo ? 'GOGO' : ''}`, x(item.start) + 8, 15);
-    for (const event of item.events) {
+    for (const event of item.instructions) {
       if (event.time < start || event.time > end) continue;
       const pos = x(event.time);
       brush.strokeStyle = '#ad7e27'; brush.setLineDash([3, 3]); brush.beginPath(); brush.moveTo(pos, 23); brush.lineTo(pos, height - 25); brush.stroke(); brush.setLineDash([]);
       brush.font = '10px Studio, sans-serif';
-      const label = event.name === 'SCROLL' ? `×${event.value}` : event.name.startsWith('GOGO') ? event.name === 'GOGOSTART' ? 'GOGO ON' : 'GOGO OFF' : `${event.name} ${event.value}`;
+      const label = event.name === 'SCROLL' ? `×${event.value}` : event.name.startsWith('GOGO') ? event.name === 'GOGOSTART' ? 'GOGO ON' : 'GOGO OFF' : event.value ? `${event.name} ${event.value}` : event.name;
       const labelWidth = brush.measureText(label).width, left = Math.max(3, Math.min(pos + 3, width - labelWidth - 3));
       let row = 0;
       while (row < 6 && (eventLabelEnds[row] ?? -Infinity) > left - 6) row++;
@@ -199,7 +202,10 @@ function pointerDown(event) {
   if (!state.chart || state.invalid) return;
   const { rect, start, end, time, item } = point(event);
   if (event.clientY - rect.top < rect.height - 100) { studio.seek(time); return; }
-  if (item) studio.selectCell({ bar: item.index, divisions: controls.snap, ...timelineCell(item, time, rect.width / (end - start)) });
+  if (item) {
+    event.preventDefault(); viewport.value.focus({ preventScroll: true });
+    studio.selectCell({ bar: item.index, divisions: controls.snap, ...timelineCell(item, time, rect.width / (end - start)) });
+  }
 }
 function overviewClick(event) {
   if (!state.chart) return;
@@ -226,24 +232,24 @@ onUnmounted(() => observer?.disconnect());
 </script>
 
 <template>
-  <section class="overview"><div class="section-label"><span>全曲总览</span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div><canvas id="overview" ref="overview" aria-label="全曲波形，点击跳转" role="img" @click="overviewClick"></canvas></section>
+  <section class="overview"><div class="section-label"><span>{{ t('全曲总览') }}</span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div><canvas id="overview" ref="overview" :aria-label="t('全曲波形，点击跳转')" role="img" @click="overviewClick"></canvas></section>
   <div class="workspace">
     <section class="editor">
-      <div class="editor-bar"><div class="section-label"><span id="selection">小节 {{ String(state.selected + 1).padStart(3, '0') }}</span><span id="meter">{{ bar ? `${bar.bpm} BPM · ${bar.numerator}/${bar.denominator} · SCROLL ${bar.scroll}×${bar.gogo ? ' · Go-Go' : ''}${bar.delay ? ` · DELAY ${bar.delay}s` : ''}` : '' }}</span></div><div class="editor-tools"><button id="undo" class="icon" aria-label="撤销" title="撤销（Ctrl+Z）" :disabled="!state.undo.length" @click="studio.history()"><Undo2 /></button><button id="redo" class="icon" aria-label="重做" title="重做（Ctrl+Shift+Z）" :disabled="!state.redo.length" @click="studio.history(true)"><Redo2 /></button><label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox">跟随播放</label><label title="以基础 BPM 的 4/4 小节时长作为缩放参考">缩放<select id="view" v-model.number="controls.view" aria-label="时间轴缩放"><option v-for="[value, label] in zooms" :key="value" :value="value">{{ label }} 小节宽</option></select></label></div></div>
-      <div class="snap-controls"><label>吸附细分<select id="snap-division" v-model="controls.snapChoice" @change="snapChange"><option v-for="value in snaps" :key="value" :value="String(value)">{{ value }} 分</option><option value="custom">自定义</option></select></label><label v-show="controls.snapChoice === 'custom'" id="custom-snap-label">每小节等分<input id="custom-snap" ref="customSnap" v-model.number="controls.customSnap" type="number" min="1" max="768" step="1" @change="studio.setSnap(Number(controls.customSnap))"></label><output id="snap-position">{{ hover ? `小节 ${hover.bar + 1} · ${Number((hover.fraction * controls.snap).toFixed(3))}/${controls.snap}` : `${controls.snap} 等分` }}</output></div>
-      <div class="lane-head"><span>音乐波形</span><span>AMPLITUDE</span></div>
-      <div ref="viewport" class="timeline-wrap" tabindex="0" role="region" aria-label="连续谱面时间轴，可用滚轮左右滚动" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" aria-label="音乐波形与可编辑音符网格" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @contextmenu.prevent></canvas></div></div>
+      <div class="editor-bar"><div class="section-label"><span id="selection">{{ t('小节') }} {{ String(state.selected + 1).padStart(3, '0') }}</span><span id="meter">{{ bar ? `${bar.bpm} BPM · ${bar.numerator}/${bar.denominator} · SCROLL ${bar.scroll}×${bar.gogo ? ' · Go-Go' : ''}${bar.delay ? ` · DELAY ${bar.delay}s` : ''}` : '' }}</span></div><div class="editor-tools"><button id="undo" class="icon" :aria-label="t('撤销')" :title="t('撤销（Ctrl+Z）')" :disabled="!state.undo.length" @click="studio.history()"><Undo2 /></button><button id="redo" class="icon" :aria-label="t('重做')" :title="t('重做（Ctrl+Shift+Z）')" :disabled="!state.redo.length" @click="studio.history(true)"><Redo2 /></button><label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox">{{ t('跟随播放') }}</label><label :title="t('以基础 BPM 的 4/4 小节时长作为缩放参考')">{{ t('缩放') }}<select id="view" v-model.number="controls.view" :aria-label="t('时间轴缩放')"><option v-for="[value, label] in zooms" :key="value" :value="value">{{ label }} {{ t('小节宽') }}</option></select></label></div></div>
+      <div class="snap-controls"><label>{{ t('吸附细分') }}<select id="snap-division" v-model="controls.snapChoice" @change="snapChange"><option v-for="value in snaps" :key="value" :value="String(value)">{{ value }} {{ t('分') }}</option><option value="custom">{{ t('自定义') }}</option></select></label><label v-show="controls.snapChoice === 'custom'" id="custom-snap-label">{{ t('每小节等分') }}<input id="custom-snap" ref="customSnap" v-model.number="controls.customSnap" type="number" min="1" max="768" step="1" @change="studio.setSnap(Number(controls.customSnap))"></label><output id="snap-position">{{ hover ? t('小节 {p0} · {p1}/{p2}', { p0: hover.bar + 1, p1: Number((hover.fraction * controls.snap).toFixed(3)), p2: controls.snap }) : t('{p0} 等分', { p0: controls.snap }) }}</output></div>
+      <div class="lane-head"><span>{{ t('音乐波形') }}</span><span>{{ t('振幅') }}</span></div>
+      <div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @contextmenu.prevent></canvas></div></div>
       <section class="cell-inspector">
-        <div class="cell-heading"><h3>格子信息</h3><span id="cell-current">{{ cell ? `${cell.name} · ${cell.note}` : '未选择' }}</span></div>
-        <dl><div><dt>小节 / 格位</dt><dd id="cell-location">{{ cell ? `第 ${cell.bar + 1} 小节 · ${Number((cell.numerator / cell.denominator * cell.divisions + 1).toFixed(3))}/${cell.divisions} 格` : '—' }}</dd></div><div><dt>音乐时间</dt><dd id="cell-time">{{ cell ? `${formatTime(cell.time)} · ${cell.time.toFixed(4)} s` : '—' }}</dd></div><div><dt>小节内位置</dt><dd id="cell-fraction">{{ cell ? `${cell.numerator}/${cell.denominator}` : '—' }}</dd></div><div><dt>长音状态</dt><dd id="cell-long">{{ cell?.span ? `${NOTE_TYPES[Number(cell.span.note)].name} · ${(cell.span.end - cell.span.start).toFixed(3)} s · ${cell.span.complete ? '已结束' : '缺少结束标记'}` : '—' }}</dd></div></dl>
-        <label v-if="cell && cell.ordinal >= 0" class="balloon-control"><span>气球敲击次数</span><input id="balloon-count" type="number" min="1" step="1" aria-label="气球敲击次数" :value="Number.isSafeInteger(cell.count) && cell.count > 0 ? cell.count : ''" placeholder="未设置" :disabled="state.invalid" @change="studio.setBalloon(Number($event.target.value))"><output id="balloon-count-state">第 {{ cell.ordinal + 1 }} 个气球{{ Number.isSafeInteger(cell.count) && cell.count > 0 ? '' : ' · 未设置次数' }}</output></label>
-        <div id="palette" class="palette"><button v-for="type in NOTE_TYPES" :key="type.value" :title="`${type.name}（${type.value}）`" :aria-label="`${type.name}（${type.value}）`" :data-value="type.value" :disabled="!cell || state.invalid" :class="{ active: cell?.note === type.value }" :aria-pressed="cell?.note === type.value" @click="studio.chooseNote(type.value)"><span class="choice-symbol" :class="type.shape"></span><span class="choice-name">{{ type.name }}</span><small>{{ type.value }}</small></button></div>
+        <div class="cell-heading"><h3>{{ t('格子信息') }}</h3><span id="cell-current">{{ cell ? `${cell.name} · ${cell.note}` : t('未选择') }}</span></div>
+        <dl><div><dt>{{ t('小节 / 格位') }}</dt><dd id="cell-location">{{ cell ? t('第 {p0} 小节 · {p1}/{p2} 格', { p0: cell.bar + 1, p1: Number((cell.numerator / cell.denominator * cell.divisions + 1).toFixed(3)), p2: cell.divisions }) : '—' }}</dd></div><div><dt>{{ t('音乐时间') }}</dt><dd id="cell-time">{{ cell ? `${formatTime(cell.time)} · ${cell.time.toFixed(4)} s` : '—' }}</dd></div><div><dt>{{ t('小节内位置') }}</dt><dd id="cell-fraction">{{ cell ? `${cell.numerator}/${cell.denominator}` : '—' }}</dd></div><div><dt>{{ t('长音状态') }}</dt><dd id="cell-long">{{ cell?.span ? `${t(NOTE_TYPES[Number(cell.span.note)].name)} · ${(cell.span.end - cell.span.start).toFixed(3)} s · ${cell.span.complete ? t('已结束') : t('缺少结束标记')}` : '—' }}</dd></div></dl>
+        <label v-if="cell && cell.ordinal >= 0" class="balloon-control"><span>{{ t('气球敲击次数') }}</span><input id="balloon-count" type="number" min="1" step="1" :aria-label="t('气球敲击次数')" :value="Number.isSafeInteger(cell.count) && cell.count > 0 ? cell.count : ''" :placeholder="t('未设置')" :disabled="state.invalid" @change="studio.setBalloon(Number($event.target.value))"><output id="balloon-count-state">{{ t('第 {p0} 个气球{p1}', { p0: cell.ordinal + 1, p1: Number.isSafeInteger(cell.count) && cell.count > 0 ? '' : t(' · 未设置次数') }) }}</output></label>
+        <div id="palette" class="palette"><button v-for="type in NOTE_TYPES" :key="type.value" :title="`${t(type.name)}（${type.value}）`" :aria-label="`${t(type.name)}（${type.value}）`" :data-value="type.value" :disabled="!cell || state.invalid" :class="{ active: cell?.note === type.value }" :aria-pressed="cell?.note === type.value" @click="studio.chooseNote(type.value)"><span class="choice-symbol" :class="type.shape"></span><span class="choice-name">{{ t(type.name) }}</span><small>{{ type.value }}</small></button></div>
       </section>
-      <div class="editor-footer"><span id="note-count">{{ stats.total }} NOTES</span><span id="position-info">主网格 16 格 · 吸附 {{ controls.snap }} 等分 · 源码 {{ bar?.notes.length || 0 }} 格</span></div>
+      <div class="editor-footer"><span id="note-count">{{ t('音符数：{p0}', { p0: stats.total }) }}</span><span id="position-info">{{ t('主网格 16 格 · 吸附 {p0} 等分 · 源码 {p1} 格', { p0: controls.snap, p1: bar?.notes.length || 0 }) }}</span></div>
     </section>
     <slot />
   </div>
-  <section class="measure-section"><div class="section-label"><span>小节导航</span><span id="total-notes">{{ stats.all }} NOTES</span></div><div id="measures"><button v-for="item in state.chart?.bars || []" :key="item.index" :class="{ active: item.index === state.selected, gogo: item.gogo, 'in-loop': controls.loop && item.index + 1 >= range[0] && item.index + 1 <= range[1] }" :aria-label="`小节 ${item.index + 1}`" :aria-pressed="item.index === state.selected" @click="studio.select(item.index)"><span>{{ String(item.index + 1).padStart(3, '0') }}</span><span class="mini-notes"><i v-for="(note, index) in [...item.notes].filter(note => note !== '0').slice(0, 10)" :key="index" :class="{ blue: '24'.includes(note) }"></i></span></button></div></section>
+  <section class="measure-section"><div class="section-label"><span>{{ t('小节导航') }}</span><span id="total-notes">{{ t('音符数：{p0}', { p0: stats.all }) }}</span></div><div id="measures"><button v-for="item in state.chart?.bars || []" :key="item.index" :class="{ active: item.index === state.selected, gogo: item.gogo, 'in-loop': controls.loop && item.index + 1 >= range[0] && item.index + 1 <= range[1] }" :aria-label="t('小节 {p0}', { p0: item.index + 1 })" :aria-pressed="item.index === state.selected" @click="studio.select(item.index)"><span>{{ String(item.index + 1).padStart(3, '0') }}</span><span class="mini-notes"><i v-for="(note, index) in [...item.notes].filter(note => note !== '0').slice(0, 10)" :key="index" :class="{ blue: '24'.includes(note) }"></i></span></button></div></section>
 </template>
 
 <style>

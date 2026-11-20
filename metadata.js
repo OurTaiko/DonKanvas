@@ -1,3 +1,4 @@
+import { message, LocalizedError } from './i18n.js';
 export const SONG_FIELDS = [
   { key: 'TITLE', label: '曲名' },
   { key: 'SUBTITLE', label: '副标题' },
@@ -23,12 +24,12 @@ export function setSongMetadata(text, values) {
   const current = songMetadata(text), changes = [];
   for (const [key, raw] of Object.entries(values)) {
     const field = SONG_FIELDS.find(field => field.key === key);
-    if (!field) throw new Error(`不支持的歌曲字段：${key}`);
+    if (!field) throw new LocalizedError(message('不支持的歌曲字段：{p0}', { p0: key }));
     const value = String(raw).trim();
-    if (/[\r\n\0]/.test(value)) throw new Error(`${field.label}不能包含换行或空字符。`);
+    if (/[\r\n\0]/.test(value)) throw new LocalizedError(message('{p0}不能包含换行或空字符。', { p0: message(field.label) }));
     if (field.numeric && (value || key === 'BPM')) {
       const number = Number(value);
-      if (!Number.isFinite(number) || (key === 'BPM' && number <= 0) || (key === 'DEMOSTART' && number < 0)) throw new Error(`${field.label}须为${key === 'BPM' ? '正数' : key === 'DEMOSTART' ? '非负数' : '有限数值'}。`);
+      if (!Number.isFinite(number) || (key === 'BPM' && number <= 0) || (key === 'DEMOSTART' && number < 0)) throw new LocalizedError(message('{p0}须为{p1}。', { p0: message(field.label), p1: key === 'BPM' ? message('正数') : key === 'DEMOSTART' ? message('非负数') : message('有限数值') }));
     }
     if (value !== current[key]) changes.push([key, value]);
   }

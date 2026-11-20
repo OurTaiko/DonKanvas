@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRenderer, nextTick } from 'vue';
 import { useStudio } from './useStudio.js';
+import { locale } from './i18n.js';
 
 const chart = 'TITLE:Vue session\nBPM:120\nOFFSET:0\nCOURSE:Oni\nLEVEL:1\n#START\n1000,\n2000,\n#END\n';
 
@@ -31,6 +32,101 @@ function mountStudio(saved = new Map()) {
 
 const file = (name = 'fixture.tja', text = chart) => ({ name, arrayBuffer: async () => new TextEncoder().encode(text).buffer });
 const workspace = saved => JSON.parse(saved.get('tja-wave-workspace'));
+
+test('barline edits are undoable, persist in drafts and remain isolated between documents', async () => {
+  const { studio, saved, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file()); const first = studio.state.activeId;
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 16, divisions: 16 });
+    studio.applySettings({ barline: false });
+    assert.equal(studio.bar.value.barline, false);
+    assert.equal(studio.state.chart.bars[1].barline, false);
+    assert.ok(workspace(saved).documents[0].text.includes('#BARLINEOFF'));
+    assert.equal(studio.command.value.commands[0].name, 'BARLINEOFF');
+    studio.history(); assert.equal(studio.bar.value.barline, true);
+    studio.history(true); assert.equal(studio.bar.value.barline, false);
+    studio.newChart(); assert.equal(studio.bar.value.barline, true);
+    studio.switchChart(first); assert.equal(studio.bar.value.barline, false);
+    studio.restore(); assert.equal(studio.bar.value.barline, false);
+    studio.clearSettings(); assert.equal(studio.bar.value.barline, true);
+    assert.equal(studio.state.undo.length, 2);
+  } finally { cleanup(); }
+});
+
+test('language changes update existing notices and cells without touching chart state or history', async () => {
+  const { studio, saved, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file('咚.tja', chart.replace('TITLE:Vue session', 'TITLE:歌曲')));
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 16, divisions: 16 });
+    studio.chooseNote('7');
+    const text = studio.state.text, source = studio.state.source, undo = studio.state.undo;
+    const persisted = saved.get('tja-wave-workspace'), selected = studio.state.selectedCell;
+    const cases = [['en', 'Balloon', 'Changes synchronized.'], ['ja', '風船', '変更を同期しました。'], ['zh-TW', '氣球', '變更已同步。'], ['ko', '풍선', '변경 사항이 동기화되었습니다.'], ['zh-CN', '气球', '更改已同步。']];
+    for (const [code, name, notice] of cases) {
+      locale.value = code; await nextTick();
+      assert.equal(studio.cell.value.name, name); assert.equal(studio.state.notice, notice);
+      assert.equal(studio.state.filename, '咚.tja'); assert.equal(studio.state.chart.title, '歌曲');
+      assert.equal(studio.state.text, text); assert.equal(studio.state.source, source);
+      assert.equal(studio.state.undo, undo); assert.equal(studio.state.selectedCell, selected);
+      assert.equal(studio.state.dirty, true); assert.equal(saved.get('tja-wave-workspace'), persisted);
+    }
+    studio.setBpm(0);
+    assert.equal(studio.state.error, true);
+    locale.value = 'en'; assert.equal(studio.state.notice, 'BPM must be positive.');
+    locale.value = 'ja'; assert.equal(studio.state.notice, 'BPM は正の数で指定してください。');
+  } finally { locale.value = 'zh-CN'; cleanup(); }
+});
+
+test('Escape deselects notes without editing and canceled selections stay cleared across tabs', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file()); const first = studio.state.activeId;
+    studio.selectCell({ bar: 1, numerator: 0, denominator: 16, divisions: 16 });
+    const text = studio.state.text, source = studio.state.source, position = studio.state.position;
+    let prevented = false;
+    handlers.get('keydown')({ key: 'Escape', preventDefault() { prevented = true; } });
+    assert.equal(prevented, true); assert.equal(studio.cell.value, null); assert.equal(studio.state.commandCell, null);
+    for (const key of ['1', '8', '0', 'Delete', 'Backspace', 'Escape']) handlers.get('keydown')({ key, preventDefault() { assert.fail('Deselected editor must not consume this key'); } });
+    assert.equal(studio.state.text, text); assert.equal(studio.state.source, source);
+    assert.equal(studio.state.position, position); assert.equal(studio.state.selected, 1);
+    assert.equal(studio.state.dirty, false); assert.equal(studio.state.undo.length, 0); assert.equal(studio.state.redo.length, 0);
+    studio.newChart(); studio.switchChart(first);
+    assert.equal(studio.cell.value, null); assert.equal(studio.state.commandCell, null);
+  } finally { cleanup(); }
+});
+
+test('Escape preserves native input, dialog, modified and composing behavior', () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const native = overrides => handlers.get('keydown')({ key: 'Escape', preventDefault() { assert.fail('Native Escape action must be preserved'); }, ...overrides });
+  try {
+    studio.newChart(); studio.selectCell({ bar: 0, numerator: 0, denominator: 16, divisions: 16 });
+    for (const activeElement of [
+      ...['INPUT', 'TEXTAREA', 'SELECT'].map(tagName => ({ tagName })),
+      { tagName: 'DIV', isContentEditable: true }, { tagName: 'BUTTON', closest: () => ({}) }
+    ]) { document.activeElement = activeElement; native({}); }
+    document.activeElement = null;
+    for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'isComposing']) native({ [modifier]: true });
+    assert.ok(studio.state.selectedCell);
+    studio.editSource('unfinished'); native({});
+    assert.equal(studio.state.source, 'unfinished'); assert.equal(studio.state.invalid, true);
+  } finally { cleanup(); }
+});
+
+test('Escape cancels the pending smooth reveal', async () => {
+  const { studio, handlers, mock, ticks, cleanup } = mountStudio();
+  let now = 0;
+  try {
+    mock('performance', { now: () => now });
+    await studio.openChart(file('long.tja', longChart));
+    studio.controls.view = .25; studio.selectCell({ bar: 0, numerator: 0, denominator: 16, divisions: 16 });
+    for (let index = 0; index < 8; index++) handlers.get('keydown')({ key: 'ArrowRight', preventDefault() {} });
+    now = 45; ticks.frame(now);
+    const start = studio.visible.value.start; assert.ok(start > 0);
+    handlers.get('keydown')({ key: 'Escape', preventDefault() {} });
+    now = 500; ticks.frame(now);
+    assert.equal(studio.visible.value.start, start); assert.equal(studio.cell.value, null);
+  } finally { cleanup(); }
+});
 
 test('Vue session preserves editing, command positions, history, drafts and lifecycle cleanup', async () => {
   const { studio, saved, listeners, mock, app, cleanup } = mountStudio();
@@ -200,6 +296,66 @@ test('new, rename, close and legacy draft migration work without server APIs', a
   } finally { cleanup(); }
 });
 
+test('untouched new charts stay clean across navigation, inactive closing and automatic restore', () => {
+  const saved = new Map(), mounted = mountStudio(saved);
+  const { studio, handlers, mock } = mounted;
+  const unexpectedPrompt = () => assert.fail('Untouched new charts must not prompt to save');
+  try {
+    mock('confirm', unexpectedPrompt);
+    studio.newChart();
+    const first = studio.state.activeId;
+    assert.equal(studio.state.dirty, false);
+    assert.equal(studio.state.savedText, studio.state.text);
+    assert.equal(studio.state.fileHandle, null);
+    studio.select(0); studio.setSnap(7); studio.panTimeline(.25);
+    studio.selectCell({ bar: 0, numerator: 1, denominator: 4, divisions: 16 });
+    studio.newChart();
+    studio.closeChart(first);
+    assert.equal(studio.state.documents.length, 1);
+    assert.equal(studio.state.dirty, false);
+    handlers.get('beforeunload')({ preventDefault: unexpectedPrompt });
+    assert.equal(workspace(saved).documents[0].dirty, false);
+  } finally { mounted.cleanup(); }
+  const restored = mountStudio(saved);
+  try {
+    restored.mock('confirm', unexpectedPrompt);
+    assert.equal(restored.studio.state.filename, 'untitled.tja');
+    assert.equal(restored.studio.state.dirty, false);
+    restored.studio.closeChart(restored.studio.state.activeId);
+    assert.equal(restored.studio.state.documents.length, 0);
+    assert.deepEqual(workspace(saved).documents, []);
+  } finally { restored.cleanup(); }
+});
+
+test('editing a new chart prompts on close, undo clears dirty, and invalid source remains protected', () => {
+  const { studio, handlers, mock, cleanup } = mountStudio();
+  let confirmations = 0;
+  try {
+    mock('confirm', () => { confirmations++; return false; });
+    studio.newChart();
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 4, divisions: 16 });
+    studio.chooseNote('1');
+    assert.equal(studio.state.dirty, true);
+    studio.closeChart(studio.state.activeId);
+    assert.equal(confirmations, 1); assert.equal(studio.state.documents.length, 1);
+    let warned = false;
+    handlers.get('beforeunload')({ preventDefault() { warned = true; } });
+    assert.equal(warned, true);
+    studio.history();
+    assert.equal(studio.state.dirty, false);
+    handlers.get('beforeunload')({ preventDefault() { assert.fail('Undo to the initial chart must clear the warning'); } });
+    studio.history(true);
+    assert.equal(studio.state.dirty, true);
+    studio.closeChart(studio.state.activeId);
+    assert.equal(confirmations, 2);
+    studio.history();
+    studio.editSource('unfinished');
+    assert.equal(studio.state.dirty, false); assert.equal(studio.state.invalid, true);
+    studio.closeChart(studio.state.activeId);
+    assert.equal(confirmations, 3); assert.equal(studio.state.documents.length, 1);
+  } finally { cleanup(); }
+});
+
 test('audio reads and decodes cannot attach to the wrong chart or supersede a newer file', async () => {
   const { studio, mock, cleanup } = mountStudio();
   let finishRead, finishDecode;
@@ -319,6 +475,7 @@ test('first save and save as choose a location, rebind the document, and leave t
   const { studio, cleanup } = mountStudio();
   try {
     studio.newChart();
+    assert.equal(studio.state.dirty, false);
     const first = diskFile('first.tja', ''), second = diskFile('second.tja', '');
     let choices = 0;
     window.showSaveFilePicker = async options => {
@@ -798,6 +955,138 @@ test('song metadata is one undoable edit, survives saving/restoring, and WAVE ed
   finally { restored.cleanup(); }
 });
 
+test('number keys insert the matching note at the selected cell and preserve selection and undo', () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  let prevented = 0;
+  const press = (key, overrides) => handlers.get('keydown')({ key, code: `Digit${key}`, preventDefault() { prevented++; }, ...overrides });
+  try {
+    studio.newChart();
+    studio.selectCell({ bar: 0, numerator: 1, denominator: 4, divisions: 16 });
+    document.activeElement = { tagName: 'DIV' };
+    for (const [index, note] of [...'1234567890'].entries()) {
+      press(note, note === '2' ? { code: 'Numpad2' } : {});
+      assert.equal(studio.cell.value.note, note);
+      assert.equal(studio.state.undo.length, index + 1);
+      assert.equal(studio.cell.value.numerator, 1); assert.equal(studio.cell.value.denominator, 4);
+    }
+    press('1', { repeat: true });
+    assert.equal(studio.cell.value.note, '0'); assert.equal(studio.state.undo.length, 10);
+    assert.equal(prevented, 11);
+    studio.history(); studio.selectCell({ bar: 0, numerator: 1, denominator: 4, divisions: 16 });
+    assert.equal(studio.cell.value.note, '9');
+    studio.history(true); studio.selectCell({ bar: 0, numerator: 1, denominator: 4, divisions: 16 });
+    assert.equal(studio.cell.value.note, '0');
+  } finally { cleanup(); }
+});
+
+test('Delete and Backspace clear the selected note like zero, including balloon counts and undo', () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  let prevented = 0;
+  try {
+    studio.newChart();
+    studio.selectCell({ bar: 0, numerator: 1, denominator: 4, divisions: 16 });
+    for (const key of ['Delete', 'Backspace', '0']) {
+      studio.chooseNote('7'); studio.setBalloon(11);
+      const original = studio.state.text, historyLength = studio.state.undo.length;
+      handlers.get('keydown')({ key, preventDefault() { prevented++; } });
+      assert.equal(studio.cell.value.note, '0'); assert.equal(studio.cell.value.ordinal, -1);
+      assert.equal(studio.state.undo.length, historyLength + 1);
+      assert.equal(studio.cell.value.numerator, 1); assert.equal(studio.cell.value.denominator, 4);
+      studio.history();
+      studio.selectCell({ bar: 0, numerator: 1, denominator: 4, divisions: 16 });
+      assert.equal(studio.state.text, original); assert.equal(studio.cell.value.count, 11);
+      studio.history(true); studio.selectCell({ bar: 0, numerator: 1, denominator: 4, divisions: 16 });
+      assert.equal(studio.cell.value.note, '0');
+    }
+    assert.equal(prevented, 3);
+  } finally { cleanup(); }
+});
+
+test('note shortcuts do not edit without a cell, inside inputs or dialogs, or with modifiers', () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const press = overrides => handlers.get('keydown')({ key: '1', code: 'Digit1', preventDefault() { assert.fail('This numeric key must not be intercepted'); }, ...overrides });
+  try {
+    studio.newChart();
+    const original = studio.state.text;
+    for (const key of ['1', '0', 'Delete', 'Backspace']) press({ key });
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 4, divisions: 16 });
+    for (const activeElement of [
+      ...['INPUT', 'TEXTAREA', 'SELECT'].map(tagName => ({ tagName })),
+      { tagName: 'DIV', isContentEditable: true },
+      { tagName: 'BUTTON', closest: () => ({}) }
+    ]) {
+      document.activeElement = activeElement;
+      for (const key of ['1', '0', 'Delete', 'Backspace']) press({ key });
+    }
+    document.activeElement = null;
+    for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'isComposing']) {
+      for (const key of ['1', '0', 'Delete', 'Backspace']) press({ key, [modifier]: true });
+    }
+    assert.equal(studio.state.text, original); assert.equal(studio.state.undo.length, 0);
+    studio.editSource('unfinished');
+    for (const key of ['1', '0', 'Delete', 'Backspace']) press({ key });
+    assert.equal(studio.state.source, 'unfinished'); assert.equal(studio.state.invalid, true);
+  } finally { cleanup(); }
+});
+
+test('Ctrl+Alt+W closes only the active chart once per press, including from inputs', () => {
+  const { studio, handlers, mock, cleanup } = mountStudio();
+  let prevented = 0, blurred = 0;
+  const press = overrides => handlers.get('keydown')({ key: 'w', code: 'KeyW', ctrlKey: true, altKey: true, preventDefault() { prevented++; }, ...overrides });
+  try {
+    mock('confirm', () => assert.fail('Untouched new tabs must close without confirmation'));
+    studio.newChart(); const first = studio.state.activeId;
+    studio.newChart(); const second = studio.state.activeId;
+    document.activeElement = { tagName: 'INPUT', blur() { blurred++; } };
+    press({});
+    assert.equal(studio.state.activeId, first); assert.equal(studio.state.documents.length, 1);
+    assert.ok(!studio.state.documents.some(item => item.id === second));
+    press({ repeat: true });
+    assert.equal(studio.state.activeId, first); assert.equal(blurred, 1);
+    document.activeElement = { tagName: 'TEXTAREA' };
+    press({ key: 'W' });
+    assert.equal(studio.state.documents.length, 0);
+    press({});
+    assert.equal(studio.state.documents.length, 0); assert.equal(prevented, 4);
+  } finally { cleanup(); }
+});
+
+test('close shortcut protects pending edits and saving, and ignores dialogs and other key combinations', () => {
+  const { studio, handlers, mock, cleanup } = mountStudio();
+  let prevented = 0, confirmations = 0;
+  const press = overrides => handlers.get('keydown')({ key: 'w', code: 'KeyW', ctrlKey: true, altKey: true, preventDefault() { prevented++; }, ...overrides });
+  try {
+    mock('confirm', () => { confirmations++; return false; });
+    studio.newChart();
+    document.activeElement = { tagName: 'INPUT', blur() { studio.renameChart('renamed'); } };
+    press({});
+    assert.equal(studio.state.filename, 'renamed.tja');
+    assert.equal(studio.state.dirty, true); assert.equal(confirmations, 1);
+    document.activeElement = { tagName: 'TEXTAREA' };
+    studio.editSource('1000,');
+    press({});
+    assert.equal(studio.state.invalid, false); assert.equal(studio.state.chart.bars[0].notes, '1000');
+    assert.equal(confirmations, 2); assert.equal(studio.state.documents.length, 1);
+    studio.editSource('unfinished');
+    press({});
+    assert.equal(studio.state.invalid, true); assert.equal(confirmations, 3);
+    studio.state.saving = true; studio.state.documents[0].saving = true;
+    press({});
+    assert.match(studio.state.notice, /正在保存/); assert.equal(confirmations, 3);
+    studio.state.saving = false; studio.state.documents[0].saving = false;
+    document.activeElement = { tagName: 'BUTTON', closest: () => ({}) };
+    press({});
+    document.activeElement = null;
+    for (const overrides of [
+      { altKey: false }, { altKey: false, shiftKey: true },
+      { shiftKey: true }, { metaKey: true }, { isComposing: true },
+      { key: '\u0142', getModifierState: key => key === 'AltGraph' }, { key: 'q', code: 'KeyQ' }
+    ]) press(overrides);
+    assert.equal(prevented, 4); assert.equal(confirmations, 3);
+    assert.equal(studio.state.documents.length, 1);
+  } finally { cleanup(); }
+});
+
 test('space toggles playback from the timeline and editing buttons without repeating while held', async () => {
   const { studio, handlers, mock, cleanup } = mountStudio();
   fakeAudio(mock);
@@ -918,5 +1207,201 @@ test('loop wrap and explicit navigation reposition the viewport without changing
     studio.pause(); studio.panTimeline(10.2);
     studio.select(1); near(studio.visible.value.start, 2); assert.equal(studio.state.followPlayback, true);
     studio.panTimeline(8.5); studio.setLoop(3, 4); near(studio.visible.value.start, 4);
+  } finally { cleanup(); }
+});
+
+test('left and right move by the snap grid, repeat, cross measures and stop at chart boundaries', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const press = (key, repeat = false) => handlers.get('keydown')({ key, repeat, preventDefault() {} });
+  try {
+    await studio.openChart(file());
+    studio.setSnap(4);
+    const original = studio.state.text;
+    press('ArrowRight');
+    assert.equal(studio.cell.value.bar, 0); assert.equal(studio.cell.value.numerator, 0);
+    press('ArrowRight', true);
+    assert.equal(studio.cell.value.numerator, 1); assert.equal(studio.cell.value.denominator, 4);
+    studio.selectCell({ bar: 0, numerator: 3, denominator: 4, divisions: 4 });
+    press('ArrowRight');
+    assert.equal(studio.cell.value.bar, 1); assert.equal(studio.cell.value.numerator, 0);
+    assert.equal(studio.state.selected, 1); assert.equal(studio.state.source.trim(), '2000,');
+    press('ArrowLeft');
+    assert.equal(studio.cell.value.bar, 0); assert.equal(studio.cell.value.numerator, 3);
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 4, divisions: 4 });
+    press('ArrowLeft');
+    assert.equal(studio.cell.value.bar, 0); assert.equal(studio.cell.value.numerator, 0);
+    studio.selectCell({ bar: 1, numerator: 3, denominator: 4, divisions: 4 });
+    press('ArrowRight');
+    assert.equal(studio.cell.value.bar, 1); assert.equal(studio.cell.value.numerator, 3);
+    assert.equal(studio.state.text, original); assert.equal(studio.state.undo.length, 0);
+    assert.equal(studio.state.dirty, false); assert.equal(studio.state.position, 0);
+  } finally { cleanup(); }
+});
+
+test('arrow navigation moves off-grid positions to the nearest snap in the requested direction', () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const press = key => handlers.get('keydown')({ key, preventDefault() {} });
+  try {
+    studio.newChart();
+    studio.selectCell({ bar: 0, numerator: 1, denominator: 24, divisions: 16 });
+    press('ArrowRight');
+    assert.equal(studio.cell.value.numerator, 1); assert.equal(studio.cell.value.denominator, 16);
+    studio.selectCell({ bar: 0, numerator: 1, denominator: 24, divisions: 16 });
+    press('ArrowLeft');
+    assert.equal(studio.cell.value.numerator, 0);
+    studio.setSnap(7); studio.selectCell({ bar: 0, numerator: 3, denominator: 7, divisions: 7 });
+    press('ArrowRight');
+    assert.equal(studio.cell.value.numerator, 4); assert.equal(studio.cell.value.denominator, 7);
+    press('ArrowLeft'); assert.equal(studio.cell.value.numerator, 3);
+    studio.setSnap(32); press('ArrowRight');
+    assert.equal(studio.cell.value.numerator, 14); assert.equal(studio.cell.value.denominator, 32);
+    assert.equal(studio.state.undo.length, 0); assert.equal(studio.state.dirty, false);
+  } finally { cleanup(); }
+});
+
+test('arrow navigation reveals the selected cell and pauses playback without changing custom loop or text', async () => {
+  const { studio, handlers, mock, ticks, cleanup } = mountStudio();
+  fakeAudio(mock);
+  const press = key => handlers.get('keydown')({ key, preventDefault() {} });
+  try {
+    await studio.openChart(file('long.tja', longChart));
+    studio.controls.view = .25; studio.setLoop(1, 2);
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 16, divisions: 16 });
+    const original = studio.state.text;
+    await studio.play();
+    press('ArrowRight');
+    assert.equal(studio.state.playing, false);
+    assert.equal(studio.cell.value.numerator, 1);
+    press('ArrowRight'); press('ArrowRight');
+    near(studio.visible.value.start, 0);
+    press('ArrowRight');
+    near(studio.visible.value.start, 0);
+    ticks.frame(performance.now() + 200);
+    near(studio.cell.value.time, .5); near(studio.visible.value.start, .375);
+    for (let index = 0; index < 4; index++) press('ArrowLeft');
+    ticks.frame(performance.now() + 200);
+    near(studio.cell.value.time, 0); near(studio.visible.value.start, 0);
+    assert.deepEqual(studio.range.value, [1, 2]);
+    assert.equal(studio.state.text, original); assert.equal(studio.state.undo.length, 0);
+  } finally { cleanup(); }
+});
+
+test('arrow navigation preserves text editing, modifier shortcuts, dialogs and invalid source', () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const native = overrides => handlers.get('keydown')({ key: 'ArrowRight', preventDefault() { assert.fail('Native arrow action must be preserved'); }, ...overrides });
+  try {
+    studio.newChart(); studio.selectCell({ bar: 0, numerator: 2, denominator: 16, divisions: 16 });
+    for (const activeElement of [
+      ...['INPUT', 'TEXTAREA', 'SELECT'].map(tagName => ({ tagName })),
+      { tagName: 'DIV', isContentEditable: true },
+      { tagName: 'BUTTON', closest: () => ({}) }
+    ]) {
+      document.activeElement = activeElement;
+      native({}); native({ key: 'ArrowLeft' });
+    }
+    document.activeElement = null;
+    for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'isComposing']) {
+      native({ [modifier]: true }); native({ key: 'ArrowLeft', [modifier]: true });
+    }
+    assert.equal(studio.cell.value.numerator, 2);
+    studio.editSource('unfinished');
+    handlers.get('keydown')({ key: 'ArrowRight', preventDefault() {} });
+    assert.equal(studio.state.source, 'unfinished'); assert.equal(studio.state.invalid, true);
+    assert.equal(studio.state.selectedCell, null); assert.equal(studio.state.undo.length, 0);
+  } finally { cleanup(); }
+});
+
+test('arrows select every intervening off-grid note before the next grid in both directions', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const press = key => handlers.get('keydown')({ key, preventDefault() {} });
+  try {
+    const notes = Array(48).fill('0');
+    notes[1] = '1'; notes[2] = '2'; notes[3] = '3'; notes[5] = '4';
+    await studio.openChart(file('off-grid.tja', chart.replace('1000,\n2000,', `${notes.join('')},\n0000,`)));
+    const original = studio.state.text;
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 16, divisions: 16 });
+    for (const [numerator, denominator, note] of [[1, 48, '1'], [2, 48, '2'], [1, 16, '3'], [5, 48, '4'], [2, 16, '0']]) {
+      press('ArrowRight');
+      assert.equal(studio.cell.value.numerator, numerator); assert.equal(studio.cell.value.denominator, denominator);
+      assert.equal(studio.cell.value.note, note);
+    }
+    for (const [numerator, denominator] of [[5, 48], [1, 16], [2, 48], [1, 48], [0, 16]]) {
+      press('ArrowLeft');
+      assert.equal(studio.cell.value.numerator, numerator); assert.equal(studio.cell.value.denominator, denominator);
+    }
+    assert.equal(studio.state.text, original); assert.equal(studio.state.undo.length, 0);
+    press('ArrowRight'); press('ArrowRight');
+    studio.chooseNote('7');
+    assert.equal(studio.state.chart.bars[0].notes[2], '7');
+    assert.equal(studio.state.chart.bars[0].notes[3], '3');
+  } finally { cleanup(); }
+});
+
+test('arrows prioritize trailing notes across measures and at the final chart boundary', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const press = key => handlers.get('keydown')({ key, preventDefault() {} });
+  try {
+    const notes = Array(48).fill('0'); notes[46] = '1'; notes[47] = '2';
+    await studio.openChart(file('trailing.tja', chart.replace('1000,\n2000,', `${notes.join('')},\n${notes.join('')},`)));
+    studio.selectCell({ bar: 0, numerator: 15, denominator: 16, divisions: 16 });
+    press('ArrowRight'); assert.equal(studio.cell.value.numerator, 46); assert.equal(studio.cell.value.denominator, 48);
+    press('ArrowRight'); assert.equal(studio.cell.value.numerator, 47);
+    press('ArrowRight'); assert.equal(studio.cell.value.bar, 1); assert.equal(studio.cell.value.numerator, 0);
+    press('ArrowLeft'); assert.equal(studio.cell.value.bar, 0); assert.equal(studio.cell.value.numerator, 47);
+    press('ArrowLeft'); assert.equal(studio.cell.value.numerator, 46);
+    press('ArrowLeft'); assert.equal(studio.cell.value.numerator, 15); assert.equal(studio.cell.value.denominator, 16);
+    studio.selectCell({ bar: 1, numerator: 15, denominator: 16, divisions: 16 });
+    press('ArrowRight'); assert.equal(studio.cell.value.numerator, 46);
+    press('ArrowRight'); assert.equal(studio.cell.value.numerator, 47);
+    press('ArrowRight'); assert.equal(studio.cell.value.numerator, 47); assert.equal(studio.cell.value.bar, 1);
+    assert.equal(studio.state.undo.length, 0); assert.equal(studio.state.dirty, false);
+  } finally { cleanup(); }
+});
+
+test('keyboard reveal animates between frames, coalesces repeated moves and cancels on manual pan or tab switch', async () => {
+  const { studio, handlers, mock, ticks, cleanup } = mountStudio();
+  let now = 0;
+  const frame = elapsed => { now += elapsed; ticks.frame(now); };
+  const right = () => handlers.get('keydown')({ key: 'ArrowRight', preventDefault() {} });
+  try {
+    mock('performance', { now: () => now });
+    await studio.openChart(file('long.tja', longChart)); const first = studio.state.activeId;
+    studio.controls.view = .25;
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 16, divisions: 16 });
+    for (let index = 0; index < 8; index++) right();
+    near(studio.visible.value.start, 0);
+    frame(90);
+    assert.ok(studio.visible.value.start > 0 && studio.visible.value.start < .75);
+    frame(90); near(studio.visible.value.start, .75);
+    for (let index = 0; index < 4; index++) right();
+    frame(45);
+    studio.panTimeline(.7); frame(200); near(studio.visible.value.start, .7);
+    right(); frame(45);
+    await studio.openChart(file('second.tja', longChart));
+    frame(200); near(studio.visible.value.start, 0);
+    studio.switchChart(first);
+    const start = studio.visible.value.start;
+    frame(200); near(studio.visible.value.start, start);
+    assert.equal(studio.state.undo.length, 0);
+  } finally { cleanup(); }
+});
+
+test('reduced motion reveals instantly and starting playback cancels pending keyboard motion', async () => {
+  const { studio, handlers, mock, ticks, cleanup } = mountStudio();
+  fakeAudio(mock);
+  const right = () => handlers.get('keydown')({ key: 'ArrowRight', preventDefault() {} });
+  try {
+    await studio.openChart(file('long.tja', longChart));
+    studio.controls.view = .25;
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 16, divisions: 16 });
+    mock('matchMedia', () => ({ matches: true }));
+    for (let index = 0; index < 4; index++) right();
+    near(studio.visible.value.start, .375);
+    mock('matchMedia', () => ({ matches: false }));
+    for (let index = 0; index < 4; index++) right();
+    await studio.play(0);
+    near(studio.visible.value.start, 0);
+    ticks.frame(performance.now() + 200);
+    near(studio.visible.value.start, 0); assert.equal(studio.state.playing, true);
   } finally { cleanup(); }
 });

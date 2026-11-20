@@ -1,3 +1,4 @@
+import { message, LocalizedError } from './i18n.js';
 export const HISTORY_LIMIT = 50;
 
 export function textDiff(before, after) {
@@ -8,8 +9,8 @@ export function textDiff(before, after) {
 }
 
 export function applyDiff(text, diff, reverse = false) {
-  if (!diff || !Number.isSafeInteger(diff.start) || diff.start < 0 || typeof diff.removed !== 'string' || typeof diff.inserted !== 'string') throw new Error('编辑历史格式无效。');
+  if (!diff || !Number.isSafeInteger(diff.start) || diff.start < 0 || typeof diff.removed !== 'string' || typeof diff.inserted !== 'string') throw new LocalizedError(message('编辑历史格式无效。'));
   const removed = reverse ? diff.inserted : diff.removed, inserted = reverse ? diff.removed : diff.inserted;
-  if (diff.start > text.length || text.slice(diff.start, diff.start + removed.length) !== removed) throw new Error('编辑历史与谱面内容不匹配。');
+  if (diff.start > text.length || text.slice(diff.start, diff.start + removed.length) !== removed) throw new LocalizedError(message('编辑历史与谱面内容不匹配。'));
   return text.slice(0, diff.start) + inserted + text.slice(diff.start + removed.length);
 }

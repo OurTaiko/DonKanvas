@@ -2,8 +2,108 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { TJAParser } from 'tja';
-import { decodeChart, parseChart, replaceBar, resizeNotes, setBaseBpm, setBarSettings, clearBarSettings, barTimeAt, barFractionAt, setPositionSettings, clearPositionSettings, barSource, replaceBarSource } from './chart.js';
+import { decodeChart, parseChart, replaceBar, resizeNotes, setBaseBpm, setBarSettings, clearBarSettings, barTimeAt, barFractionAt, barStateAt, setPositionSettings, clearPositionSettings, barSource, replaceBarSource } from './chart.js';
 const chart = body => `TITLE:Test\nBPM:120\nOFFSET:-0.825\nCOURSE:Oni\nLEVEL:7\n#START\n${body}\n#END\n`;
+
+test('barline visibility defaults to on and inherits without changing notes or timing', () => {
+  const parsed = parseChart(chart('#BARLINEOFF\n1000,\n2000,\n#BARLINEON\n3000,'), TJAParser);
+  assert.deepEqual(parsed.bars.map(bar => bar.barline), [false, false, true]);
+  assert.deepEqual(parsed.bars.map(bar => bar.notes), ['1000', '2000', '3000']);
+  assert.deepEqual(parsed.bars.map(bar => bar.duration), [2, 2, 2]);
+  assert.equal(parsed.bars[0].commands[0].name, 'BARLINEOFF');
+  assert.equal(parsed.bars[2].instructions[0].name, 'BARLINEON');
+  assert.equal(parseChart(chart('1000,'), TJAParser).bars[0].barline, true);
+});
+
+test('intrabar and end-position barline commands affect following boundaries only', () => {
+  const parsed = parseChart(chart('10\n#BARLINEOFF\n20,\n3000\n#BARLINEON\n,\n4000,'), TJAParser);
+  const first = parsed.bars[0];
+  assert.equal(first.barline, true);
+  assert.equal(barStateAt(first, .25).barline, true);
+  assert.equal(barStateAt(first, .5).barline, false);
+  assert.equal(first.finalState.barline, false);
+  assert.equal(first.events[0].fraction, .5);
+  assert.deepEqual(parsed.bars.map(bar => bar.barline), [true, false, true]);
+  assert.equal(parsed.bars[1].events[0].fraction, 1);
+  assert.equal(parsed.bars[1].finalState.barline, true);
+  assert.deepEqual(parsed.bars.map(bar => bar.duration), [2, 2, 2]);
+});
+
+test('empty measures keep barline commands and a new difficulty resets visibility', () => {
+  const source = chart('#BARLINEOFF\n,\n,') + 'COURSE:Easy\nLEVEL:1\n#START\n1000,\n#END\n';
+  const parsed = parseChart(source, TJAParser);
+  assert.deepEqual(parsed.bars.map(bar => bar.barline), [false, false]);
+  assert.equal(parseChart(source, TJAParser, 1).bars[0].barline, true);
+  assert.equal(parseChart(replaceBar(source, parsed.bars[0], '2000'), TJAParser).bars[0].barline, false);
+});
+
+test('barline switches preserve positive and negative delays and their inherited timing', () => {
+  const body = '#BARLINEOFF\n#DELAY .25\n10\n#BARLINEON\n#DELAY -.125\n20,\n3000,';
+  const parsed = parseChart(chart(body), TJAParser);
+  const baseline = parseChart(chart(body.replace(/^#BARLINE.*\n/gm, '')), TJAParser);
+  assert.deepEqual(parsed.bars.map(bar => [bar.start, bar.end, bar.duration]), baseline.bars.map(bar => [bar.start, bar.end, bar.duration]));
+  assert.deepEqual(parsed.bars.map(bar => bar.barline), [false, true]);
+  assert.equal(barStateAt(parsed.bars[0], .5).barline, true);
+});
+
+test('barline settings insert at exact fractions, replace opposite commands and clear to inheritance', () => {
+  const source = chart('1002,\n2000,'), position = { bar: 0, numerator: 1, denominator: 3 };
+  const edited = setPositionSettings(source, parseChart(source, TJAParser), position, { barline: false }, TJAParser);
+  const parsed = parseChart(edited, TJAParser);
+  assert.equal(parsed.bars[0].notes, '100000000200');
+  assert.equal(parsed.bars[0].events[0].name, 'BARLINEOFF');
+  assert.equal(parsed.bars[0].events[0].fraction, 1 / 3);
+  assert.equal(parsed.bars[1].barline, false);
+  const changed = setPositionSettings(edited, parsed, position, { barline: true }, TJAParser);
+  assert.ok(!changed.includes('#BARLINEOFF'));
+  assert.equal((changed.match(/#BARLINEON/g) || []).length, 1);
+  const removed = setPositionSettings(changed, parseChart(changed, TJAParser), position, { barline: null }, TJAParser);
+  assert.ok(!removed.includes('#BARLINE'));
+  const restored = clearPositionSettings(changed, parseChart(changed, TJAParser).bars[0], position);
+  assert.ok(!restored.includes('#BARLINE'));
+  assert.equal(parseChart(restored, TJAParser).bars[1].barline, true);
+  for (const value of ['off', 0, undefined]) assert.throws(() => setBarSettings(source, parseChart(source, TJAParser).bars[0], { barline: value }), /小节线/);
+});
+
+test('non-simulated commands are reported, located and preserved when parameter commands are reset', () => {
+  const source = chart('#LYRIC Header\n#SECTION\n#LEVELHOLD\n#SENOTECHANGE 3\n#BARLINEOFF\n1000,\n2000,');
+  const parsed = parseChart(source, TJAParser);
+  assert.deepEqual(parsed.unsimulatedCommands, ['LYRIC', 'SECTION', 'LEVELHOLD', 'SENOTECHANGE']);
+  assert.equal(parsed.bars[0].instructions.length, 5);
+  assert.ok(barSource(source, parsed.bars[0]).startsWith('#LYRIC Header'));
+  for (const edited of [clearBarSettings(source, parsed.bars[0]), clearPositionSettings(source, parsed.bars[0], { numerator: 0, denominator: 1 })]) {
+    assert.ok(!edited.includes('#BARLINEOFF'));
+    for (const name of parsed.unsimulatedCommands) assert.ok(edited.includes(`#${name}`));
+  }
+});
+
+test('resampling retains exact lyric and note-lyric command positions', () => {
+  const source = chart('10\n#LYRIC Middle\n#SENOTECHANGE 4\n20,\n0000,');
+  const parsed = parseChart(source, TJAParser);
+  const edited = replaceBar(source, parsed.bars[0], '10002000');
+  const next = parseChart(edited, TJAParser);
+  assert.equal(next.bars[0].notes, '10002000');
+  assert.deepEqual(next.bars[0].events.map(event => [event.name, event.slot, event.fraction]), [['LYRIC', 4, .5], ['SENOTECHANGE', 4, .5]]);
+  assert.equal(next.bars[0].duration, parsed.bars[0].duration);
+  assert.equal(next.bars[1].start, parsed.bars[1].start);
+});
+
+test('scroll-mode headers warn rather than claiming game-scroll support and unknown body commands reject', () => {
+  for (const name of ['BMSCROLL', 'HBSCROLL']) {
+    const parsed = parseChart(chart('1000,').replace('#START', `#${name}\n#START`), TJAParser);
+    assert.deepEqual(parsed.unsimulatedCommands, [name]);
+  }
+  for (const name of ['BRANCHSTART', 'NEXTSONG', 'DIRECTION', 'SUDDEN', 'JPOSSCROLL']) {
+    assert.throws(() => parseChart(chart(`#${name} 1\n1000,`), TJAParser));
+  }
+});
+
+test('scroll-mode and preserved-command warnings belong only to the selected difficulty', () => {
+  const source = chart('#LYRIC First course\n1000,').replace('#START', '#HBSCROLL\n#START')
+    + 'COURSE:Easy\nLEVEL:1\n#START\n2000,\n#END\n';
+  assert.deepEqual(parseChart(source, TJAParser).unsimulatedCommands, ['HBSCROLL', 'LYRIC']);
+  assert.deepEqual(parseChart(source, TJAParser, 1).unsimulatedCommands, []);
+});
 test('offset and variable timing', () => {
   const result = parseChart(chart('1000,\n#BPMCHANGE 60\n#MEASURE 3/4\n#DELAY 0.5\n2000,'), TJAParser);
   assert.equal(result.bars[0].start, 0.825);

@@ -1,3 +1,4 @@
+import { message, LocalizedError } from './i18n.js';
 import { MAX_SOURCE_SLOTS } from './grid.js';
 import { resizeNotes, barTimeAt } from './chart.js';
 
@@ -30,7 +31,7 @@ export function cellValue(notes, cell) {
 }
 
 export function setCellNote(notes, cell, note) {
-  if (!/^[0-9]$/.test(note)) throw new Error('音符只能为 0–9。');
+  if (!/^[0-9]$/.test(note)) throw new LocalizedError(message('音符只能为 0–9。'));
   if (cellValue(notes, cell) === note) return notes;
   let divisor = cell.numerator, remainder = cell.denominator;
   while (remainder) [divisor, remainder] = [remainder, divisor % remainder];
@@ -38,7 +39,7 @@ export function setCellNote(notes, cell, note) {
   divisor = notes.length; remainder = denominator;
   while (remainder) [divisor, remainder] = [remainder, divisor % remainder];
   const length = notes.length / divisor * denominator;
-  if (length > MAX_SOURCE_SLOTS) throw new Error('混合细分超出 65536 个源码格，无法无损修改。');
+  if (length > MAX_SOURCE_SLOTS) throw new LocalizedError(message('混合细分超出 65536 个源码格，无法无损修改。'));
   const result = [...resizeNotes(notes, length)];
   result[cell.numerator * length / cell.denominator] = note;
   return result.join('');

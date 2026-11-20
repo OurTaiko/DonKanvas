@@ -1,9 +1,10 @@
+import { message, LocalizedError } from './i18n.js';
 import { replaceBar, replaceBarSource, parseChart } from './chart.js';
 
 function headerRange(text, courseIndex) {
   const blocks = [...text.matchAll(/^#START[^\r\n]*\r?\n[\s\S]*?^#END/gmi)];
   const block = blocks[courseIndex];
-  if (!block) throw new Error('难度不存在。');
+  if (!block) throw new LocalizedError(message('难度不存在。'));
   return { start: courseIndex ? blocks[courseIndex - 1].index + blocks[courseIndex - 1][0].length : 0, end: block.index };
 }
 
@@ -37,9 +38,9 @@ export function balloonIndex(chart, cell) {
 }
 
 export function setBalloonCount(text, chart, cell, count) {
-  if (!Number.isSafeInteger(count) || count < 1) throw new Error('气球敲击次数须为正整数。');
+  if (!Number.isSafeInteger(count) || count < 1) throw new LocalizedError(message('气球敲击次数须为正整数。'));
   const ordinal = balloonIndex(chart, cell);
-  if (ordinal < 0) throw new Error('请先选中气球音符。');
+  if (ordinal < 0) throw new LocalizedError(message('请先选中气球音符。'));
   const counts = balloonCounts(text, chart.courseIndex);
   while (counts.length <= ordinal) counts.push(5);
   counts[ordinal] = count;
