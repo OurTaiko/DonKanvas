@@ -2,12 +2,13 @@ import { message, LocalizedError } from './i18n.js';
 import { resizeNotes } from './chart.js';
 
 export const GRID_DIVISIONS = 16;
+export const SNAP_DIVISIONS = [4, 8, 12, 16, 24, 32, 48, 64, 96, 192];
 export const MAX_SNAP_DIVISIONS = 768;
 export const MAX_SOURCE_SLOTS = 65536;
 
 export function editGridNote(notes, fraction, note, tolerance = 0, divisions = GRID_DIVISIONS) {
   if (!Number.isInteger(divisions) || divisions < 1 || divisions > MAX_SNAP_DIVISIONS) throw new LocalizedError(message('吸附细分须为 1–768 之间的整数。'));
-  if (!Number.isFinite(fraction) || !/^[0-9]$/.test(note)) throw new LocalizedError(message('无效的音符或落点。'));
+  if (!Number.isFinite(fraction) || !/^[0-9AB]$/.test(note)) throw new LocalizedError(message('无效的音符或落点。'));
   let closest = -1, distance = Infinity;
   for (let index = 0; index < notes.length; index++) {
     const difference = Math.abs(index / notes.length - fraction);
@@ -25,7 +26,7 @@ export function editGridNote(notes, fraction, note, tolerance = 0, divisions = G
     return first;
   };
   const targetDenominator = divisions / targetDivisor(slot, divisions);
-  if (!/[1-9]/.test(notes)) {
+  if (!/[1-9AB]/.test(notes)) {
     const result = Array(divisions).fill('0'); result[slot] = note; return result.join('');
   }
   let divisor = notes.length, remainder = targetDenominator;

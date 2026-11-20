@@ -2,8 +2,126 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { TJAParser } from 'tja';
-import { decodeChart, parseChart, replaceBar, resizeNotes, setBaseBpm, setBarSettings, clearBarSettings, barTimeAt, barFractionAt, barStateAt, setPositionSettings, clearPositionSettings, barSource, replaceBarSource } from './chart.js';
+import { decodeChart, parseChart, insertEmptyBar, deleteBar, replaceBar, resizeNotes, setBaseBpm, setBarSettings, clearBarSettings, barTimeAt, barFractionAt, barStateAt, barStateAtTime, setPositionSettings, clearPositionSettings, barSource, replaceBarSource } from './chart.js';
 const chart = body => `TITLE:Test\nBPM:120\nOFFSET:-0.825\nCOURSE:Oni\nLEVEL:7\n#START\n${body}\n#END\n`;
+
+test('playback timing observes command order before and after leading, middle and ending delays', () => {
+  const parsed = parseChart(chart('#DELAY 1\n#BPMCHANGE 240\n#SCROLL 2\n10\n#DELAY .5\n#BPMCHANGE 60\n#SCROLL -1\n#MEASURE 3/4\n#GOGOSTART\n20\n#DELAY .25\n#BPMCHANGE 180\n,'), TJAParser);
+  const bar = parsed.bars[0], start = .825;
+  assert.equal(barStateAtTime(bar, start - .1).bpm, 120);
+  assert.equal(barStateAtTime(bar, start + .5).bpm, 120);
+  assert.equal(barStateAtTime(bar, start + .5).scroll, 1);
+  assert.equal(barStateAtTime(bar, start + .5).delay, 1);
+  const first = bar.segments[0], last = bar.segments.at(-1);
+  assert.equal(barStateAtTime(bar, first.start + .1).bpm, 240);
+  assert.equal(barStateAtTime(bar, first.end + .1).bpm, 240);
+  assert.equal(barStateAtTime(bar, first.end + .1).scroll, 2);
+  assert.equal(barStateAtTime(bar, last.start + .1).bpm, 60);
+  assert.equal(barStateAtTime(bar, last.start + .1).scroll, -1);
+  assert.equal(barStateAtTime(bar, last.start + .1).numerator, 3);
+  assert.equal(barStateAtTime(bar, last.start + .1).gogo, true);
+  assert.equal(barStateAtTime(bar, last.end + .1).bpm, 60);
+  assert.equal(barStateAtTime(bar, bar.end).bpm, 180);
+  assert.equal(barStateAtTime(bar, bar.end).delay, 0);
+});
+
+test('deleting a measure removes its starting and internal instructions and recomputes following timing', () => {
+  const source = chart('1000,\n#BPMCHANGE 240\n#DELAY .25\n#MEASURE 3/4\n#SCROLL 2\n#GOGOSTART\n#BARLINEOFF\n70\n#BPMCHANGE 60\n#LYRIC deleted\n80,\n2000,\n#BPMCHANGE 180\n3000,');
+  const parsed = parseChart(source, TJAParser), text = deleteBar(source, parsed, parsed.bars[1]);
+  const next = parseChart(text, TJAParser);
+  assert.deepEqual(next.bars.map(bar => bar.notes), ['1000', '2000', '3000']);
+  assert.deepEqual(next.bars.map(bar => bar.bpm), [120, 120, 180]);
+  assert.equal(next.bars[1].start, parsed.bars[0].end);
+  assert.equal(next.bars[1].duration, 2);
+  assert.equal(next.bars[1].numerator, 4); assert.equal(next.bars[1].scroll, 1);
+  assert.equal(next.bars[1].gogo, false); assert.equal(next.bars[1].barline, true);
+  for (const removed of ['#DELAY', '#MEASURE', '#SCROLL', '#GOGOSTART', '#BARLINEOFF', '#LYRIC', '#BPMCHANGE 60', '#BPMCHANGE 240']) assert.ok(!text.includes(removed), removed);
+  assert.throws(() => deleteBar(source, parsed, null), /请先创建/);
+  const one = parseChart(chart('1000,'), TJAParser);
+  assert.throws(() => deleteBar(chart('1000,'), one, one.bars[0]), /最后一个小节/);
+});
+
+test('deletion handles first, middle, last, empty, compact and CRLF measures without touching other players', () => {
+  for (const body of ['1000,2000,3000,', '1000, // keep\n2000,\n3000,', ',\n2000,\n3000,', '1000,20\n#DELAY .1\n00,\n3000,']) {
+    const source = chart(body).replaceAll('\n', '\r\n') + 'COURSE:Easy\r\n#START P2\r\n4400,\r\n#END\r\n';
+    const parsed = parseChart(source, TJAParser);
+    for (let index = 0; index < 3; index++) {
+      const text = deleteBar(source, parsed, parsed.bars[index]);
+      assert.deepEqual(parseChart(text, TJAParser).bars.map(bar => bar.notes), parsed.bars.filter((_, position) => position !== index).map(bar => bar.notes));
+      assert.ok(text.endsWith('COURSE:Easy\r\n#START P2\r\n4400,\r\n#END\r\n'));
+      assert.ok(!/(?<!\r)\n/.test(text));
+    }
+  }
+});
+
+test('blank measure insertion inherits boundary state without copying instructions or notes', () => {
+  const text = chart('#BPMCHANGE 180\n#MEASURE 3/4\n#SCROLL 2\n#GOGOSTART\n#BARLINEOFF\n#DELAY .25\n1000,\n#BPMCHANGE 60\n2000,');
+  const parsed = parseChart(text, TJAParser);
+  const before = parseChart(insertEmptyBar(text, parsed.bars[0], 'before'), TJAParser);
+  assert.deepEqual(before.bars.map(bar => bar.notes), ['0'.repeat(16), '1000', '2000']);
+  assert.deepEqual(before.bars.slice(0, 2).map(bar => [bar.bpm, bar.numerator, bar.denominator, bar.scroll, bar.gogo, bar.barline]), [[180, 3, 4, 2, true, false], [180, 3, 4, 2, true, false]]);
+  assert.equal(before.bars[0].delay, .25); assert.equal(before.bars[1].delay, 0);
+  assert.equal(before.bars[1].commands.length, 0);
+  const after = parseChart(insertEmptyBar(text, parsed.bars[0], 'after'), TJAParser);
+  assert.deepEqual(after.bars.map(bar => bar.bpm), [180, 180, 60]);
+  assert.equal(after.bars[1].commands.length, 0);
+  assert.equal(after.bars[1].start, parsed.bars[0].end);
+  const events = chart('10\n#BPMCHANGE 60\n#MEASURE 7/8\n#SCROLL 3\n#GOGOSTART\n20,\n3000,');
+  const changed = parseChart(insertEmptyBar(events, parseChart(events, TJAParser).bars[0], 'after'), TJAParser);
+  assert.equal(changed.bars[1].bpm, 60); assert.equal(changed.bars[1].numerator, 7); assert.equal(changed.bars[1].denominator, 8);
+  assert.equal(changed.bars[1].scroll, 3); assert.equal(changed.bars[1].gogo, true);
+  assert.equal(changed.bars[1].events.length, 0);
+});
+
+test('insertion preserves comments, compact source, CRLF, empty measures and other course/player blocks', () => {
+  for (const body of ['1000,2000,', '1000, // keep on first\n2000,', ',\n2000,']) {
+    for (const side of ['before', 'after']) {
+      const source = chart(body).replaceAll('\n', '\r\n') + 'COURSE:Easy\r\n#START P2\r\n4000,\r\n#END\r\n';
+      const parsed = parseChart(source, TJAParser);
+      const text = insertEmptyBar(source, parsed.bars[0], side), next = parseChart(text, TJAParser);
+      assert.deepEqual(next.bars.map(bar => bar.notes), side === 'before' ? ['0'.repeat(16), parsed.bars[0].notes, '2000'] : [parsed.bars[0].notes, '0'.repeat(16), '2000']);
+      assert.ok(text.endsWith('COURSE:Easy\r\n#START P2\r\n4000,\r\n#END\r\n'));
+      assert.ok(!/(?<!\r)\n/.test(text));
+      if (body.includes('//')) assert.ok(text.includes('1000, // keep on first\r\n'));
+      const appended = parseChart(insertEmptyBar(source, parsed.bars[1], 'after'), TJAParser);
+      assert.equal(appended.bars.at(-1).notes, '0'.repeat(16));
+    }
+  }
+  assert.throws(() => insertEmptyBar('', null, 'after'), /请先创建/);
+  const text = chart('1000,');
+  assert.throws(() => insertEmptyBar(text, parseChart(text, TJAParser).bars[0], 'invalid'), /插入位置无效/);
+});
+
+test('metadata-only songs parse as empty editable documents without accepting broken chart bodies', () => {
+  const parsed = parseChart('TITLE:Empty song\r\nBPM:150\r\nOFFSET:-.25\r\nWAVE:music.ogg\r\n// preserved\r\n', TJAParser);
+  assert.equal(parsed.title, 'Empty song'); assert.equal(parsed.baseBpm, 150);
+  assert.equal(parsed.offset, -.25); assert.equal(parsed.wave, 'music.ogg');
+  assert.deepEqual(parsed.variants, []); assert.deepEqual(parsed.bars, []); assert.equal(parsed.variant, null);
+  for (const body of ['#START\n1000,\n', '#END\n', '1000,\n', 'not metadata\n']) assert.throws(() => parseChart(`BPM:120\n${body}`, TJAParser));
+  assert.throws(() => parseChart('BPM:0\n', TJAParser), /BPM/);
+  assert.throws(() => parseChart('BPM:120\n', TJAParser, 1), /不存在/);
+});
+
+test('preserved position controls insert, update and remove exact off-grid commands without simulating effects', () => {
+  const source = chart('1002,\n2000,'), cell = { bar: 0, numerator: 1, denominator: 3 };
+  const settings = { lyric: 'Line one\\nLine two', section: true, levelhold: true, senote: 12 };
+  const edited = setPositionSettings(source, parseChart(source, TJAParser), cell, settings, TJAParser);
+  const parsed = parseChart(edited, TJAParser);
+  assert.deepEqual(parsed.bars[0].events.map(item => [item.name, item.fraction]), [['LYRIC', 1 / 3], ['SECTION', 1 / 3], ['LEVELHOLD', 1 / 3], ['SENOTECHANGE', 1 / 3]]);
+  assert.equal(parsed.bars[0].duration, 2); assert.equal(parsed.bars[1].duration, 2);
+  assert.equal(parsed.bars[0].notes.length, 12);
+  const changed = setPositionSettings(edited, parsed, cell, { lyric: '', senote: 1 }, TJAParser);
+  assert.match(changed, /#LYRIC \r?\n/); assert.match(changed, /#SENOTECHANGE 1/);
+  const removed = setPositionSettings(changed, parseChart(changed, TJAParser), cell, { lyric: null, section: null, levelhold: null, senote: null }, TJAParser);
+  assert.deepEqual(parseChart(removed, TJAParser).bars[0].events, []);
+});
+
+test('preserved command input rejects invalid values and multiline command injection', () => {
+  const source = chart('1000,'), parsed = parseChart(source, TJAParser);
+  for (const settings of [{ lyric: 'x\n#BPMCHANGE 60' }, { lyric: 'x\r#END' }, { lyric: '// hidden' }, { lyric: 1 }, { section: false }, { levelhold: 'yes' }, ...[0, 13, 1.5, NaN, '3'].map(senote => ({ senote }))]) {
+    assert.throws(() => setBarSettings(source, parsed.bars[0], settings));
+  }
+});
 
 test('barline visibility defaults to on and inherits without changing notes or timing', () => {
   const parsed = parseChart(chart('#BARLINEOFF\n1000,\n2000,\n#BARLINEON\n3000,'), TJAParser);
@@ -136,8 +254,11 @@ test('empty bars retain duration and can be edited', () => {
   assert.equal(parsed.bars[1].start, 2.825);
   assert.equal(parseChart(replaceBar(source, parsed.bars[0], '2000'), TJAParser).bars[0].notes, '2000');
 });
-test('double charts are explicitly rejected', () => {
-  assert.throws(() => parseChart(chart('1000,').replace('#START', '#START P1'), TJAParser), /双人/);
+test('explicit double-player parts are editable with their own player identity', () => {
+  const parsed = parseChart(chart('A0B0,').replace('#START', '#START P1'), TJAParser);
+  assert.equal(parsed.variant.player, 'P1');
+  assert.equal(parsed.variant.style, 'Double');
+  assert.equal(parsed.bars[0].notes, 'A0B0');
 });
 test('course edits preserve the other difficulty', () => {
   const source = chart('1000,') + 'COURSE:Easy\nLEVEL:1\n#START\n2000,\n#END\n';

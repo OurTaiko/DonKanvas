@@ -3,25 +3,43 @@ import assert from 'node:assert/strict';
 import { drawLongSpan, drawNote, drawNoteSelection, noteHitRadius } from './note-render.js';
 
 function recorder() {
-  const calls = [];
-  const brush = new Proxy({}, { get: (target,name) => (...args) => calls.push([name,...args]) });
-  return { calls, brush };
+  const calls = [], styles = [];
+  const brush = new Proxy({}, {
+    get: (target,name) => (...args) => calls.push([name,...args]),
+    set: (target,name,value) => { styles.push([name,value]); return true; }
+  });
+  return { calls, styles, brush };
 }
-test('balloon is an ellipse with a tied string; roll has a round head', () => {
-  const balloon = recorder(), roll = recorder();
-  drawNote(balloon.brush,'7',20,30); drawNote(roll.brush,'5',20,30);
+test('balloons have bright flat faces, distinct round and rounded-square bodies, and no realistic string', () => {
+  const balloon = recorder(), special = recorder();
+  drawNote(balloon.brush,'7',20,30); drawNote(special.brush,'9',20,30);
   assert.ok(balloon.calls.some(call => call[0] === 'ellipse'));
-  assert.ok(balloon.calls.some(call => call[0] === 'bezierCurveTo'));
-  assert.ok(roll.calls.some(call => call[0] === 'arc'));
-  assert.ok(!roll.calls.some(call => call[0] === 'ellipse'));
+  assert.ok(special.calls.some(call => call[0] === 'roundRect' && call[5] === 7));
+  for (const [result, color] of [[balloon, '#ff9c35'], [special, '#ff78ae']]) {
+    assert.ok(result.styles.some(([key,value]) => key === 'fillStyle' && value === color));
+    assert.equal(result.calls.filter(call => call[0] === 'arc' && call[3] === 1.5).length, 2);
+    assert.ok(result.calls.some(call => call[0] === 'arc' && call[3] === 4 && call[5] === Math.PI));
+    assert.ok(!result.calls.some(call => call[0] === 'bezierCurveTo'));
+    assert.ok(!result.calls.some(call => call[0] === 'fillText'));
+  }
 });
-test('roll draws a connected bar while balloon draws a string', () => {
+test('roll draws a connected capsule while balloon draws a rounded duration guide', () => {
   const roll = recorder(), balloon = recorder();
   const span = {note:'5',start:0,end:3,complete:true};
   drawLongSpan(roll.brush,span,time => time * 10,30,1,4);
   drawLongSpan(balloon.brush,{...span,note:'7'},time => time * 10,30,1,4);
   assert.ok(roll.calls.some(call => call[0] === 'roundRect' && call[1] === 10 && call[3] === 20));
   assert.ok(!balloon.calls.some(call => call[0] === 'roundRect'));
+  assert.ok(balloon.styles.some(([key,value]) => key === 'lineCap' && value === 'round'));
+});
+test('large rolls have a larger round head and a fully rounded thicker body', () => {
+  for (const [note,radius,thickness] of [['5',9,13], ['6',13,23]]) {
+    const head = recorder(), body = recorder();
+    drawNote(head.brush,note,20,30);
+    drawLongSpan(body.brush,{note,start:0,end:3,complete:true},time => time * 10,30,0,4);
+    assert.ok(head.calls.some(call => call[0] === 'arc' && call[3] === radius));
+    assert.ok(body.calls.some(call => call[0] === 'roundRect' && call[4] === thickness && call[5] === thickness / 2));
+  }
 });
 test('unfinished spans are dashed and offscreen spans are skipped', () => {
   const unfinished = recorder(), offscreen = recorder();
@@ -31,19 +49,19 @@ test('unfinished spans are dashed and offscreen spans are skipped', () => {
   assert.equal(offscreen.calls.length,0);
 });
 test('selection changes the original border without adding an outer ring', () => {
-  for (const note of '123456789') {
+  for (const note of '123456789AB') {
     const selected = recorder(), normal = recorder();
     drawNoteSelection(selected.brush, note, 100, 60);
     drawNote(normal.brush, note, 100, 60);
     assert.ok(!selected.calls.some(call => ['fillRect', 'strokeRect', 'rect'].includes(call[0])));
-    const shapes = calls => calls.filter(call => ['arc', 'ellipse', 'closePath', 'bezierCurveTo'].includes(call[0]));
+    const shapes = calls => calls.filter(call => ['arc', 'ellipse', 'roundRect', 'closePath', 'bezierCurveTo'].includes(call[0]));
     assert.deepEqual(shapes(selected.calls), shapes(normal.calls));
     assert.ok(selected.calls.some(call => call[0] === 'moveTo' && call[1] === 100 && call[2] === 23));
     assert.ok(selected.calls.some(call => call[0] === 'lineTo' && call[1] === 100 && call[2] === 60));
   }
 });
 test('normal and selected notes differ only in border color', () => {
-  for (const note of '123456789') {
+  for (const note of '123456789AB') {
     const normal = [], selected = [];
     const brush = values => new Proxy({}, { get: () => () => {}, set: (target, key, value) => { values.push([key, value]); return true; } });
     drawNote(brush(normal), note, 100, 60);
@@ -57,6 +75,14 @@ test('empty positions are dashed and large notes use their full visible hit radi
   drawNoteSelection(empty.brush, '0', 100, 60);
   assert.ok(empty.calls.some(call => call[0] === 'setLineDash' && call[1].length === 2));
   assert.equal(noteHitRadius('1'), 10);
-  for (const note of '346') assert.equal(noteHitRadius(note), 14);
-  for (const note of '79') assert.equal(noteHitRadius(note), 13);
+  for (const note of '346AB') assert.equal(noteHitRadius(note), 14);
+  for (const note of '79') assert.equal(noteHitRadius(note), 16);
+});
+test('cooperative notes render as large notes with a visible 2P mark', () => {
+  for (const note of 'AB') {
+    const { brush, calls } = recorder();
+    drawNote(brush, note, 100, 60);
+    assert.ok(calls.some(call => call[0] === 'arc' && call[3] === 13));
+    assert.ok(calls.some(call => call[0] === 'fillText' && call[1] === '2P'));
+  }
 });

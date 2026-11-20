@@ -1,34 +1,64 @@
 import { message, LocalizedError } from './i18n.js';
+import { chartVariants } from './courses.js';
 export const EDITABLE_COMMANDS = ['BPMCHANGE', 'MEASURE', 'DELAY', 'SCROLL', 'GOGOSTART', 'GOGOEND', 'BARLINEON', 'BARLINEOFF'];
 export const PRESERVED_COMMANDS = ['LYRIC', 'SECTION', 'LEVELHOLD', 'SENOTECHANGE'];
+export const BRANCH_ROUTES = ['N', 'E', 'M'];
+export const BRANCH_ROUTE_NAMES = { N: '普通', E: '玄人', M: '达人' };
 
 export function decodeChart(bytes) {
   try { return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), encoding: 'UTF-8' }; }
   catch { return { text: new TextDecoder('shift-jis').decode(bytes), encoding: 'Shift-JIS' }; }
 }
 
-export function parseChart(text, parser, courseIndex = 0) {
-  parser.parse(text);
+export function parseChart(text, parser, courseIndex = 0, branchRoutes = []) {
+  if (!Array.isArray(branchRoutes) || branchRoutes.some(route => route !== null && !BRANCH_ROUTES.includes(route))) throw new LocalizedError(message('分歧路线选择无效。'));
   const field = name => text.match(new RegExp(`^${name}:(.*)$`, 'mi'))?.[1].trim();
   const blocks = [...text.matchAll(/^#START[^\r\n]*\r?\n([\s\S]*?)^#END/gmi)];
-  if (!blocks.length) throw new LocalizedError(message('没有找到 #START / #END。'));
-  const courses = blocks.map((block, index) => {
-    const header = text.slice(index ? blocks[index - 1].index + blocks[index - 1][0].length : 0, block.index);
-    return [...header.matchAll(/^COURSE:(.*)$/gmi)].at(-1)?.[1].trim() || `Course ${index + 1}`;
-  });
-  const block = blocks[courseIndex];
-  if (!block) throw new LocalizedError(message('难度不存在。'));
-  if (/^#START[\t ]+\S/m.test(block[0]) || /^STYLE:[\t ]*(Double|2)[\t ]*\r?$/mi.test(text)) throw new LocalizedError(message('暂不支持双人谱面。'));
-  const bodyStart = block.index + block[0].indexOf('\n') + 1;
   let bpm = Number(field('BPM'));
   const offset = Number(field('OFFSET') || 0);
   if (!(bpm > 0) || !Number.isFinite(bpm) || !Number.isFinite(offset)) throw new LocalizedError(message('BPM 或 OFFSET 无效。'));
+  if (!blocks.length) {
+    if (text.split(/\r?\n/).some(line => line.trim() && !/^\s*(?:\/\/|[A-Z][A-Z0-9]*:)/i.test(line))) throw new LocalizedError(message('没有找到 #START / #END。'));
+    if (courseIndex !== 0 || branchRoutes.length) throw new LocalizedError(message('难度不存在。'));
+    return { title: field('TITLE') || 'Untitled', wave: field('WAVE'), offset, baseBpm: bpm, courses: [], variants: [], variant: null, courseIndex: 0, bars: [], allBars: [], branches: [], branchRoutes: [], unsimulatedCommands: [] };
+  }
+  parser.parse(text);
+  const variants = chartVariants(text), courses = variants.map(variant => variant.course);
+  const block = blocks[courseIndex];
+  if (!block) throw new LocalizedError(message('难度不存在。'));
+  const headerStart = courseIndex ? blocks[courseIndex - 1].index + blocks[courseIndex - 1][0].length : 0;
+  const bodyStart = block.index + block[0].indexOf('\n') + 1;
   const baseBpm = bpm;
   let numerator = 4, denominator = 4, time = -offset, gogo = false, scroll = 1, barline = true, delay = 0;
-  let digits = [], ranges = [], bars = [], commands = [], events = [], initialVisual = null;
+  let digits = [], ranges = [], bars = [], commands = [], sharedCommands = [], events = [], initialVisual = null, branch = null;
+  const allBars = [], branches = [];
   const unsimulatedCommands = new Set();
-  const headerStart = courseIndex ? blocks[courseIndex - 1].index + blocks[courseIndex - 1][0].length : 0;
   for (const match of text.slice(headerStart, block.index).matchAll(/^#(BMSCROLL|HBSCROLL)\b/gmi)) unsimulatedCommands.add(match[1].toUpperCase());
+  const capture = () => ({ bpm, numerator, denominator, time, gogo, scroll, barline, delay, commands, sharedCommands, bars, warnings: [...unsimulatedCommands] });
+  const restore = saved => {
+    ({ bpm, numerator, denominator, time, gogo, scroll, barline, delay, commands, sharedCommands, bars } = saved);
+    unsimulatedCommands.clear();
+    for (const name of saved.warnings) unsimulatedCommands.add(name);
+  };
+  const fence = command => { sharedCommands = [...sharedCommands, ...commands, ...(command ? [command] : [])]; commands = []; };
+  const finishPath = () => {
+    if (digits.length) throw new LocalizedError(message('分歧边界必须位于完整小节之间。'));
+    if (branch.current) branch.paths[branch.current] = capture();
+  };
+  const finishBranch = (end, marker) => {
+    finishPath();
+    if (!branch.current) { fence(); branch.entry = capture(); }
+    const current = branch, routes = BRANCH_ROUTES.filter(route => current.paths[route]);
+    const requested = branchRoutes[current.index];
+    const route = requested ?? (routes.includes('N') ? 'N' : routes[0] ?? null);
+    if (route !== null && !routes.includes(route)) throw new LocalizedError(message('第 {p0} 处分歧没有路线 {p1}。', { p0: current.index + 1, p1: route }));
+    const selected = route === null ? current.entry : current.paths[route];
+    restore(selected);
+    bars = route === null ? [...current.entry.bars] : [...current.entry.bars, ...selected.bars];
+    Object.assign(current, { end, route, routes, firstBarIndex: current.entry.bars.length, barCount: route === null ? 0 : selected.bars.length });
+    branch = null;
+    fence(marker);
+  };
   const body = block[1];
   for (const match of body.matchAll(/[^\n]*\n|[^\n]+$/g)) {
     const line = match[0].split('//')[0];
@@ -36,9 +66,32 @@ export function parseChart(text, parser, courseIndex = 0) {
     if (command) {
       const [, nameRaw, value] = command;
       const name = nameRaw.toUpperCase();
+      const start = bodyStart + match.index + line.indexOf('#');
+      const instruction = { name, start, end: start + line.trim().length, value, timing: { bpm, numerator, denominator, gogo, scroll, barline } };
+      if (name === 'BRANCHSTART') {
+        if (digits.length) throw new LocalizedError(message('分歧边界必须位于完整小节之间。'));
+        const values = value.split(',').map(part => part.trim());
+        if (values.length !== 3 || !/^[prs]$/i.test(values[0]) || values.slice(1).some(part => !part || !Number.isFinite(Number(part)))) throw new LocalizedError(message('分歧条件须为 p、r 或 s 及两个有限数值。'));
+        if (branch) finishBranch(start);
+        fence(instruction);
+        branch = { index: branches.length, start, value, paths: {}, current: null, entry: capture() };
+        branches.push(branch);
+        continue;
+      }
+      if (BRANCH_ROUTES.includes(name)) {
+        if (!branch || value || branch.paths[name] || branch.current === name) throw new LocalizedError(message('分歧路线标记缺失、重复或位置无效。'));
+        finishPath();
+        if (!branch.current) { fence(); branch.entry = capture(); }
+        restore(branch.entry); bars = []; commands = []; sharedCommands = [...sharedCommands, instruction]; branch.current = name;
+        continue;
+      }
+      if (name === 'BRANCHEND') {
+        if (!branch || value) throw new LocalizedError(message('分歧结束标记位置无效。'));
+        finishBranch(start + line.trim().length, instruction);
+        continue;
+      }
       if (EDITABLE_COMMANDS.includes(name) || PRESERVED_COMMANDS.includes(name)) {
-        const start = bodyStart + match.index + line.indexOf('#');
-        const command = { name, start, end: start + line.trim().length, value };
+        const command = instruction;
         if (digits.length) events.push({ ...command, slot: digits.join('').length, value });
         else commands.push(command);
       }
@@ -57,8 +110,9 @@ export function parseChart(text, parser, courseIndex = 0) {
       else throw new LocalizedError(message('暂不支持 #{p0}，已停止加载以避免错误对齐。', { p0: name }));
       continue;
     }
-    for (const token of line.matchAll(/[0-9]+|,|[^\s0-9,]+/g)) {
+    for (const token of line.matchAll(/[0-9AB]+|,|[^\s0-9AB,]+/gi)) {
       const position = bodyStart + match.index + token.index;
+      if (branch && !branch.current) throw new LocalizedError(message('分歧内容必须放在 #N、#E 或 #M 之后。'));
       if (token[0] === ',') {
         const notes = digits.join('') || '0';
         const initial = initialVisual || { bpm, numerator, denominator, gogo, scroll, barline };
@@ -86,25 +140,51 @@ export function parseChart(text, parser, courseIndex = 0) {
         }
         advance(1);
         let boundaryTime = time - delay;
-        const boundaryCommands = commands.map(command => {
+        const boundaryCommands = [...sharedCommands.map(command => ({ ...command, shared: true })), ...commands].map(command => {
           const event = { ...command, slot: 0, fraction: 0, time: boundaryTime };
           if (event.name === 'DELAY') { boundaryTime += Number(event.value); event.endTime = boundaryTime; }
           return event;
         });
-        bars.push({ index: bars.length, notes, ranges, comma: position, start: time, end: cursor, duration, ...initial, delay, commands: boundaryCommands, events: resolvedEvents, instructions: [...boundaryCommands, ...resolvedEvents], segments, finalState: { ...timing } });
-        time = cursor; digits = []; ranges = []; commands = []; events = []; initialVisual = null; delay = 0;
-      } else if (/^[0-9]+$/.test(token[0])) { if (!initialVisual) initialVisual = { bpm, numerator, denominator, gogo, scroll, barline }; digits.push(token[0]); ranges.push({ start: position, end: position + token[0].length }); }
+        const bar = { index: bars.length, branchIndex: branch?.index ?? null, route: branch?.current ?? null, branchStart: Boolean(branch && !bars.length), notes, ranges, comma: position, start: time, end: cursor, duration, ...initial, delay, commands: boundaryCommands.filter(command => !command.shared), events: resolvedEvents, instructions: [...boundaryCommands, ...resolvedEvents], segments, finalState: { ...timing } };
+        bars.push(bar); allBars.push(bar);
+        time = cursor; digits = []; ranges = []; commands = []; sharedCommands = []; events = []; initialVisual = null; delay = 0;
+      } else if (/^[0-9AB]+$/i.test(token[0])) { if (!initialVisual) initialVisual = { bpm, numerator, denominator, gogo, scroll, barline }; digits.push(token[0].toUpperCase()); ranges.push({ start: position, end: position + token[0].length }); }
       else throw new LocalizedError(message('无法识别的谱面内容：{p0}', { p0: token[0] }));
     }
   }
+  if (branch) finishBranch(bodyStart + body.length);
+  if (branchRoutes.length > branches.length) throw new LocalizedError(message('分歧路线选择无效。'));
   if (digits.length) throw new LocalizedError(message('最后一个小节缺少逗号。'));
   if (!bars.length) throw new LocalizedError(message('没有可编辑的小节。'));
-  return { title: field('TITLE') || 'Untitled', wave: field('WAVE'), offset, baseBpm, courses, courseIndex, bars, unsimulatedCommands: [...unsimulatedCommands] };
+  bars.forEach((bar, index) => { bar.index = index; });
+  return { title: field('TITLE') || 'Untitled', wave: field('WAVE'), offset, baseBpm, courses, variants, variant: variants[courseIndex], courseIndex, bars, allBars, branches: branches.map(({ index, start, end, value, route, routes, firstBarIndex, barCount }) => ({ index, start, end, value, route, routes, firstBarIndex, barCount })), branchRoutes: branches.map(branch => branch.route), unsimulatedCommands: [...unsimulatedCommands] };
 }
 
 export function setBaseBpm(text, bpm) {
   if (!Number.isFinite(bpm) || bpm <= 0) throw new LocalizedError(message('BPM 须为正数。'));
   return text.replace(/^(BPM:)[^\r\n]*/mi, (line, prefix) => `${prefix}${bpm}${line.match(/[\t ]*\/\/.*$/)?.[0] || ''}`);
+}
+
+export function insertEmptyBar(text, bar, side) {
+  if (!bar) throw new LocalizedError(message('请先创建难度谱面。'));
+  if (!['before', 'after'].includes(side)) throw new LocalizedError(message('插入位置无效。'));
+  const newline = text.includes('\r\n') ? '\r\n' : '\n';
+  let position = bar.ranges[0]?.start ?? bar.comma;
+  if (side === 'after') {
+    position = bar.comma + 1;
+    const lineEnd = text.indexOf('\n', position);
+    const tail = text.slice(position, lineEnd < 0 ? text.length : lineEnd);
+    if (/^[\t \r]*(?:\/\/[^\n]*)?$/.test(tail) && lineEnd >= 0) position = lineEnd + 1;
+  }
+  const prefix = text.slice(0, position);
+  return prefix + (prefix.endsWith('\n') ? '' : newline) + '0000000000000000,' + newline + text.slice(position);
+}
+
+export function deleteBar(text, chart, bar) {
+  if (!bar) throw new LocalizedError(message('请先创建难度谱面。'));
+  if (chart.bars.length <= 1) throw new LocalizedError(message('不能删除最后一个小节。'));
+  const start = bar.commands[0]?.start ?? bar.ranges[0]?.start ?? bar.comma;
+  return text.slice(0, start) + text.slice(bar.comma + 1);
 }
 
 export function setBarSettings(text, bar, settings, slot = 0) {
@@ -136,6 +216,14 @@ export function setBarSettings(text, bar, settings, slot = 0) {
     if (settings.barline !== null && typeof settings.barline !== 'boolean') throw new LocalizedError(message('小节线状态无效。'));
     replacements.set('BARLINEON', settings.barline === null ? '' : settings.barline ? '#BARLINEON' : '#BARLINEOFF');
     replacements.set('BARLINEOFF', '');
+  }
+  for (const [key, name] of [['lyric', 'LYRIC'], ['section', 'SECTION'], ['levelhold', 'LEVELHOLD'], ['senote', 'SENOTECHANGE']]) {
+    if (!(key in settings)) continue;
+    const value = settings[key];
+    if (key === 'lyric' && value !== null && (typeof value !== 'string' || /[\r\n]/.test(value) || value.includes('//'))) throw new LocalizedError(message('歌词须为单行文本，不能包含实际换行或 //。'));
+    if (['section', 'levelhold'].includes(key) && value !== null && value !== true) throw new LocalizedError(message('SECTION / LEVELHOLD 状态无效。'));
+    if (key === 'senote' && value !== null && (!Number.isSafeInteger(value) || value < 1 || value > 12)) throw new LocalizedError(message('SENOTECHANGE 须为 1–12 的整数。'));
+    replacements.set(name, value === null ? '' : `#${name}${['lyric', 'senote'].includes(key) ? ` ${value}` : ''}`);
   }
   const newline = text.includes('\r\n') ? '\r\n' : '\n';
   const lines = [...replacements.values()].filter(Boolean);
@@ -169,7 +257,7 @@ export function setPositionSettings(text, chart, cell, settings, parser) {
   if (length > 65536) throw new LocalizedError(message('指令位置超出 65536 个源码格，无法无损插入。'));
   if (length !== bar.notes.length) {
     text = replaceBar(text, bar, resizeNotes(bar.notes, length));
-    bar = parseChart(text, parser, chart.courseIndex).bars[cell.bar];
+    bar = parseChart(text, parser, chart.courseIndex, chart.branchRoutes).bars[cell.bar];
   }
   return setBarSettings(text, bar, settings, numerator * length / denominator);
 }
@@ -182,6 +270,42 @@ export function clearPositionSettings(text, bar, cell) {
   return text;
 }
 
+export function branchSource(text, branch) {
+  const source = text.slice(branch.start, branch.end).trimEnd();
+  return /^[\t ]*#BRANCHEND\b/mi.test(source) ? source : `${source}${text.includes('\r\n') ? '\r\n' : '\n'}#BRANCHEND`;
+}
+
+export function setBranchSource(text, chart, cell, source, index, parser) {
+  const content = source.split(/\r?\n/).map(line => line.split('//')[0].trim()).filter(Boolean);
+  if (!/^#BRANCHSTART\b/i.test(content[0] || '') || !/^#BRANCHEND$/i.test(content.at(-1) || '') ||
+      content.filter(line => /^#BRANCHSTART\b/i.test(line)).length !== 1 || content.filter(line => /^#BRANCHEND\b/i.test(line)).length !== 1 ||
+      content.some(line => /^#(?:START|END)\b/i.test(line))) throw new LocalizedError(message('分歧源码须只包含一段完整的 #BRANCHSTART … #BRANCHEND 结构。'));
+  let start, end, target;
+  const routes = [...chart.branchRoutes];
+  if (index !== null) {
+    const branch = chart.branches[index];
+    if (!Number.isSafeInteger(index) || !branch) throw new LocalizedError(message('分歧路线选择无效。'));
+    ({ start, end } = branch); target = index;
+  } else {
+    const bar = chart.bars[cell?.bar];
+    if (!bar || !Number.isSafeInteger(cell.numerator) || !Number.isSafeInteger(cell.denominator) || cell.denominator < 1 ||
+        ![0, 1].includes(cell.numerator / cell.denominator) || bar.branchIndex !== null) throw new LocalizedError(message('请在共用小节的起点或末端插入分歧，不能嵌套分歧。'));
+    start = end = cell.numerator === 0 ? bar.commands[0]?.start ?? bar.ranges[0]?.start ?? bar.comma : bar.comma + 1;
+    target = chart.branches.filter(branch => branch.start < start).length;
+    routes.splice(target, 0, null);
+  }
+  const newline = text.includes('\r\n') ? '\r\n' : '\n';
+  const prefix = text.slice(text.lastIndexOf('\n', start - 1) + 1, start).trim() ? newline : '';
+  const suffix = /^(?:\r?\n|[\t ]*\/\/)/.test(text.slice(end)) ? '' : newline;
+  const replacement = `${prefix}${source.replace(/\r?\n/g, newline).trimEnd()}${suffix}`;
+  const edited = text.slice(0, start) + replacement + text.slice(end);
+  const parsed = parseChart(edited, parser, chart.courseIndex);
+  if (parsed.branches.length !== routes.length) throw new LocalizedError(message('分歧源码须只包含一段完整的 #BRANCHSTART … #BRANCHEND 结构。'));
+  if (parsed.allBars.some(bar => bar.comma >= start && bar.comma < start + replacement.length && bar.notes.length > 65536)) throw new LocalizedError(message('单小节最多支持 65536 个源码格。'));
+  if (!parsed.branches[target].routes.includes(routes[target])) routes[target] = parsed.branchRoutes[target];
+  return { text: edited, branchRoutes: routes, start, end, insertedEnd: start + replacement.length, index: target };
+}
+
 export function barSource(text, bar) {
   const start = bar.commands[0]?.start ?? bar.ranges[0]?.start ?? bar.comma;
   return text.slice(start, bar.comma + 1);
@@ -189,12 +313,13 @@ export function barSource(text, bar) {
 
 export function replaceBarSource(text, chart, bar, source, parser) {
   const content = source.split(/\r?\n/).map(line => line.split('//')[0]).join('\n');
+  if (/^\s*#(?:BRANCHSTART|BRANCHEND|N|E|M)\b/mi.test(content)) throw new LocalizedError(message('小节源码不能修改分歧结构。'));
   const notes = content.split('\n').filter(line => !line.trimStart().startsWith('#')).join('\n');
   if ((notes.match(/,/g) || []).length !== 1 || !content.trimEnd().endsWith(',') || /^\s*#(?:START|END)\b/mi.test(content)) throw new LocalizedError(message('小节源码须只包含一个以逗号结束的小节。'));
   const start = bar.commands[0]?.start ?? bar.ranges[0]?.start ?? bar.comma;
   const newline = text.includes('\r\n') ? '\r\n' : '\n';
   const edited = text.slice(0, start) + source.replace(/\r?\n/g, newline).trimEnd() + text.slice(bar.comma + 1);
-  const parsed = parseChart(edited, parser, chart.courseIndex);
+  const parsed = parseChart(edited, parser, chart.courseIndex, chart.branchRoutes);
   if (parsed.bars.length !== chart.bars.length || parsed.courses.length !== chart.courses.length) throw new LocalizedError(message('小节源码不能增删小节或难度。'));
   if (parsed.bars[bar.index].notes.length > 65536) throw new LocalizedError(message('单小节最多支持 65536 个源码格。'));
   return edited;
@@ -202,7 +327,7 @@ export function replaceBarSource(text, chart, bar, source, parser) {
 
 export function replaceBar(text, bar, notes) {
   notes = notes.replace(/\s/g, '').replace(/,$/, '');
-  if (!/^[0-9]+$/.test(notes)) throw new LocalizedError(message('音符只能使用 0–9，可在末尾带一个逗号。'));
+  if (!/^[0-9AB]+$/.test(notes)) throw new LocalizedError(message('音符只能使用 0–9、A、B，可在末尾带一个逗号。'));
   if (notes.length > 65536) throw new LocalizedError(message('单小节最多支持 65536 个源码格。'));
   if (!bar.ranges.length) return text.slice(0, bar.comma) + notes + text.slice(bar.comma);
   const events = bar.events || [];
@@ -259,4 +384,13 @@ export function barStateAt(bar, fraction) {
   if (fraction >= 1) return { ...bar.finalState };
   const segment = bar.segments?.findLast(segment => segment.from <= fraction);
   return segment || bar;
+}
+
+export function barStateAtTime(bar, time) {
+  const segment = bar.segments.findLast(segment => time >= segment.start && time < segment.end);
+  const delay = bar.instructions.findLast(event => event.name === 'DELAY' && time >= event.time && time < event.endTime);
+  if (delay && (!segment || delay.fraction > segment.from)) return { ...delay.timing, delay: Number(delay.value) };
+  if (segment) return { ...segment, delay: 0 };
+  if (time < bar.start) return { ...(bar.instructions[0]?.timing ?? bar), delay: 0 };
+  return { ...bar.finalState, delay: 0 };
 }

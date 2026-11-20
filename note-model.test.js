@@ -4,6 +4,15 @@ import { NOTE_TYPES, selectCell, cellValue, setCellNote, longNoteSpans } from '.
 import { TJAParser } from 'tja';
 import { parseChart } from './chart.js';
 
+test('note choices use compact names while keeping TJA codes and shape distinctions', () => {
+  assert.deepEqual(NOTE_TYPES.filter(type => '5679AB'.includes(type.value)).map(({ value, name }) => [value, name]), [
+    ['5', '连打'], ['6', '大连打'], ['7', '气球连打'], ['9', '特殊连打'], ['A', '双人咚'], ['B', '双人咔']
+  ]);
+  assert.equal(NOTE_TYPES.find(type => type.value === '6').shape, 'roll large');
+  assert.equal(NOTE_TYPES.find(type => type.value === '9').shape, 'balloon special');
+  assert.deepEqual(NOTE_TYPES.map(type => type.shortcut ?? type.value), ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '=']);
+});
+
 test('selecting a cell does not change source and reports its current note', () => {
   const notes = '1020';
   const cell = selectCell(notes, .25, 16);
@@ -28,6 +37,13 @@ test('existing dense-source note retains its exact fraction', () => {
 test('rolls and balloons have different visual types', () => {
   assert.equal(NOTE_TYPES[5].shape,'roll'); assert.equal(NOTE_TYPES[7].shape,'balloon');
   assert.equal(NOTE_TYPES[8].shape,'end');
+});
+test('cooperative notes participate in exact selection and off-grid editing', () => {
+  assert.deepEqual(NOTE_TYPES.slice(-2).map(type => type.value), ['A', 'B']);
+  const edited = setCellNote('A0B0', { numerator: 1, denominator: 3 }, 'A');
+  assert.equal(edited.length, 12);
+  assert.equal(edited[0], 'A'); assert.equal(edited[4], 'A'); assert.equal(edited[6], 'B');
+  assert.deepEqual(selectCell(edited, .5, 16, .01), { numerator: 6, denominator: 12 });
 });
 test('long notes connect across bar boundaries and distinguish unfinished spans', () => {
   const bars = [{notes:'5000',start:0,duration:2,end:2},{notes:'0087',start:2,duration:2,end:4}];

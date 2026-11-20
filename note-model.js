@@ -8,11 +8,13 @@ export const NOTE_TYPES = [
   { value: '2', name: '咔', shape: 'ka' },
   { value: '3', name: '大咚', shape: 'don large' },
   { value: '4', name: '大咔', shape: 'ka large' },
-  { value: '5', name: '连打黄条', shape: 'roll' },
-  { value: '6', name: '大连打黄条', shape: 'roll large' },
-  { value: '7', name: '气球', shape: 'balloon' },
+  { value: '5', name: '连打', shape: 'roll' },
+  { value: '6', name: '大连打', shape: 'roll large' },
+  { value: '7', name: '气球连打', shape: 'balloon' },
   { value: '8', name: '长音结束', shape: 'end' },
-  { value: '9', name: '特殊气球', shape: 'balloon special' }
+  { value: '9', name: '特殊连打', shape: 'balloon special' },
+  { value: 'A', name: '双人咚', shape: 'don large duet', shortcut: '-' },
+  { value: 'B', name: '双人咔', shape: 'ka large duet', shortcut: '=' }
 ];
 
 export function selectCell(notes, fraction, divisions, tolerance = 0) {
@@ -31,7 +33,7 @@ export function cellValue(notes, cell) {
 }
 
 export function setCellNote(notes, cell, note) {
-  if (!/^[0-9]$/.test(note)) throw new LocalizedError(message('音符只能为 0–9。'));
+  if (!/^[0-9AB]$/.test(note)) throw new LocalizedError(message('音符只能为 0–9、A、B。'));
   if (cellValue(notes, cell) === note) return notes;
   let divisor = cell.numerator, remainder = cell.denominator;
   while (remainder) [divisor, remainder] = [remainder, divisor % remainder];

@@ -1,21 +1,22 @@
 import { t, message, LocalizedError, formatMessage } from './i18n.js';
 import { computed, onMounted, onUnmounted, reactive, shallowReactive, watch } from 'vue';
 import { TJAParser as parser } from 'tja';
-import { decodeChart, parseChart, resizeNotes, setBaseBpm, barTimeAt, barStateAt, setPositionSettings, clearPositionSettings, barSource } from './chart.js';
+import { BRANCH_ROUTES, decodeChart, parseChart, insertEmptyBar, resizeNotes, setBaseBpm, barTimeAt, barStateAt, barStateAtTime, setPositionSettings, clearPositionSettings, barSource } from './chart.js';
 import { createHitBuffer, MIX_DEFAULTS, duckMusic } from './hit-audio.js';
 import { resolveLoop, measureStart, measureEnd } from './loop.js';
-import { GRID_DIVISIONS, MAX_SNAP_DIVISIONS } from './grid.js';
+import { GRID_DIVISIONS, MAX_SNAP_DIVISIONS, SNAP_DIVISIONS } from './grid.js';
 import { NOTE_TYPES, cellValue, setCellNote, longNoteSpans } from './note-model.js';
 import { longHitTimes } from './long-audio.js';
-import { balloonCounts, balloonIndex, setBalloonCount, replaceBarWithBalloons, replaceBarSourceWithBalloons } from './balloon.js';
+import { balloonInfo, balloonTotals, setBalloonCount, replaceBarWithBalloons, replaceBarSourceWithBalloons, setBranchSourceWithBalloons, setMeasureBranchWithBalloons, deleteBarWithBalloons } from './balloon.js';
 import { HISTORY_LIMIT, textDiff, applyDiff } from './history.js';
-import { findWaveFile, indexMediaFiles } from './media-files.js';
 import { songMetadata, setSongMetadata } from './metadata.js';
+import { addCourse, deleteCourse, addPlayerCharts, setCourseLevel } from './courses.js';
+import { createBeatTimeline } from './timeline.js';
 
 const WORKSPACE_KEY = 'tja-wave-workspace';
 const chartFileTypes = () => [{ description: t('TJA 谱面'), accept: { 'text/plain': ['.tja'] } }];
-const documentFields = ['text', 'chart', 'selected', 'course', 'buffer', 'peaks', 'position', 'viewStart', 'followPlayback', 'undo', 'redo', 'filename', 'savedText', 'fileHandle', 'sourceHandle', 'chartPath', 'saving', 'dirty', 'invalid', 'selectedCell', 'commandCell', 'source', 'sourceState', 'encoding', 'audioName', 'customLoop'];
-const emptyDocument = () => ({ text: '', chart: null, selected: 0, course: 0, buffer: null, peaks: [], position: 0, viewStart: 0, followPlayback: true, undo: [], redo: [], filename: 'chart.tja', savedText: null, fileHandle: null, sourceHandle: null, chartPath: '', saving: false, dirty: false, invalid: false, selectedCell: null, commandCell: null, source: '', sourceState: '已同步', encoding: '', audioName: '无伴奏 · 可直接播放谱面', customLoop: null });
+const documentFields = ['text', 'chart', 'selected', 'course', 'branchRoutes', 'buffer', 'peaks', 'position', 'viewStart', 'followPlayback', 'undo', 'redo', 'filename', 'savedText', 'fileHandle', 'saving', 'dirty', 'invalid', 'selectedCell', 'commandCell', 'source', 'sourceState', 'encoding', 'audioName', 'customLoop'];
+const emptyDocument = () => ({ text: '', chart: null, selected: 0, course: 0, branchRoutes: [], buffer: null, peaks: [], position: 0, viewStart: 0, followPlayback: true, undo: [], redo: [], filename: 'chart.tja', savedText: null, fileHandle: null, saving: false, dirty: false, invalid: false, selectedCell: null, commandCell: null, source: '', sourceState: '已同步', encoding: '', audioName: '无伴奏 · 可直接播放谱面', customLoop: null });
 function chartFilename(name) {
   name = name.trim();
   if (!name || /[\\/:*?"<>|\r\n]/.test(name)) throw new LocalizedError(message('请输入有效的谱面文件名。'));
@@ -29,43 +30,67 @@ export const formatTime = value => {
 };
 
 export function useStudio() {
-  const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, mediaDirectoryName: '', playing: false, saveState: '尚未打开谱面', noticeMessage: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', get notice() { return formatMessage(this.noticeMessage); }, error: false });
+  const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, playing: false, loopAnchor: null, saveState: '尚未打开谱面', noticeMessage: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', get notice() { return formatMessage(this.noticeMessage); }, error: false });
   let nextDocumentId = 1, viewAnimation = null;
-  let mediaDirectory = null, mediaFiles = null;
-  const controls = reactive({ loop: true, hits: true, rate: 1, volume: MIX_DEFAULTS.music, hitVolume: MIX_DEFAULTS.hits, view: 2, snap: GRID_DIVISIONS, snapChoice: '16', customSnap: GRID_DIVISIONS });
+  const controls = reactive({ loop: false, hits: true, rate: 1, volume: MIX_DEFAULTS.music, hitVolume: MIX_DEFAULTS.hits, view: 2, snap: GRID_DIVISIONS, snapChoice: '16', customSnap: GRID_DIVISIONS });
   const bar = computed(() => state.chart?.bars[state.selected]);
   const spans = computed(() => state.chart ? longNoteSpans(state.chart.bars) : []);
   const range = computed(() => state.customLoop || [state.selected + 1, state.selected + 1]);
   const metadata = computed(() => songMetadata(state.text));
   const duration = computed(() => state.buffer?.duration ?? state.chart?.bars.reduce((end, item) => Math.max(end, measureEnd(item)), 0) ?? 0);
   const timelineBounds = computed(() => state.chart?.bars.reduce((bounds, item) => ({ start: Math.min(bounds.start, measureStart(item)), end: Math.max(bounds.end, measureEnd(item)) }), { start: 0, end: duration.value }) || { start: 0, end: 0 });
-  const viewSpan = computed(() => state.chart ? 240 / state.chart.baseBpm * controls.view : 1);
+  const timelineScale = computed(() => createBeatTimeline(state.chart));
+  const viewBeats = computed(() => 4 * controls.view);
   const visible = computed(() => {
     if (!state.chart) return null;
-    const bounds = timelineBounds.value;
-    const start = Math.max(bounds.start, Math.min(state.viewStart, Math.max(bounds.start, bounds.end - viewSpan.value)));
-    const end = start + viewSpan.value;
+    const bounds = timelineBounds.value, scale = timelineScale.value;
+    const first = scale.beatAt(bounds.start), last = scale.beatAt(bounds.end);
+    const startBeat = Math.max(first, Math.min(scale.beatAt(state.viewStart), Math.max(first, last - viewBeats.value)));
+    const endBeat = startBeat + viewBeats.value;
+    const start = scale.timeAt(startBeat), end = scale.timeAt(endBeat);
     const bars = state.chart.bars.filter(item => measureEnd(item) >= start && measureStart(item) <= end);
-    return { bars, start, end };
+    return { bars, start, end, startBeat, endBeat };
+  });
+  const viewSpan = computed(() => visible.value ? visible.value.end - visible.value.start : 1);
+  const chartStats = computed(() => {
+    const notes = state.chart?.bars.map(bar => bar.notes).join('') || '';
+    return {
+      don: [...notes].filter(note => '13A'.includes(note)).length,
+      ka: [...notes].filter(note => '24B'.includes(note)).length,
+      rollSeconds: spans.value.filter(span => '56'.includes(span.note)).reduce((sum, span) => sum + Math.max(0, span.end - span.start), 0),
+      ...balloonTotals(state.text, state.chart)
+    };
   });
   const stats = computed(() => {
     const notes = [...(bar.value?.notes || '')];
-    return { don: notes.filter(note => '13'.includes(note)).length, ka: notes.filter(note => '24'.includes(note)).length, other: notes.filter(note => '56789'.includes(note)).length, total: notes.filter(note => note !== '0').length,
+    return { don: notes.filter(note => '13A'.includes(note)).length, ka: notes.filter(note => '24B'.includes(note)).length, other: notes.filter(note => '56789'.includes(note)).length, total: notes.filter(note => note !== '0').length,
       all: state.chart?.bars.reduce((sum, item) => sum + [...item.notes].filter(note => note !== '0').length, 0) || 0 };
   });
   const cell = computed(() => {
     const selected = state.selectedCell, item = selected && state.chart?.bars[selected.bar];
     if (!item) return null;
     const note = cellValue(item.notes, selected), time = barTimeAt(item, selected.numerator / selected.denominator);
-    const ordinal = balloonIndex(state.chart, selected), count = ordinal >= 0 ? balloonCounts(state.text, state.course)[ordinal] : undefined;
-    return { ...selected, note, time, ordinal, count, name: t(NOTE_TYPES[Number(note)].name), span: spans.value.find(span => time >= span.start - .000001 && time <= span.end + .000001) };
+    const { ordinal, count } = balloonInfo(state.text, state.chart, selected);
+    return { ...selected, note, time, ordinal, count, name: t(NOTE_TYPES.find(type => type.value === note).name), span: spans.value.find(span => time >= span.start - .000001 && time <= span.end + .000001) };
   });
-  const command = computed(() => {
+  function commandAt(position) {
     if (!bar.value) return null;
-    const position = state.commandCell || { bar: state.selected, numerator: 0, denominator: 1 };
     const fraction = position.numerator / position.denominator;
     const commands = fraction === 0 ? bar.value.commands : bar.value.events.filter(event => event.slot * position.denominator === position.numerator * bar.value.notes.length);
     return { ...position, fraction, commands, timing: barStateAt(bar.value, fraction), time: barTimeAt(bar.value, fraction) };
+  }
+  const command = computed(() => commandAt(state.commandCell || { bar: state.selected, numerator: 0, denominator: 1 }));
+  const measureCommand = computed(() => commandAt({ bar: state.selected, numerator: 0, denominator: 1 }));
+  const currentTiming = computed(() => {
+    if (!state.chart?.bars.length) return null;
+    if (!state.playing) return {
+      bar: bar.value, ...command.value.timing,
+      delay: command.value.commands.filter(event => event.name === 'DELAY').reduce((sum, event) => sum + Number(event.value), 0)
+    };
+    const bars = state.chart.bars, time = state.position;
+    const item = bars.findLast(item => time >= measureStart(item) && time < measureEnd(item)) ??
+      bars.findLast(item => measureStart(item) <= time) ?? bars[0];
+    return { bar: item, ...barStateAtTime(item, time) };
   });
   let context, music, gain, musicDuck, hitGain, output, anchor = 0, origin = 0, loopStart = 0, loopEnd = 0, scheduledUntil = 0, playbackRate = 1, looping = false;
   let sourceTimer, scheduler, frame, disposed = false, audioRequest = 0, playRequest = 0;
@@ -101,7 +126,7 @@ export function useStudio() {
     silence();
   }
   async function play(from) {
-    if (!state.chart) { notice(message('请先载入谱面。'), true); return; }
+    if (!bar.value) { notice(message('请先创建难度谱面。'), true); return; }
     if (!(duration.value > 0)) { notice(message('谱面没有可播放的正时间区间，请检查 OFFSET 和 DELAY。'), true); return; }
     pause();
     const request = ++playRequest;
@@ -127,10 +152,10 @@ export function useStudio() {
     schedule();
   }
   function tone(note, when) {
-    const key = '24'.includes(note) ? 'ka' : 'don';
+    const key = '24B'.includes(note) ? 'ka' : 'don';
     if (!hitBuffers.has(key)) hitBuffers.set(key, createHitBuffer(context, note));
     const voice = context.createBufferSource(), level = context.createGain();
-    voice.buffer = hitBuffers.get(key); level.gain.value = '34'.includes(note) ? 1.15 : .85;
+    voice.buffer = hitBuffers.get(key); level.gain.value = '34AB'.includes(note) ? 1.15 : .85;
     if (controls.hitVolume > 0) duckMusic(musicDuck.gain, when);
     voice.connect(level); level.connect(hitGain); voice.start(when); voices.add(voice);
     voice.onended = () => { voices.delete(voice); voice.disconnect(); level.disconnect(); };
@@ -143,7 +168,7 @@ export function useStudio() {
     const cycle = (loopEnd - loopStart) / rate;
     const bars = looping ? state.chart.bars.slice(range.value[0] - 1, range.value[1]) : state.chart.bars;
     for (const item of bars) for (let index = 0; index < item.notes.length; index++) {
-      const note = item.notes[index]; if (!'1234'.includes(note)) continue;
+      const note = item.notes[index]; if (!'1234AB'.includes(note)) continue;
       const time = barTimeAt(item, index / item.notes.length);
       if (time < 0 || time >= loopEnd || (looping && time < loopStart)) continue;
       let when = anchor + (time - origin) / rate;
@@ -162,7 +187,7 @@ export function useStudio() {
   function persist() {
     snapshot();
     try {
-      const documents = state.documents.map(({ id, text, filename, savedText, course, selected, undo, redo, dirty, invalid, source, encoding }) => ({ id, text, filename, savedText, course, selected, undo, redo, dirty, invalid, source, encoding }));
+      const documents = state.documents.map(({ id, text, filename, savedText, course, branchRoutes, selected, undo, redo, dirty, invalid, source, encoding }) => ({ id, text, filename, savedText, course, branchRoutes, selected, undo, redo, dirty, invalid, source, encoding }));
       localStorage.setItem(WORKSPACE_KEY, JSON.stringify({ version: 1, activeId: state.activeId, documents }));
       state.saveState = '所有谱面及历史已存为浏览器草稿';
       return true;
@@ -175,23 +200,63 @@ export function useStudio() {
     if (state.commandCell?.bar !== state.selected) state.commandCell = null;
     if (state.customLoop?.[1] > state.chart.bars.length) state.customLoop = null;
   }
-  function commit(text, keepSource = false) {
-    const chart = parseChart(text, parser, state.course);
+  function commit(text, keepSource = false, structure = null) {
+    const chart = parseChart(text, parser, structure?.course ?? state.course, structure?.routes ?? state.branchRoutes);
     if (text === state.text) { state.invalid = false; state.sourceState = '已同步'; if (persist()) notice(message('更改已同步。')); return; }
-    const waveChanged = chart.wave !== state.chart.wave;
+    const waveChanged = chart.wave !== state.chart.wave, startBeat = visible.value.startBeat;
     const playing = state.playing, position = currentTime(); pause();
-    state.undo = [...state.undo.slice(-(HISTORY_LIMIT - 1)), textDiff(state.text, text)]; state.redo = [];
-    state.text = text; state.chart = chart; state.dirty = text !== state.savedText; state.invalid = false;
-    state.selected = Math.min(state.selected, chart.bars.length - 1);
+    const diff = textDiff(state.text, text);
+    if (structure?.course !== undefined) diff.courseState = { before: { course: state.course, routes: [...state.branchRoutes] }, after: { course: chart.courseIndex, routes: chart.branchRoutes } };
+    else if (structure?.index !== undefined) diff.routeState = { course: state.course, before: [...state.branchRoutes], after: chart.branchRoutes };
+    if (structure?.selected !== undefined) diff.measureState = {
+      course: state.course,
+      before: { selected: state.selected, loop: state.customLoop },
+      after: { selected: structure.selected, loop: structure.loop }
+    };
+    state.undo = [...state.undo.slice(-(HISTORY_LIMIT - 1)), diff]; state.redo = [];
+    state.text = text; state.chart = chart; state.course = chart.courseIndex; state.branchRoutes = chart.branchRoutes; state.dirty = text !== state.savedText; state.invalid = false;
+    state.viewStart = timelineScale.value.timeAt(startBeat); viewAnimation = null;
+    state.selected = Math.max(0, Math.min(state.selected, chart.bars.length - 1));
+    if (structure && !structure.preserveSelection) {
+      state.selected = structure.selected ?? (structure.course !== undefined ? 0 : Math.min(chart.branches[structure.index].firstBarIndex, chart.bars.length - 1));
+      state.selectedCell = null; state.commandCell = null; state.customLoop = structure.loop ?? null; viewAnimation = null;
+      const start = bar.value ? measureStart(bar.value) : 0;
+      state.position = Math.max(0, start); panTimeline(start, false); state.followPlayback = true;
+    }
     if (waveChanged) clearAudio();
     if (!keepSource) syncSource(); else state.sourceState = '已同步';
     if (persist()) notice(message('更改已同步。'));
-    if (waveChanged) void autoAudio(); else if (playing) void play(position);
+    if (!waveChanged && playing && !structure) void play(position);
   }
   function requireValid() { if (state.invalid) throw new LocalizedError(message('请先修正当前小节源码。')); }
+  function insertBar(side) {
+    return guard(() => {
+      flushSource(); requireValid();
+      const text = insertEmptyBar(state.text, bar.value, side);
+      const selected = state.selected + (side === 'after' ? 1 : 0);
+      const loop = state.customLoop?.map(value => value > selected ? value + 1 : value) ?? null;
+      commit(text, false, { selected, loop });
+      return true;
+    });
+  }
+  function deleteBar() {
+    return guard(() => {
+      flushSource(); requireValid();
+      const text = deleteBarWithBalloons(state.text, state.chart, bar.value);
+      const deleted = state.selected + 1;
+      let loop = null;
+      if (state.customLoop) {
+        const [first, last] = state.customLoop;
+        if (first !== deleted || last !== deleted) loop = [first - (deleted < first ? 1 : 0), last - (deleted <= last ? 1 : 0)];
+      }
+      commit(text, false, { selected: Math.min(state.selected, state.chart.bars.length - 2), loop });
+      return true;
+    });
+  }
   function clampTimelineStart(start) {
-    const bounds = timelineBounds.value;
-    return Math.max(bounds.start, Math.min(start, Math.max(bounds.start, bounds.end - viewSpan.value)));
+    const bounds = timelineBounds.value, scale = timelineScale.value;
+    const first = scale.beatAt(bounds.start), last = scale.beatAt(bounds.end);
+    return scale.timeAt(Math.max(first, Math.min(scale.beatAt(start), Math.max(first, last - viewBeats.value))));
   }
   function panTimeline(start, manual = true, smooth = false) {
     if (!Number.isFinite(start)) { notice(message('时间轴位置须为有限数值。'), true); return; }
@@ -203,11 +268,12 @@ export function useStudio() {
     } else { viewAnimation = null; state.viewStart = target; }
   }
   function followTime(position) {
-    const { start, end } = visible.value;
-    if (position < start || position >= end) panTimeline(start + Math.floor((position - start) / viewSpan.value) * viewSpan.value, false);
+    const { startBeat, endBeat } = visible.value, scale = timelineScale.value;
+    const beat = scale.beatAt(position);
+    if (beat < startBeat || beat >= endBeat) panTimeline(scale.timeAt(startBeat + Math.floor((beat - startBeat) / viewBeats.value) * viewBeats.value), false);
   }
   function select(index, seek = true) {
-    if (!state.chart) return;
+    if (!state.chart?.bars.length) return;
     guard(() => {
       requireValid(); if (!Number.isInteger(index)) throw new LocalizedError(message('小节编号须为整数。'));
       const playing = state.playing; pause(); state.selectedCell = null; state.commandCell = null;
@@ -220,10 +286,11 @@ export function useStudio() {
   function seek(time) { const playing = state.playing; pause(); state.position = Math.max(0, time); if (playing) void play(); }
   function selectCell(position) {
     if (state.invalid) return;
+    if (!state.chart?.bars[position.bar]) { notice(message('请先创建难度谱面。'), true); return; }
     pause(); state.selected = position.bar; state.selectedCell = position; state.commandCell = { ...position }; syncSource(); persist();
   }
   function moveCell(direction) {
-    if (!state.chart || state.invalid) return;
+    if (!bar.value || state.invalid) return;
     const divisions = controls.snap, current = state.selectedCell;
     let index = current?.bar ?? state.selected, slot = 0, denominator = divisions;
     if (current) {
@@ -244,8 +311,9 @@ export function useStudio() {
       if (index < 0 || index >= state.chart.bars.length) return;
     }
     selectCell({ bar: index, numerator: slot, denominator, divisions });
-    const time = barTimeAt(state.chart.bars[index], slot / denominator), start = viewAnimation?.target ?? visible.value.start;
-    if (time < start || time >= start + viewSpan.value) panTimeline(time - viewSpan.value * .25, false, true);
+    const time = barTimeAt(state.chart.bars[index], slot / denominator), scale = timelineScale.value;
+    const beat = scale.beatAt(time), start = scale.beatAt(viewAnimation?.target ?? visible.value.start);
+    if (beat < start || beat >= start + viewBeats.value) panTimeline(scale.timeAt(beat - viewBeats.value * .25), false, true);
   }
   function setCommandPosition(numerator, denominator) {
     guard(() => {
@@ -255,9 +323,30 @@ export function useStudio() {
       state.selectedCell = numerator < denominator ? { ...state.commandCell, divisions: controls.snap } : null;
     });
   }
-  function applySettings(settings) { guard(() => { requireValid(); commit(setPositionSettings(state.text, state.chart, command.value, settings, parser)); }); }
+  function applySettings(settings, atMeasureStart = false) { return guard(() => { requireValid(); commit(setPositionSettings(state.text, state.chart, atMeasureStart ? measureCommand.value : command.value, settings, parser)); return true; }); }
+  function applyBranchSource(source, index = null) {
+    return guard(() => {
+      requireValid();
+      const result = setBranchSourceWithBalloons(state.text, state.chart, command.value, source, index, parser);
+      commit(result.text, false, { routes: result.branchRoutes, index: result.index });
+      if (!state.error) notice(message('分歧结构已保存；若当前路线被移除，将切换到可用路线。'));
+      return true;
+    });
+  }
+  function applyMeasureBranch(operation) {
+    return guard(() => {
+      requireValid();
+      const result = setMeasureBranchWithBalloons(state.text, state.chart, bar.value, operation, parser);
+      const disabled = result.branchRoutes.length < state.branchRoutes.length;
+      const structure = { routes: result.branchRoutes, index: result.index };
+      commit(result.text, false, result.preserveSelection ? { ...structure, preserveSelection: true } : { ...structure, selected: result.selected, loop: null });
+      if (disabled && !state.error) notice(message('已关闭分歧，当前路线已转为共用小节。'));
+      else if (operation.type === 'route' && !state.error) notice(message('分歧结构已保存；若当前路线被移除，将切换到可用路线。'));
+      return true;
+    });
+  }
   function clearSettings() { guard(() => { requireValid(); commit(clearPositionSettings(state.text, bar.value, command.value)); }); }
-  function removeCommand(item) { guard(() => { requireValid(); commit(state.text.slice(0, item.start) + state.text.slice(item.end)); }); }
+  function removeCommand(item) { guard(() => { requireValid(); if (item.shared) throw new LocalizedError(message('分歧边界及共用指令不能从路线小节中删除。')); commit(state.text.slice(0, item.start) + state.text.slice(item.end)); }); }
   function chooseNote(value) {
     if (!state.selectedCell || state.invalid) return;
     guard(() => { const item = state.chart.bars[state.selectedCell.bar]; commit(replaceBarWithBalloons(state.text, state.chart, item, setCellNote(item.notes, state.selectedCell, value))); });
@@ -277,24 +366,34 @@ export function useStudio() {
     if (!from.length) return;
     guard(() => {
       pause(); clearTimeout(sourceTimer);
-      const diff = from.at(-1), text = applyDiff(state.text, diff, !redo), chart = parseChart(text, parser, state.course);
-      const waveChanged = chart.wave !== state.chart.wave;
+      const diff = from.at(-1), text = applyDiff(state.text, diff, !redo);
+      const selection = diff.courseState?.[redo ? 'after' : 'before'];
+      const routes = selection?.routes ?? (diff.routeState?.course === state.course ? diff.routeState[redo ? 'after' : 'before'] : state.branchRoutes);
+      const chart = parseChart(text, parser, selection?.course ?? state.course, routes);
+      const measure = diff.measureState?.course === chart.courseIndex ? diff.measureState[redo ? 'after' : 'before'] : null;
+      const waveChanged = chart.wave !== state.chart.wave, startBeat = visible.value.startBeat;
       if (redo) { state.redo = from.slice(0, -1); state.undo = [...state.undo, diff]; }
       else { state.undo = from.slice(0, -1); state.redo = [...state.redo, diff]; }
-      state.text = text; state.chart = chart; state.selected = Math.min(state.selected, chart.bars.length - 1);
+      state.text = text; state.chart = chart; state.course = chart.courseIndex; state.branchRoutes = chart.branchRoutes; state.selected = Math.max(0, Math.min(state.selected, chart.bars.length - 1));
+      state.viewStart = timelineScale.value.timeAt(startBeat); viewAnimation = null;
+      if (measure) { state.selected = Math.min(measure.selected, chart.bars.length - 1); state.customLoop = measure.loop; }
+      if (diff.courseState || measure || !chart.bars.length) {
+        const start = bar.value ? measureStart(bar.value) : 0;
+        state.position = Math.max(0, start); state.viewStart = start; if (!measure) state.customLoop = null; viewAnimation = null; state.followPlayback = true;
+      }
       if (waveChanged) clearAudio();
       state.selectedCell = null; state.commandCell = null; state.invalid = false; state.dirty = text !== state.savedText; syncSource(); persist();
-      if (waveChanged) void autoAudio();
     });
   }
-  function setLoop(first, last) {
+  function setLoop(first, last, enable = false) {
     return guard(() => {
-      if (!state.chart) throw new LocalizedError(message('请先载入谱面。'));
+      if (!bar.value) throw new LocalizedError(message('请先创建难度谱面。'));
       if (!Number.isInteger(first) || !Number.isInteger(last)) throw new LocalizedError(message('循环小节须为整数。'));
       first = Math.max(1, Math.min(state.chart.bars.length, first));
       last = Math.max(1, Math.min(state.chart.bars.length, last));
       const resolved = resolveLoop(state.chart.bars, first, last, Infinity);
-      const playing = state.playing; pause(); state.customLoop = [first, last]; state.position = resolved.start;
+      const playing = state.playing; pause(); state.loopAnchor = null; state.customLoop = [first, last]; state.position = resolved.start;
+      if (enable) controls.loop = true;
       panTimeline(resolved.start, false); state.followPlayback = true;
       if (!state.invalid) { state.selected = first - 1; state.selectedCell = null; state.commandCell = null; syncSource(); }
       if (persist()) notice(message('循环范围已设为第 {p0}–{p1} 小节。', { p0: first, p1: last }));
@@ -304,10 +403,15 @@ export function useStudio() {
   }
   function loopCurrent(preview = false) {
     if (!bar.value) return;
-    const playing = state.playing; pause(); state.customLoop = null; state.position = Math.max(0, measureStart(bar.value));
+    const playing = state.playing; pause(); state.loopAnchor = null; state.customLoop = null; state.position = Math.max(0, measureStart(bar.value));
     panTimeline(measureStart(bar.value), false); state.followPlayback = true;
     if (preview) controls.loop = true;
     if (preview || playing) void play();
+  }
+  function clearLoop() {
+    if (state.playing) state.position = currentTime();
+    state.customLoop = null; state.loopAnchor = null; controls.loop = false;
+    if (persist()) notice(message('已清除循环范围，恢复顺序播放。'));
   }
   function stop() {
     pause();
@@ -315,7 +419,7 @@ export function useStudio() {
     if (state.chart) { panTimeline(state.position, false); state.followPlayback = true; }
   }
   function previewRange() {
-    if (!state.chart) return;
+    if (!bar.value) return;
     controls.loop = true;
     void play(Math.max(0, Math.min(...state.chart.bars.slice(range.value[0] - 1, range.value[1]).map(measureStart))));
   }
@@ -326,16 +430,62 @@ export function useStudio() {
   function changeCourse(value) {
     guard(() => {
       requireValid(); const chart = parseChart(state.text, parser, value); pause();
-      state.course = value; state.chart = chart; state.selected = 0; state.selectedCell = null; state.commandCell = null; state.customLoop = null;
+      state.course = value; state.chart = chart; state.branchRoutes = chart.branchRoutes; state.selected = 0; state.selectedCell = null; state.commandCell = null; state.customLoop = null;
       state.position = Math.max(0, measureStart(chart.bars[0])); syncSource(); persist();
       panTimeline(measureStart(chart.bars[0]), false); state.followPlayback = true;
+    });
+  }
+  function applyCourseEdit(edit) {
+    requireValid();
+    const result = edit();
+    commit(result.text, false, { course: result.course, routes: result.routes ?? [], preserveSelection: result.preserveSelection });
+    return true;
+  }
+  function createCourse(settings) { return guard(() => applyCourseEdit(() => addCourse(state.text, settings))); }
+  function removeCourse(index = state.course) {
+    return guard(() => applyCourseEdit(() => {
+      const result = deleteCourse(state.text, index);
+      return index === state.course ? result : { ...result, course: state.course - Number(index < state.course), routes: state.branchRoutes, preserveSelection: true };
+    }));
+  }
+  function createPlayerCharts(style, player) { return guard(() => applyCourseEdit(() => addPlayerCharts(state.text, state.course, style, player))); }
+  function setLevel(value) { return guard(() => { requireValid(); commit(setCourseLevel(state.text, state.course, value)); return true; }); }
+  function applyBranchRoutes(routes, index) {
+    const chart = parseChart(state.text, parser, state.course, routes);
+    const relative = bar.value.branchIndex === index ? state.selected - state.chart.branches[index].firstBarIndex : 0;
+    pause(); viewAnimation = null; state.chart = chart; state.branchRoutes = chart.branchRoutes;
+    state.selected = Math.min(chart.bars.length - 1, chart.branches[index].firstBarIndex + Math.min(relative, Math.max(0, chart.branches[index].barCount - 1)));
+    state.selectedCell = null; state.commandCell = null; state.customLoop = null;
+    state.position = Math.max(0, measureStart(bar.value)); syncSource();
+    panTimeline(measureStart(bar.value), false); state.followPlayback = true;
+    if (persist()) notice(message('已切换分歧路线；试听按当前选择播放。'));
+  }
+  function changeBranch(index, route) {
+    guard(() => {
+      requireValid();
+      const previous = state.chart?.branches[index];
+      if (!previous || !previous.routes.includes(route)) throw new LocalizedError(message('分歧路线选择无效。'));
+      const routes = [...state.branchRoutes]; routes[index] = route;
+      applyBranchRoutes(routes, index);
+    });
+  }
+  function changeAllBranches(route) {
+    guard(() => {
+      requireValid();
+      const branches = state.chart?.branches.filter(branch => branch.routes.length);
+      if (!branches?.length || !BRANCH_ROUTES.includes(route)) throw new LocalizedError(message('分歧路线选择无效。'));
+      if (branches.some(branch => !branch.routes.includes(route))) throw new LocalizedError(message('部分分歧没有路线 {p0}，请展开逐处选择。', { p0: route }));
+      const changed = branches.filter(branch => branch.route !== route);
+      if (!changed.length) return;
+      const index = changed.find(branch => branch.index === bar.value.branchIndex)?.index ?? changed[0].index;
+      applyBranchRoutes(state.chart.branches.map(branch => branch.routes.length ? route : null), index);
     });
   }
   function leaveDocument() {
     pause(); flushSource(); snapshot(); ++audioRequest;
   }
   function activate(document) {
-    viewAnimation = null;
+    viewAnimation = null; controls.loop = false;
     state.activeId = document.id;
     Object.assign(state, Object.fromEntries(documentFields.map(key => [key, document[key]])));
   }
@@ -345,7 +495,6 @@ export function useStudio() {
     if (!document) { notice(message('找不到此谱面。'), true); return; }
     leaveDocument(); activate(document);
     if (persist()) notice(state.invalid ? message('已切换谱面；请修正保留的小节源码。') : message('已切换谱面。'), state.invalid);
-    if (!state.invalid) void autoAudio();
   }
   function closeChart(id) {
     const document = state.documents.find(item => item.id === id);
@@ -363,7 +512,6 @@ export function useStudio() {
       else { state.activeId = null; Object.assign(state, emptyDocument()); }
     }
     if (persist()) notice(message('谱面已关闭。'));
-    if (active && !state.invalid) void autoAudio();
   }
   function renameChart(name) {
     return guard(() => {
@@ -376,14 +524,15 @@ export function useStudio() {
     });
   }
   function newChart() {
-    loadChart(new TextEncoder().encode('TITLE:Untitled\nBPM:120\nOFFSET:0\nCOURSE:Oni\nLEVEL:1\n#START\n0000,\n#END\n'), 'untitled.tja');
+    loadChart(new TextEncoder().encode('TITLE:Untitled\nBPM:120\nOFFSET:0\n'), 'untitled.tja');
   }
-  function loadChart(bytes, name, fileHandle = null, chartPath = '') {
+  function loadChart(bytes, name, fileHandle = null) {
     const decoded = decodeChart(bytes), chart = parseChart(decoded.text, parser, 0);
     leaveDocument();
-    const document = shallowReactive({ ...emptyDocument(), id: nextDocumentId++, text: decoded.text, savedText: decoded.text, fileHandle, sourceHandle: fileHandle, chartPath, chart, filename: name, encoding: decoded.encoding, position: Math.max(0, measureStart(chart.bars[0])), viewStart: measureStart(chart.bars[0]) });
+    const start = chart.bars.length ? measureStart(chart.bars[0]) : 0;
+    const document = shallowReactive({ ...emptyDocument(), id: nextDocumentId++, text: decoded.text, savedText: decoded.text, fileHandle, chart, branchRoutes: chart.branchRoutes, filename: name, encoding: decoded.encoding, position: Math.max(0, start), viewStart: start });
     state.documents = [...state.documents, document]; activate(document);
-    syncSource(); if (persist()) notice(message('谱面已载入，可直接播放音符音或载入伴奏。'));
+    syncSource(); if (persist()) notice(message(chart.variants.length ? '谱面已载入，可直接播放音符音或载入伴奏。' : '歌曲已载入，请从谱面列表创建谱面。'));
   }
   async function loadAudio(bytes, name, request) {
     pause(); notice(message('正在解析音频波形…'));
@@ -403,8 +552,7 @@ export function useStudio() {
     if (!file) return;
     try {
       const bytes = await file.arrayBuffer(); if (disposed) return;
-      loadChart(bytes, file.name, fileHandle, file.webkitRelativePath?.split('/').slice(1).join('/') || '');
-      await autoAudio();
+      loadChart(bytes, file.name, fileHandle);
     } catch (error) { if (!disposed) notice(error, true); }
   }
   async function openCharts() {
@@ -428,52 +576,6 @@ export function useStudio() {
       if (!disposed && request === audioRequest) await loadAudio(bytes, file.name, request);
     } catch (error) { if (!disposed && request === audioRequest) notice(message('音频读取失败：{p0}', { p0: error }), true); }
   }
-  async function autoAudio() {
-    if (!state.chart?.wave || state.buffer) return false;
-    const wave = state.chart.wave;
-    if (!mediaDirectory && !mediaFiles) {
-      notice(message('WAVE: {p0}；关联音频文件夹后可自动载入，也可直接无伴奏播放。', { p0: wave }));
-      return false;
-    }
-    const request = ++audioRequest;
-    const options = { directory: mediaDirectory, files: mediaFiles, chartHandle: state.sourceHandle || state.fileHandle, chartPath: state.chartPath, chartName: state.filename };
-    try {
-      const file = await findWaveFile(wave, options);
-      if (disposed || request !== audioRequest) return false;
-      const bytes = await file.arrayBuffer();
-      if (disposed || request !== audioRequest) return false;
-      await loadAudio(bytes, file.name, request);
-      return !disposed && request === audioRequest;
-    } catch (error) {
-      if (!disposed && request === audioRequest) notice(message('自动载入 {p0} 失败：{p1} 可继续无伴奏播放或手动载入音频。', { p0: wave, p1: error }), true);
-      return false;
-    }
-  }
-  async function chooseMediaDirectory() {
-    try {
-      const directory = await window.showDirectoryPicker({ id: 'tja-audio-directory', mode: 'read' });
-      if (disposed) return false;
-      mediaDirectory = directory; mediaFiles = null; ++audioRequest;
-      state.mediaDirectoryName = directory.name;
-      notice(message('已关联音频文件夹 {p0}，将按 WAVE 自动匹配音频。', { p0: directory.name }));
-      await autoAudio();
-      return true;
-    } catch (error) {
-      if (!disposed) notice(error.name === 'AbortError' ? message('已取消关联音频文件夹。') : message('关联音频文件夹失败：{p0}', { p0: error }), error.name !== 'AbortError');
-      return false;
-    }
-  }
-  async function setMediaFiles(files) {
-    if (!files.length) return false;
-    try {
-      const indexed = indexMediaFiles(files);
-      mediaDirectory = null; mediaFiles = indexed.files; ++audioRequest;
-      state.mediaDirectoryName = indexed.name;
-      notice(message('已关联音频文件夹 {p0}，将按 WAVE 自动匹配音频。', { p0: indexed.name }));
-      await autoAudio();
-      return true;
-    } catch (error) { notice(message('关联音频文件夹失败：{p0}', { p0: error }), true); return false; }
-  }
   function restore() {
     guard(() => {
       if (state.documents.some(item => item.saving)) throw new LocalizedError(message('请等待文件保存完成后再恢复草稿。'));
@@ -485,7 +587,7 @@ export function useStudio() {
       const ids = new Set();
       const documents = entries.map((item, index) => {
         if (typeof item.text !== 'string' || typeof item.filename !== 'string' || !Number.isInteger(item.course) || item.course < 0 || !Number.isInteger(item.selected) || (item.invalid && typeof item.source !== 'string')) throw new LocalizedError(message('本地谱面草稿格式无效。'));
-        const chart = parseChart(item.text, parser, item.course), undo = item.undo ?? [], redo = item.redo ?? [];
+        const chart = parseChart(item.text, parser, item.course, item.branchRoutes ?? []), undo = item.undo ?? [], redo = item.redo ?? [];
         const savedText = item.savedText === undefined ? (item.dirty ? null : item.text) : item.savedText;
         if (savedText !== null && typeof savedText !== 'string') throw new LocalizedError(message('本地谱面保存状态无效。'));
         if (!Array.isArray(undo) || !Array.isArray(redo) || undo.length + redo.length > HISTORY_LIMIT) throw new LocalizedError(message('本地编辑历史格式无效。'));
@@ -497,7 +599,8 @@ export function useStudio() {
         if (!Number.isSafeInteger(id) || id < 1 || ids.has(id)) throw new LocalizedError(message('本地谱面编号无效。'));
         ids.add(id);
         const selected = Math.max(0, Math.min(item.selected, chart.bars.length - 1));
-        return shallowReactive({ ...emptyDocument(), id, text: item.text, savedText, filename: item.filename, course: item.course, chart, selected, undo, redo, dirty: item.text !== savedText, invalid: Boolean(item.invalid), encoding: item.encoding || '', source: item.invalid ? item.source : barSource(item.text, chart.bars[selected]), sourceState: item.invalid ? '格式错误' : '已同步', position: Math.max(0, measureStart(chart.bars[selected])), viewStart: measureStart(chart.bars[selected]) });
+        const start = chart.bars[selected] ? measureStart(chart.bars[selected]) : 0;
+        return shallowReactive({ ...emptyDocument(), id, text: item.text, savedText, filename: item.filename, course: item.course, branchRoutes: chart.branchRoutes, chart, selected, undo, redo, dirty: item.text !== savedText, invalid: Boolean(item.invalid), encoding: item.encoding || '', source: item.invalid ? item.source : chart.bars[selected] ? barSource(item.text, chart.bars[selected]) : '', sourceState: item.invalid ? '格式错误' : '已同步', position: Math.max(0, start), viewStart: start });
       });
       if (state.documents.length && !confirm(t('恢复草稿会替换所有已打开谱面，是否继续？'))) return;
       viewAnimation = null; pause(); clearTimeout(sourceTimer); ++audioRequest;
@@ -506,8 +609,7 @@ export function useStudio() {
       const active = documents.find(item => item.id === saved.activeId) || documents[0];
       if (active) { activate(active); flushSource(); }
       else { state.activeId = null; Object.assign(state, emptyDocument()); }
-      if (persist()) notice(state.invalid ? message('已恢复谱面及编辑历史；当前小节源码仍有错误，请修正。') : message('已恢复谱面及编辑历史；音频可重新载入或关联文件夹匹配。'), state.invalid);
-      if (!state.invalid) void autoAudio();
+      if (persist()) notice(state.invalid ? message('已恢复谱面及编辑历史；当前小节源码仍有错误，请修正。') : message('已恢复谱面及编辑历史；请重新载入音频。'), state.invalid);
     });
   }
   function updateDocument(document, values) {
@@ -524,6 +626,7 @@ export function useStudio() {
     if (input?.id === 'offset' && !setOffset(Number(input.value))) return false;
     if (input?.id === 'chart-name' && !renameChart(input.value)) return false;
     if (input?.id === 'balloon-count' && !setBalloon(Number(input.value))) return false;
+    if (input?.dataset?.songField && !setMetadata({ [input.dataset.songField]: input.value })) return false;
     snapshot();
     const target = state.documents.find(item => item.id === state.activeId), text = state.text;
     let handle = as ? null : target.fileHandle, choosing = false;
@@ -579,6 +682,7 @@ export function useStudio() {
   function setDivision(value) { guard(() => { requireValid(); commit(replaceBarWithBalloons(state.text, state.chart, bar.value, resizeNotes(bar.value.notes, value))); }); }
   function clearBar() { guard(() => { requireValid(); commit(replaceBarWithBalloons(state.text, state.chart, bar.value, '0'.repeat(bar.value.notes.length))); }); }
   function setBalloon(value) { return guard(() => { requireValid(); if (state.selectedCell) commit(setBalloonCount(state.text, state.chart, state.selectedCell, value)); return true; }); }
+  watch(() => [state.activeId, state.chart, state.invalid], () => { state.loopAnchor = null; }, { flush: 'sync' });
   watch(() => [controls.loop, controls.rate], () => { if (state.playing) void play(currentTime()); });
   watch(() => controls.volume, value => { if (gain) gain.gain.value = value / 100; });
   watch(() => controls.hitVolume, value => {
@@ -590,7 +694,8 @@ export function useStudio() {
   function animate(timestamp = performance.now()) {
     if (viewAnimation) {
       const progress = Math.max(0, Math.min(1, (timestamp - viewAnimation.started) / 180));
-      state.viewStart = clampTimelineStart(viewAnimation.start + (viewAnimation.target - viewAnimation.start) * (1 - (1 - progress) ** 3));
+      const scale = timelineScale.value, start = scale.beatAt(viewAnimation.start), end = scale.beatAt(viewAnimation.target);
+      state.viewStart = clampTimelineStart(scale.timeAt(start + (end - start) * (1 - (1 - progress) ** 3)));
       if (progress === 1) viewAnimation = null;
     }
     if (state.playing) {
@@ -615,21 +720,48 @@ export function useStudio() {
       return;
     }
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
-    if (event.key === 'Escape' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing && !inDialog && state.selectedCell) {
+    if (event.key === 'Escape' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing && !inDialog && (state.loopAnchor !== null || state.selectedCell)) {
+      if (state.loopAnchor !== null) { event.preventDefault(); state.loopAnchor = null; return; }
       event.preventDefault(); viewAnimation = null; state.selectedCell = null; state.commandCell = null; snapshot(); return;
     }
-    const note = /^[0-9]$/.test(event.key) ? event.key : ['Delete', 'Backspace'].includes(event.key) ? '0' : null;
+    const note = NOTE_TYPES.find(type => (type.shortcut ?? type.value) === event.key)?.value ?? (['Delete', 'Backspace'].includes(event.key) ? '0' : null);
     if (event.code === 'Space' || event.key === ' ') {
       if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing || document.activeElement?.tagName === 'SUMMARY' || inDialog) return;
       event.preventDefault();
       if (!event.repeat) { if (state.playing) pause(); else void play(); }
     }
     else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); history(event.shiftKey); }
+    else if (event.key.toLowerCase() === 'f' && event.shiftKey && bar.value && (state.customLoop || state.loopAnchor !== null || controls.loop) && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing && !inDialog) {
+      event.preventDefault(); if (!event.repeat) clearLoop();
+    }
+    else if (event.key.toLowerCase() === 'f' && bar.value && !state.invalid && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing && !inDialog) {
+      event.preventDefault();
+      if (event.repeat) return;
+      if (state.loopAnchor === null) state.loopAnchor = state.selected;
+      else setLoop(Math.min(state.loopAnchor, state.selected) + 1, Math.max(state.loopAnchor, state.selected) + 1, true);
+    }
     else if (note !== null && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing && !inDialog && state.selectedCell && !state.invalid) {
       event.preventDefault(); if (!event.repeat) chooseNote(note);
     }
-    else if (['ArrowLeft', 'ArrowRight'].includes(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing && !inDialog) {
-      event.preventDefault(); moveCell(event.key === 'ArrowLeft' ? -1 : 1);
+    else if (['q', 'e'].includes(event.key.toLowerCase()) && bar.value && !state.invalid && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing && !inDialog) {
+      event.preventDefault();
+      if (event.repeat) return;
+      const bars = state.chart.bars, time = currentTime();
+      const index = time >= duration.value ? bars.length : Math.max(0, bars.findLastIndex(item => measureStart(item) <= time));
+      const target = Math.max(0, index + (event.key.toLowerCase() === 'q' ? -1 : 1));
+      if (target < bars.length) seek(Math.max(0, measureStart(bars[target])));
+    }
+    else if (['arrowleft', 'arrowright', 'a', 'd', 'w', 's'].includes(event.key.toLowerCase()) && bar.value && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing && !inDialog) {
+      event.preventDefault();
+      const key = event.key.toLowerCase();
+      if (key === 'arrowleft' || key === 'arrowright') {
+        const scale = timelineScale.value, start = scale.beatAt(viewAnimation?.target ?? visible.value.start);
+        panTimeline(scale.timeAt(start + (key === 'arrowleft' ? -1 : 1) * viewBeats.value / 8), true, true);
+      } else if (key === 'a' || key === 'd') moveCell(key === 'a' ? -1 : 1);
+      else {
+        const next = key === 'w' ? SNAP_DIVISIONS.find(value => value > controls.snap) ?? MAX_SNAP_DIVISIONS : SNAP_DIVISIONS.findLast(value => value < controls.snap) ?? 1;
+        setSnap(next); controls.snapChoice = SNAP_DIVISIONS.includes(next) ? String(next) : 'custom';
+      }
     }
   }
   function beforeUnload(event) {
@@ -645,5 +777,5 @@ export function useStudio() {
     disposed = true; clearTimeout(sourceTimer); clearInterval(scheduler); cancelAnimationFrame(frame);
     pause(); void context?.close(); document.removeEventListener('keydown', keydown); window.removeEventListener('beforeunload', beforeUnload);
   });
-  return { state, controls, bar, spans, visible, viewSpan, timelineBounds, stats, cell, command, range, duration, metadata, notice, pause, play, stop, previewRange, seek, panTimeline, select, selectCell, setCommandPosition, applySettings, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, loopCurrent, setSnap, changeCourse, openChart, openCharts, openAudio, autoAudio, chooseMediaDirectory, setMediaFiles, newChart, switchChart, closeChart, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
+  return { state, controls, bar, spans, visible, viewSpan, viewBeats, timelineScale, timelineBounds, chartStats, stats, cell, command, measureCommand, currentTiming, range, duration, metadata, notice, pause, play, stop, previewRange, seek, panTimeline, select, selectCell, setCommandPosition, applySettings, applyBranchSource, applyMeasureBranch, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, clearLoop, loopCurrent, setSnap, changeCourse, createCourse, removeCourse, createPlayerCharts, setLevel, changeAllBranches, changeBranch, openChart, openCharts, openAudio, newChart, switchChart, closeChart, insertBar, deleteBar, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
 }

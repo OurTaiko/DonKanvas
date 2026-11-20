@@ -2,6 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GRID_DIVISIONS, editGridNote } from './grid.js';
 test('display grid always has sixteen divisions', () => assert.equal(GRID_DIVISIONS,16));
+test('adding notes to cooperative-only measures retains their previous positions', () => {
+  const edited = editGridNote('A0B0', 1 / 3, '1', 0, 3);
+  assert.equal(edited.length, 12);
+  assert.equal(edited[0], 'A'); assert.equal(edited[4], '1'); assert.equal(edited[6], 'B');
+  assert.equal(editGridNote('0', 0, 'A'), 'A000000000000000');
+});
 test('placing a sixteenth preserves twenty-fourth positions', () => {
   const notes = '001' + '0'.repeat(21);
   const edited = editGridNote(notes,1/16,'2');
