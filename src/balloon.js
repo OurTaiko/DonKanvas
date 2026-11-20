@@ -1,5 +1,5 @@
 import { message, LocalizedError } from './i18n.js';
-import { replaceBar, replaceBarSource, parseChart, setBranchSource, deleteBar } from './chart.js';
+import { replaceBar, replaceBarSource, parseChart, setBranchSource, deleteBar, barSource, EDITABLE_COMMANDS, PRESERVED_COMMANDS } from './chart.js';
 import { courseHeaderRange as headerRange, courseHeaderValues, setCourseHeaderValues } from './courses.js';
 import { setMeasureBranch } from './branch-commands.js';
 
@@ -95,18 +95,82 @@ export function replaceBarSourceWithBalloons(text, chart, bar, source, parser) {
   return reconcileCounts(edited, chart, bar, notes);
 }
 
+export function copyMeasures(text, chart, first, last) {
+  if (!chart || !Number.isInteger(first) || !Number.isInteger(last) || first < 0 || last < first || last >= chart.bars.length) throw new LocalizedError(message('小节区间无效。'));
+  const counts = new Map();
+  for (const item of countedBalloons(text, chart, countFields(text, chart))) {
+    if (!counts.has(item.bar.comma)) counts.set(item.bar.comma, []);
+    counts.get(item.bar.comma).push({ index: item.index, count: item.count });
+  }
+  return chart.bars.slice(first, last + 1).map(bar => ({
+    source: [...bar.instructions.filter(item => item.shared && [...EDITABLE_COMMANDS, ...PRESERVED_COMMANDS].includes(item.name)).map(item => text.slice(item.start, item.end)), barSource(text, bar)].join('\n'),
+    balloons: counts.get(bar.comma) ?? []
+  }));
+}
+
+export function pasteMeasures(text, chart, index, clipboard, mode, parser) {
+  if (!chart?.bars[index]) throw new LocalizedError(message('小节不存在。'));
+  if (!clipboard?.length) throw new LocalizedError(message('请先复制小节。'));
+  if (!['overwrite', 'insert'].includes(mode)) throw new LocalizedError(message('粘贴方式无效。'));
+  const target = chart.bars[index], targets = chart.bars.slice(index, index + clipboard.length);
+  const startOf = bar => bar.commands[0]?.start ?? bar.ranges[0]?.start ?? bar.comma;
+  const structural = /^\s*#(?:BRANCHSTART|BRANCHEND|N|E|M)\b/mi;
+  if (mode === 'overwrite' && structural.test(text.slice(startOf(target), targets.at(-1).comma + 1).split(/\r?\n/).map(line => line.split('//')[0]).join('\n'))) {
+    throw new LocalizedError(message('粘贴覆盖会跨越分歧边界，无法粘贴。请缩短复制区间或改用插入。'));
+  }
+  const newline = text.includes('\r\n') ? '\r\n' : '\n';
+  const pieces = clipboard.map(piece => ({ ...piece, source: piece.source.replace(/\r?\n/g, newline).trimEnd() }));
+  if (pieces.some(piece => structural.test(piece.source))) throw new LocalizedError(message('小节源码不能修改分歧结构。'));
+  const edits = [];
+  if (mode === 'insert') edits.push({ start: startOf(target), end: startOf(target), pieces, prefix: '' });
+  else {
+    targets.forEach((bar, offset) => edits.push({ start: startOf(bar), end: bar.comma + 1, pieces: [pieces[offset]], prefix: '' }));
+    if (pieces.length > targets.length) {
+      const end = targets.at(-1).comma + 1;
+      edits.push({ start: end, end, pieces: pieces.slice(targets.length), prefix: newline });
+    }
+  }
+  edits.sort((first, second) => first.start - second.start);
+  for (const edit of edits) edit.content = edit.prefix + edit.pieces.map(piece => piece.source).join(newline) + (/^\r?\n/.test(text.slice(edit.end)) ? '' : newline);
+  const fields = countFields(text, chart), mapped = new Map();
+  for (const item of countedBalloons(text, chart, fields)) {
+    if (edits.some(edit => item.bar.comma >= edit.start && item.bar.comma < edit.end)) continue;
+    const shift = edits.filter(edit => edit.end <= item.bar.comma).reduce((sum, edit) => sum + edit.content.length - (edit.end - edit.start), 0);
+    mapped.set(`${item.bar.comma + shift}:${item.index}`, item.count);
+  }
+  let shift = 0;
+  for (const edit of edits) {
+    let cursor = edit.start + shift + edit.prefix.length;
+    for (const piece of edit.pieces) {
+      for (const balloon of piece.balloons) mapped.set(`${cursor + piece.source.length - 1}:${balloon.index}`, balloon.count);
+      cursor += piece.source.length + newline.length;
+    }
+    shift += edit.content.length - (edit.end - edit.start);
+  }
+  let edited = text;
+  for (const edit of [...edits].reverse()) edited = edited.slice(0, edit.start) + edit.content + edited.slice(edit.end);
+  const parsed = parseChart(edited, parser, chart.courseIndex, chart.branchRoutes);
+  return writeMappedCounts(text, chart, edited, parsed, mapped, fields);
+}
+
 export function setMeasureBranchWithBalloons(text, chart, bar, operation, parser) {
   const result = setMeasureBranch(text, chart, bar, operation, parser);
   const parsed = parseChart(result.text, parser, chart.courseIndex, result.branchRoutes), fields = countFields(text, chart);
-  const countsByPosition = new Map(), used = new Map(), next = new Map();
+  const countsByPosition = new Map();
   for (const item of countedBalloons(text, chart, fields)) {
-    used.set(item.field, (used.get(item.field) ?? 0) + 1);
     const range = result.retained.find(range => item.bar.comma >= range.before && item.bar.comma < range.before + range.length);
     if (range) countsByPosition.set(`${range.after + item.bar.comma - range.before}:${item.index}`, item.count);
   }
-  for (const item of countedBalloons(result.text, parsed, fields)) {
+  result.text = writeMappedCounts(text, chart, result.text, parsed, countsByPosition, fields);
+  return result;
+}
+
+function writeMappedCounts(text, chart, edited, parsed, countsByPosition, fields) {
+  const used = new Map(), next = new Map();
+  for (const item of countedBalloons(text, chart, fields)) used.set(item.field, (used.get(item.field) ?? 0) + 1);
+  for (const item of countedBalloons(edited, parsed, fields)) {
     const key = `${item.bar.comma}:${item.index}`;
-    if (!countsByPosition.has(key)) throw new LocalizedError(message('分歧编辑无法保留气球次数。'));
+    if (!countsByPosition.has(key)) throw new LocalizedError(message('小节编辑无法保留气球次数。'));
     if (!next.has(item.field)) next.set(item.field, []);
     next.get(item.field).push(countsByPosition.get(key));
   }
@@ -116,9 +180,9 @@ export function setMeasureBranchWithBalloons(text, chart, bar, operation, parser
     while (after.length && after.at(-1) === undefined) after.pop();
     // Keep missing counts invalid when moving them before a route's existing counts.
     const counts = after.map(value => value === undefined ? 0 : value);
-    if (JSON.stringify(before) !== JSON.stringify(counts)) result.text = writeCounts(result.text, chart.courseIndex, counts, field);
+    if (JSON.stringify(before) !== JSON.stringify(counts)) edited = writeCounts(edited, chart.courseIndex, counts, field);
   }
-  return result;
+  return edited;
 }
 
 export function setBranchSourceWithBalloons(text, chart, cell, source, index, parser) {

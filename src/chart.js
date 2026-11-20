@@ -205,7 +205,7 @@ export function setBarSettings(text, bar, settings, slot = 0) {
   }
   if ('delay' in settings) {
     if (settings.delay !== null && !Number.isFinite(settings.delay)) throw new LocalizedError(message('延迟须为有限秒数。'));
-    replacements.set('DELAY', settings.delay ? `#DELAY ${settings.delay}` : '');
+    replacements.set('DELAY', settings.delay === null ? '' : `#DELAY ${settings.delay}`);
   }
   if ('gogo' in settings) {
     if (settings.gogo !== null && typeof settings.gogo !== 'boolean') throw new LocalizedError(message('Go-Go 状态无效。'));

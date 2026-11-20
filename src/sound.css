@@ -18,4 +18,3 @@
 .choice-symbol.balloon.special{--balloon-fill:#ff78ae;--balloon-ink:#9e3e73;border-radius:7px}
 .choice-symbol.end{width:13px;height:13px;border-radius:0;background:#57685f;transform:rotate(45deg);box-shadow:none}.measure-editor .palette button:disabled{opacity:.5}@media(max-width:720px){.cell-inspector{padding:14px 12px}}
 .timeline-wrap{overflow-x:auto;overflow-y:hidden;scrollbar-color:#9eb8a9 #f3f7f2;scrollbar-width:thin}#timeline{max-width:none}.editor-footer{flex-wrap:wrap}.editor-footer span{overflow-wrap:anywhere}
-.loop-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid var(--line);font-size:12px}.loop-controls label{display:flex;align-items:center;gap:8px}.loop-controls input[type=number]{width:65px}.loop-controls output{color:var(--muted);font-size:11px}#measures button.in-loop{box-shadow:inset 0 3px 0 #16745b}.loop-controls button{font-size:12px}

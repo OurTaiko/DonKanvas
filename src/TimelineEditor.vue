@@ -34,9 +34,19 @@ const balloonStatus = computed(() => {
 });
 const timeline = ref(null), overview = ref(null), customSnap = ref(null), hover = ref(null);
 const measures = ref(null), measureDrag = ref(null);
-const loopSelection = computed(() => measureDrag.value?.dragged
+const measureSelection = computed(() => measureDrag.value?.dragged
   ? [Math.min(measureDrag.value.start, measureDrag.value.end) + 1, Math.max(measureDrag.value.start, measureDrag.value.end) + 1]
-  : controls.loop ? range.value : null);
+  : range.value);
+function measureSelected(index) {
+  const selected = measureSelection.value;
+  return Boolean(selected && index + 1 >= selected[0] && index + 1 <= selected[1]);
+}
+function viewMeasure(event, index) {
+  if (event.shiftKey) {
+    const anchor = state.loopAnchor ?? state.selected;
+    studio.setLoop(Math.min(anchor, index) + 1, Math.max(anchor, index) + 1);
+  } else studio.select(index);
+}
 const viewport = ref(null), viewportWidth = ref(1);
 const snaps = SNAP_DIVISIONS;
 const zooms = [[1 / 16, '1/16'], [1 / 8, '1/8'], [1 / 4, '1/4'], [1 / 2, '1/2'], [1, '1'], [2, '2'], [4, '4'], [8, '8']];
@@ -57,8 +67,9 @@ function syncScroll() {
   }
 }
 function scrollTimeline() {
-  if (!state.chart) return;
-  const element = viewport.value, maximum = element.scrollWidth - element.clientWidth;
+  const element = viewport.value;
+  if (!state.chart || !element) return;
+  const maximum = element.scrollWidth - element.clientWidth;
   const expected = scrollBeats.value ? (visible.value.startBeat - firstBeat.value) / scrollBeats.value * maximum : 0;
   const automatic = Math.abs(element.scrollLeft - expected) < 1 || programmaticLeft !== null && Math.abs(element.scrollLeft - programmaticLeft) < 1;
   programmaticLeft = null;
@@ -133,6 +144,7 @@ function draw() {
     }
     for (const event of item.events.filter(event => event.name === 'DELAY')) { brush.fillStyle = '#d9a83b22'; brush.fillRect(x(event.time), 23, x(event.endTime) - x(event.time), height - 48); }
     if (item.index === state.selected) { brush.fillStyle = '#16745b08'; brush.fillRect(x(measureStart(item)), 0, x(measureEnd(item)) - x(measureStart(item)), height); }
+    if (measureSelected(item.index)) { brush.fillStyle = '#16745b'; brush.fillRect(x(measureStart(item)), 20, x(measureEnd(item)) - x(measureStart(item)), 3); }
     brush.strokeStyle = '#b7cbd0'; brush.lineWidth = 1; brush.setLineDash([2, 3]);
     for (let step = 1; step < controls.snap; step++) {
       if (step * GRID_DIVISIONS % controls.snap === 0) continue;
@@ -185,6 +197,14 @@ function draw() {
   const overviewContext = canvasContext(overview.value), bounds = timelineBounds.value, total = Math.max(.001, bounds.end - bounds.start);
   const overviewX = time => (time - bounds.start) / total * overviewContext.width;
   drawWave(overviewContext.brush, overviewContext.width, bounds.start, bounds.end, overviewContext.height / 2, overviewContext.height * .44);
+  for (const item of state.chart.bars) {
+    const left = overviewX(measureStart(item)), size = overviewX(measureEnd(item)) - left;
+    if (measureSelected(item.index)) { overviewContext.brush.fillStyle = '#16745b24'; overviewContext.brush.fillRect(left, 0, size, overviewContext.height); }
+    if (item.index === state.selectedCell?.bar) {
+      overviewContext.brush.fillStyle = '#239eae35'; overviewContext.brush.fillRect(left, 0, size, overviewContext.height);
+      overviewContext.brush.fillStyle = '#239eae'; overviewContext.brush.fillRect(left, overviewContext.height - 4, size, 4);
+    }
+  }
   overviewContext.brush.fillStyle = '#16745b18'; overviewContext.brush.fillRect(overviewX(start), 0, (end - start) / total * overviewContext.width, overviewContext.height);
   overviewContext.brush.strokeStyle = '#16745b'; overviewContext.brush.strokeRect(overviewX(start), .5, (end - start) / total * overviewContext.width, overviewContext.height - 1);
   overviewContext.brush.fillStyle = '#c43e35'; overviewContext.brush.fillRect(overviewX(position), 0, 1.5, overviewContext.height);
@@ -245,6 +265,7 @@ function overviewClick(event) {
   const time = bounds.start + (event.clientX - rect.left) / rect.width * Math.max(.001, bounds.end - bounds.start);
   const containing = state.chart.bars.findLastIndex(item => time >= measureStart(item) && time < measureEnd(item));
   studio.select(Math.max(0, containing >= 0 ? containing : state.chart.bars.findLastIndex(item => measureStart(item) <= time)));
+  studio.seek(time);
 }
 let suppressMeasureClick = false;
 function measureAt(event) {
@@ -279,7 +300,7 @@ function finishMeasureLoop(event) {
   if (!drag || drag.pointerId !== event.pointerId) return;
   moveMeasureLoop(event);
   cancelMeasureLoop();
-  if (drag.dragged) studio.setLoop(Math.min(drag.start, drag.end) + 1, Math.max(drag.start, drag.end) + 1, true);
+  if (drag.dragged) studio.setLoop(Math.min(drag.start, drag.end) + 1, Math.max(drag.start, drag.end) + 1);
 }
 function measureLoopKeydown(event) {
   if (event.key !== 'Escape' || !measureDrag.value) return;
@@ -308,11 +329,11 @@ onUnmounted(() => { cancelMeasureLoop(); observer?.disconnect(); });
 </script>
 
 <template>
-  <section class="overview"><div class="section-label"><span>{{ t('全曲总览') }}</span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div><canvas id="overview" ref="overview" :aria-label="t('全曲波形，点击跳转')" role="img" @click="overviewClick"></canvas></section>
+  <section class="overview"><div class="section-label"><span>{{ t('全曲总览') }}</span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div><canvas id="overview" ref="overview" :aria-label="t('全曲波形，点击跳转')" :aria-describedby="range || cell ? 'selection-summary' : undefined" role="img" @click="overviewClick"></canvas></section>
   <div class="workspace">
     <section class="editor">
       <div class="editor-bar"><div class="measure-nav">
-        <label for="bar-number">{{ t('小节') }}</label>
+        <label for="bar-number">{{ t('查看小节') }}</label>
         <button id="bar-prev" class="icon" :title="t('上一小节')" :aria-label="t('上一小节')" :disabled="!bar || state.invalid" @click="studio.select(state.selected - 1)"><ChevronLeft /></button>
         <input id="bar-number" type="number" min="1" :max="state.chart?.bars.length" :value="state.selected + 1" :disabled="!bar || state.invalid" @change="studio.select(Number($event.target.value) - 1); $event.target.value = state.selected + 1">
         <button id="bar-next" class="icon" :title="t('下一小节')" :aria-label="t('下一小节')" :disabled="!bar || state.invalid" @click="studio.select(state.selected + 1)"><ChevronRight /></button>
@@ -349,7 +370,8 @@ onUnmounted(() => { cancelMeasureLoop(); observer?.disconnect(); });
     </section>
   </div>
   <section class="measure-section">
-    <div class="measure-heading"><div class="section-label"><span>{{ t('全局导航') }}</span><span id="total-notes">{{ t('音符数：{p0}', { p0: stats.all }) }}</span></div><output v-if="state.loopAnchor !== null" id="measure-loop-anchor">{{ t('已标记第 {p0} 小节，再按 F 完成循环范围，Esc 取消。', { p0: state.loopAnchor + 1 }) }}</output></div>
+    <div class="measure-heading"><div class="section-label"><span>{{ t('全局导航') }}</span><span id="total-notes">{{ t('音符数：{p0}', { p0: stats.all }) }}</span></div><output v-if="state.loopAnchor !== null" id="measure-loop-anchor">{{ t('已标记第 {p0} 小节，再按 F 完成区间选择，Esc 取消。', { p0: state.loopAnchor + 1 }) }}</output></div>
+    <output v-if="range || cell" id="selection-summary"><span v-if="range">{{ t('已选小节：{p0}–{p1}', { p0: range[0], p1: range[1] }) }}</span><span v-if="cell" class="selected-note-label">{{ t('音符所在小节：{p0}', { p0: cell.bar + 1 }) }}</span></output>
     <div class="chart-statistics" :aria-label="t('谱面统计')">
       <span class="bar-count"><b id="bar-count">{{ state.chart.bars.length }}</b> {{ t('小节') }}</span>
       <span>{{ t('咚') }} <b id="chart-don-count">{{ chartStats.don }}</b></span>
@@ -357,7 +379,7 @@ onUnmounted(() => { cancelMeasureLoop(); observer?.disconnect(); });
       <span>{{ t('连打') }} <b id="chart-roll-seconds">{{ chartStats.rollSeconds.toFixed(3) }}</b> s</span>
       <span>{{ t('气球 / 特殊连打') }} <b id="chart-balloon-hits">{{ balloonHits ?? t('未完整设置') }}</b></span>
     </div>
-    <div id="measures" ref="measures" :class="{ dragging: measureDrag?.dragged }" @pointerdown="startMeasureLoop" @pointermove="moveMeasureLoop" @pointerup="finishMeasureLoop" @pointercancel="cancelMeasureLoop" @lostpointercapture="cancelMeasureLoop" @keydown="measureLoopKeydown" @click.capture="measureLoopClick"><button v-for="item in state.chart?.bars || []" :key="item.index" :data-measure-index="item.index" :class="{ active: item.index === state.selected, gogo: item.gogo, 'loop-anchor': item.index === state.loopAnchor, 'in-loop': loopSelection && item.index + 1 >= loopSelection[0] && item.index + 1 <= loopSelection[1], 'loop-preview': measureDrag?.dragged && item.index + 1 >= loopSelection[0] && item.index + 1 <= loopSelection[1] }" :aria-label="t('小节 {p0}', { p0: item.index + 1 })" :aria-pressed="item.index === state.selected" @click="studio.select(item.index)"><span>{{ String(item.index + 1).padStart(3, '0') }}</span><span class="mini-notes"><i v-for="(note, index) in [...item.notes].filter(note => note !== '0').slice(0, 10)" :key="index" :class="{ blue: '24B'.includes(note) }"></i></span></button></div>
+    <div id="measures" ref="measures" :class="{ dragging: measureDrag?.dragged }" @pointerdown="startMeasureLoop" @pointermove="moveMeasureLoop" @pointerup="finishMeasureLoop" @pointercancel="cancelMeasureLoop" @lostpointercapture="cancelMeasureLoop" @keydown="measureLoopKeydown" @click.capture="measureLoopClick"><button v-for="item in state.chart?.bars || []" :key="item.index" :data-measure-index="item.index" :class="{ active: item.index === state.selected, gogo: item.gogo, 'loop-anchor': item.index === state.loopAnchor, 'in-selection': measureSelected(item.index), 'note-selected': item.index === state.selectedCell?.bar, 'loop-preview': measureDrag?.dragged && measureSelected(item.index) }" :aria-label="t('小节 {p0}', { p0: item.index + 1 }) + (item.index === state.selectedCell?.bar ? ` · ${t('已选音符所在小节')}` : '')" :aria-current="item.index === state.selected ? 'location' : undefined" :aria-pressed="measureSelected(item.index)" @click="viewMeasure($event, item.index)"><span>{{ String(item.index + 1).padStart(3, '0') }}</span><span class="mini-notes"><i v-for="(note, index) in [...item.notes].filter(note => note !== '0').slice(0, 10)" :key="index" :class="{ blue: '24B'.includes(note) }"></i></span></button></div>
   </section>
 </template>
 
@@ -365,6 +387,8 @@ onUnmounted(() => { cancelMeasureLoop(); observer?.disconnect(); });
 .timeline-wrap{height:auto;padding:0;overscroll-behavior-x:contain}
 #measures{user-select:none;touch-action:pan-y}#measures.dragging,#measures.dragging button{cursor:crosshair}#measures button.loop-preview{outline:1px solid var(--green);outline-offset:-1px}
 #measure-loop-anchor{font-size:11px;color:var(--green);font-variant-numeric:tabular-nums}#measures button.loop-anchor{outline:2px dashed var(--green);outline-offset:-2px}
+#measures button.in-selection{box-shadow:inset 0 3px 0 var(--green)}#measures button.note-selected{position:relative}#measures button.note-selected::after{content:'';position:absolute;right:4px;bottom:4px;width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 2px #fff}
+#selection-summary{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:8px;font-size:11px;color:var(--green)}#selection-summary .selected-note-label{color:var(--cyan)}
 .measure-nav{display:flex;align-items:center;gap:6px;min-width:0}.measure-nav label{display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}.measure-nav input{width:64px;min-width:0;min-height:30px;padding:4px 6px}.measure-nav>.icon{width:30px;min-width:30px;min-height:30px;padding:5px}
 .chart-statistics{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;min-width:0;margin-top:10px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}.chart-statistics>span{white-space:nowrap}.chart-statistics b{font-weight:500;color:var(--ink)}
 .measure-info{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;min-height:24px;margin-bottom:4px;color:var(--muted);font-size:11px}.measure-info>span{white-space:nowrap}

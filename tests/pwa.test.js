@@ -6,6 +6,71 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { build } from 'vite';
+import { checkPwaUpdate, activatePwaUpdate, waitForPwaRegistration } from '../src/pwa.js';
+
+test('startup checks wait for registration readiness and reject a mismatched deployment scope', async () => {
+  const scope = 'https://example.com/web-tja-studio/';
+  const registration = { scope, active: {} };
+  let ready, queried = false;
+  const container = {
+    ready: new Promise(resolve => { ready = resolve; }),
+    getRegistration: async requested => { queried = true; assert.equal(requested, scope); return registration; }
+  };
+  const waiting = waitForPwaRegistration(container, scope);
+  await Promise.resolve(); assert.equal(queried, false);
+  ready(registration); assert.equal(await waiting, registration);
+  registration.scope = 'https://example.com/';
+  await assert.rejects(waitForPwaRegistration(container, scope), /尚未完成离线注册/);
+});
+
+test('startup readiness is bounded even when no worker finishes registering', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const waiting = waitForPwaRegistration({ ready: new Promise(() => {}) }, 'https://example.com/');
+  const rejected = assert.rejects(waiting, /更新超时/);
+  context.mock.timers.tick(20000);
+  await rejected;
+});
+
+test('update checks distinguish unchanged, waiting, installing and failed releases', async () => {
+  const registration = { waiting: null, installing: null, update: async () => {} };
+  assert.equal(await checkPwaUpdate(registration), null);
+  const worker = new EventTarget(); worker.state = 'installing';
+  registration.waiting = worker;
+  registration.update = () => { assert.fail('An already downloaded release needs no network'); };
+  assert.equal(await checkPwaUpdate(registration), worker);
+  registration.waiting = null;
+  registration.update = async () => {
+    registration.installing = worker;
+    setImmediate(() => {
+      registration.waiting = worker; worker.state = 'installed'; worker.dispatchEvent(new Event('statechange'));
+    });
+  };
+  assert.equal(await checkPwaUpdate(registration), worker);
+  registration.waiting = null; worker.state = 'installing';
+  registration.update = async () => { setImmediate(() => { worker.state = 'redundant'; worker.dispatchEvent(new Event('statechange')); }); };
+  await assert.rejects(checkPwaUpdate(registration), /更新安装失败/);
+  registration.update = async () => { throw new Error('Offline'); };
+  await assert.rejects(checkPwaUpdate(registration), /Offline/);
+});
+
+test('update checks time out instead of reporting a stalled request as current', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const checked = checkPwaUpdate({ waiting: null, update: () => new Promise(() => {}) });
+  const rejected = assert.rejects(checked, /更新超时/);
+  context.mock.timers.tick(20000);
+  await rejected;
+});
+
+test('manual activation waits for the new worker and surfaces messaging failures', async () => {
+  const worker = new EventTarget(); worker.state = 'installed';
+  worker.postMessage = value => {
+    assert.deepEqual(value, { type: 'SKIP_WAITING' });
+    setImmediate(() => { worker.state = 'activated'; worker.dispatchEvent(new Event('statechange')); });
+  };
+  await activatePwaUpdate(worker);
+  worker.state = 'installed'; worker.postMessage = () => { throw new Error('Cannot message worker'); };
+  await assert.rejects(activatePwaUpdate(worker), /Cannot message worker/);
+});
 
 test('production PWA assets are installable and precached at root and subdirectory URLs', async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'web-tja-studio-pwa-'));

@@ -23,6 +23,13 @@ test('file tabs ellipsize only the filename and retain the full title and separa
   assert.match(styles, /\.chart-tab\{[^}]*max-width:320px/);
 });
 
+test('queued timeline scroll events after switching files cannot access an unmounted viewport', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const source = descriptor.scriptSetup.content.match(/function scrollTimeline\(\) \{[\s\S]*?\n\}/)[0];
+  const handle = runInNewContext(`${source}; scrollTimeline`, { state: { chart: {} }, viewport: { value: null } });
+  assert.doesNotThrow(() => handle());
+});
+
 test('the new-document tab follows the last file inside the left-aligned scrolling tab content', () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'new-document-tab' });
@@ -48,7 +55,7 @@ test('the header file menu groups file actions and shortcuts without occupying t
     assert.ok(actions.includes(`id="${id}"`), id);
     assert.equal([...template.matchAll(new RegExp(`id="${id}"`, 'g'))].length, 1);
   }
-  assert.equal([...actions.matchAll(/:disabled="!state.chart \|\| state.saving"/g)].length, 2);
+  assert.equal([...actions.matchAll(/:disabled="!state.chart \|\| state.saving"/g)].length, 3);
   for (const action of ['studio.newChart', 'chooseCharts', 'studio.saveChart', 'studio.saveAs']) assert.ok(actions.includes(`@click="runFileAction(${action})"`), action);
   assert.match(descriptor.scriptSetup.content, /function runFileAction\(action\) \{\s*closePopover\(fileMenu.value\);\s*return action\(\);/);
   assert.match(actions, /t\('保存（Ctrl\+S）'\)/);
@@ -65,7 +72,7 @@ test('the header file menu groups file actions and shortcuts without occupying t
   const styles = descriptor.styles[0].content;
   assert.match(styles, /\.chart-tabs\{[^}]*flex-shrink:0/);
   assert.match(styles, /\.file-actions \.file-panel button span\{display:inline;/);
-  assert.match(styles, /@media\(max-width:720px\)\{header\{position:relative\}\.file-popover\{position:static\}/);
+  assert.match(styles, /\.file-panel\{position:fixed;/);
 });
 
 test('new and open shortcuts use existing actions from inputs, suppress repeat and protect native shortcuts and dialogs', () => {
@@ -104,7 +111,7 @@ test('folder authorization and automatic matching have no UI or runtime entry po
   assert.doesNotMatch(studio, /autoAudio|chooseMediaDirectory|setMediaFiles|media-files|sourceHandle|chartPath/);
 });
 
-test('the language icon and options are in the top toolbar with setup handlers', () => {
+test('language options are grouped beneath the single settings toolbar trigger', () => {
   const source = readFileSync(new URL('App.vue', import.meta.url), 'utf8');
   const { descriptor } = parse(source);
   const { bindings } = compileScript(descriptor, { id: 'i18n-test' });
@@ -116,6 +123,8 @@ test('the language icon and options are in the top toolbar with setup handlers',
   assert.match(header, /id="language-toggle"/);
   assert.match(header, /@click="changeLanguage\(language.code\)"/);
   assert.match(header, /:aria-pressed="localePreference === language.code"/);
+  assert.match(header, /<details ref="settingsMenu"[\s\S]*id="settings-toggle"[\s\S]*<details ref="languageMenu"/);
+  assert.doesNotMatch(header.match(/<div class="brand">[\s\S]*?<\/div>/)[0], /<strong>|<small>/);
 });
 
 test('the project popover shows only draft failures and retains project links and copyright', () => {
@@ -126,7 +135,10 @@ test('the project popover shows only draft failures and retains project links an
   assert.doesNotMatch(descriptor.template.content, /<footer\b/);
   assert.match(project, /id="project-toggle"/);
   assert.match(project, /v-if="draftUnavailable" id="save-state" role="alert"/);
-  assert.match(project, /v-if="draftUnavailable" class="status-dot session-dot error"/);
+  assert.match(header, /id="settings-toggle"[\s\S]*v-if="draftUnavailable" class="status-dot session-dot error"/);
+  assert.doesNotMatch(project, /id="check-update"|id="update-notice"/);
+  assert.match(header, /id="settings-panel"[^>]*>\s*<button id="check-update"/);
+  assert.match(descriptor.template.content, /id="update-notice"[\s\S]*aria-live="polite"/);
   assert.doesNotMatch(project, /t\('本地会话'\)/);
   assert.match(project, /t\(state.saveState\)/);
   assert.match(project, /© 2026 Dafrok/);
@@ -151,8 +163,54 @@ test('header popovers dismiss on outside pointerdown and completed focus changes
   assert.match(script, /menu\?\.open && !menu.contains\(event.target\)/);
   assert.doesNotMatch(script, /event.type === 'focusout'/);
   assert.doesNotMatch(descriptor.template.content, /@focusout="dismissPopovers"/);
-  assert.match(script, /\[fileMenu.value, languageMenu.value, shortcutMenu.value, projectMenu.value\]/);
-  assert.equal([...descriptor.template.content.matchAll(/@keydown="popoverKeydown\(\$event, (?:fileMenu|languageMenu|shortcutMenu|projectMenu)\)"/g)].length, 4);
+  assert.match(script, /\[fileMenu.value, editMenu.value, selectionMenu.value, settingsMenu.value, languageMenu.value, shortcutMenu.value, projectMenu.value\]/);
+  assert.equal([...descriptor.template.content.matchAll(/@keydown="popoverKeydown\(\$event, (?:fileMenu|editMenu|selectionMenu|settingsMenu|languageMenu|shortcutMenu|projectMenu)\)"/g)].length, 7);
+});
+
+test('scrolling or focusing the shared settings panel retains expanded help, while sibling opening and outside clicks dismiss it', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  const refs = Object.fromEntries(['fileMenu', 'editMenu', 'selectionMenu', 'settingsMenu', 'languageMenu', 'shortcutMenu', 'projectMenu'].map(name => [name, {
+    value: { open: false, contains: target => target === name || name === 'settingsMenu' && ['panel', 'scrollbar', 'languageMenu', 'shortcutMenu', 'projectMenu'].includes(target) }
+  }]));
+  const script = descriptor.scriptSetup.content;
+  const { dismiss, toggle } = runInNewContext(`({
+    dismiss: ${script.match(/function dismissPopovers\(event\) \{[\s\S]*?\n\}/)[0]},
+    toggle: ${script.match(/function toggleSettingsSection\(event\) \{[\s\S]*?\n\}/)[0]}
+  })`, refs);
+  refs.settingsMenu.value.open = true; refs.shortcutMenu.value.open = true;
+  for (const target of ['scrollbar', 'panel', 'shortcutMenu']) {
+    dismiss({ target }); assert.equal(refs.settingsMenu.value.open, true); assert.equal(refs.shortcutMenu.value.open, true);
+  }
+  refs.languageMenu.value.open = true; toggle({ target: refs.languageMenu.value });
+  assert.equal(refs.shortcutMenu.value.open, false);
+  dismiss({ target: 'outside' });
+  assert.equal(refs.settingsMenu.value.open, false); assert.equal(refs.languageMenu.value.open, false);
+  assert.match(descriptor.template.content, /id="settings-panel"[^>]*tabindex="0"/);
+});
+
+test('startup update checks announce a new release without installing it; unchanged passive checks stay quiet and errors remain explicit', async () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  const script = descriptor.scriptSetup.content;
+  const refs = Object.fromEntries(['checkingUpdate', 'installingUpdate', 'updateError', 'updateVisible', 'pendingUpdate', 'updateNotice'].map(name => [name, { value: null }]));
+  let worker = { state: 'installed' }, failure = null, installed = 0;
+  const source = script.match(/async function checkUpdate\(passive = false\) \{[\s\S]*?\n\}/)[0]
+    .replaceAll('import.meta.env.DEV', 'false').replaceAll('import.meta.env.BASE_URL', "'./'");
+  const checkUpdate = runInNewContext(`(${source})`, {
+    ...refs, appDisposed: false, navigator: { serviceWorker: {} }, location: { href: 'https://example.com/web-tja-studio/' }, URL, message, LocalizedError,
+    waitForPwaRegistration: async (_container, scope) => { assert.equal(scope, 'https://example.com/web-tja-studio/'); return {}; },
+    checkPwaUpdate: async () => { if (failure) throw failure; return worker; },
+    installUpdate: async () => { installed++; }
+  });
+  await checkUpdate(true);
+  assert.equal(refs.pendingUpdate.value, worker); assert.equal(refs.updateVisible.value, true); assert.equal(installed, 0);
+  refs.updateVisible.value = false; await checkUpdate(false); assert.equal(installed, 1);
+  refs.pendingUpdate.value = null; refs.updateVisible.value = false; worker = null;
+  await checkUpdate(true); assert.equal(refs.updateVisible.value, false);
+  await checkUpdate(false); assert.equal(refs.updateNotice.value.key, '已经是最新版本。');
+  failure = new Error('Offline'); await checkUpdate(true);
+  assert.equal(refs.updateVisible.value, true); assert.equal(refs.updateError.value, true);
+  assert.equal(refs.updateNotice.value.key, '检测或安装更新失败：{p0}');
+  assert.match(script, /if \(!import.meta.env.DEV && 'serviceWorker' in navigator\) void checkUpdate\(true\)/);
 });
 
 test('shortcut help is accessible without a chart and documents implemented bindings and scope', () => {
@@ -171,7 +229,7 @@ test('shortcut help is accessible without a chart and documents implemented bind
   assert.match(palette, /:data-value="type.value"/);
   assert.match(palette, /@click="studio.chooseNote\(type.value\)"/);
   assert.match(help, /音符操作需先选中位置/);
-  assert.match(help, /macOS：打开/);
+  assert.match(help, /macOS：文件/);
 });
 
 test('global navigation displays the pending F loop endpoint and documents cancellation', () => {
@@ -195,20 +253,67 @@ test('audio loading is the rightmost control in the active chart transport', () 
   assert.match(button, /@click="audioFile.click\(\)"/);
   assert.match(button, /:aria-label="t\('载入音频'\)"/);
   assert.equal([...template.matchAll(/id="open-audio"/g)].length, 1);
-  assert.match(transport, /<\/details>\s*<button id="open-audio"[\s\S]*?<\/button>\s*<\/div><div class="loop-controls">/);
-  assert.match(descriptor.styles[0].content, /\.transport-right\{[^}]*order:2/);
+  assert.match(transport, /<\/details>\s*<button id="open-audio"[\s\S]*?<\/button>\s*<\/div><\/section>/);
+  assert.match(descriptor.styles[0].content, /@container\(max-width:640px\)\{\.transport\{grid-template-columns:minmax\(0,1fr\)\}/);
 });
 
 test('dropping TJA files anywhere opens them sequentially, preserves native text drags and reports unsupported files or modal guards', async () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'chart-drop' });
   const source = descriptor.scriptSetup.content.slice(descriptor.scriptSetup.content.indexOf('function dragOverFiles('));
-  const state = { error: false }, opened = [], notices = [];
+  const state = { error: false, fileErrors: [] }, opened = [], notices = [];
   let modal = false, prevented = 0;
   const handlers = runInNewContext(`${source}; ({ dragOverFiles, dropFiles })`, {
     state, document: { querySelector: () => modal },
     message: (key, values) => ({ key, values }),
-    studio: { openChart: async file => { await Promise.resolve(); opened.push(file); }, notice: (message, error) => notices.push({ ...message, error }) }
+    studio: { openChart: async file => { await Promise.resolve(); opened.push(file); }, notice: (message, error) => notices.push({ ...message, error }), reportFileError: message => { state.fileErrors.push(message); notices.push({ ...message, error: true }); } }
+  });
+
+  test('audio drops use the active chart, load charts first, reject multiple audio files and preserve load errors', async () => {
+    const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+    const source = descriptor.scriptSetup.content.slice(descriptor.scriptSetup.content.indexOf('function dragOverFiles('));
+    const state = { error: false, fileErrors: [] }, opened = [], notices = [];
+    const { dropFiles } = runInNewContext(`${source}; ({ dropFiles })`, {
+      state, document: { querySelector: () => null }, message,
+      studio: {
+        openChart: async file => { opened.push(`chart:${file.name}`); },
+        openAudio: async file => { opened.push(`audio:${file.name}`); },
+        notice: (value, error) => notices.push({ ...value, error }),
+        reportFileError: value => { state.fileErrors.push(value); notices.push({ ...value, error: true }); }
+      }
+    });
+    const drop = files => dropFiles({ dataTransfer: { types: ['Files'], files }, preventDefault() {} });
+    await drop([{ name: 'music.M4A' }, { name: 'song.tja' }]);
+    assert.deepEqual(opened, ['chart:song.tja', 'audio:music.M4A']);
+    await drop([{ name: 'unknown-extension', type: 'audio/ogg' }]);
+    assert.equal(opened.at(-1), 'audio:unknown-extension');
+    await drop([{ name: 'first.mp3' }, { name: 'second.wav' }]);
+    assert.equal(opened.length, 3);
+    assert.equal(notices.at(-1).key, '一次只能拖入一个音频文件，未载入音频。');
+    state.error = true; const count = notices.length;
+    await drop([{ name: 'song.wav' }, { name: 'image.png' }]);
+    assert.equal(notices.length, count);
+  });
+
+  test('the edit menu reuses guarded editing actions and labels only implemented shortcuts', () => {
+    const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+    compileScript(descriptor, { id: 'edit-menu' });
+    const menu = descriptor.template.content.match(/<details ref="editMenu"[\s\S]*?<\/details>/)[0];
+    assert.match(menu, /:disabled="!state.undo.length"[\s\S]*studio.history\(\)/);
+    assert.match(menu, /:disabled="!state.redo.length"[\s\S]*studio.history\(true\)/);
+    assert.match(menu, /:disabled="!studio.cell.value \|\| state.invalid"[\s\S]*studio.chooseNote\(type.value\)/);
+    assert.doesNotMatch(menu, /studio.markLoop|studio.clearLoop/);
+    assert.match(menu, /Ctrl\+Z/); assert.match(menu, /Ctrl\+Shift\+Z/);
+  });
+
+  test('the central title identifies difficulty before the song and mode after it, without a duplicate inspector header', () => {
+    const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+    compileScript(descriptor, { id: 'document-context' });
+    const context = descriptor.template.content.match(/<div class="document-title">[\s\S]*?<\/div>/)[0];
+    assert.match(context, /courseLabel\(state.chart.variant.course\)/);
+    assert.match(context, /<DifficultyIcon :course="state.chart.variant.course" \/>[\s\S]*<h1 id="song-title"/);
+    assert.match(context, /<\/h1><span id="document-mode"[\s\S]*variantLabel\(state.chart.variant\)/);
+    assert.doesNotMatch(readFileSync(new URL('MeasureEditor.vue', import.meta.url), 'utf8'), /measure-context|DifficultyIcon|courseLabel|variantLabel/);
   });
   const native = { dataTransfer: { types: ['text/plain'] }, preventDefault() { assert.fail('Text drags must stay native'); } };
   handlers.dragOverFiles(native); await handlers.dropFiles(native);
@@ -220,7 +325,7 @@ test('dropping TJA files anywhere opens them sequentially, preserves native text
   assert.deepEqual(opened, [first, second]); assert.equal(prevented, 2);
   assert.equal(notices.at(-1).values.p0, 'image.png'); assert.equal(notices.at(-1).error, true);
   await handlers.dropFiles(event([{ name: 'image.png' }]));
-  assert.equal(opened.length, 2); assert.equal(notices.at(-1).key, '请拖入 .tja 谱面文件。');
+  assert.equal(opened.length, 2); assert.equal(notices.at(-1).key, '请拖入 .tja 谱面或音频文件。');
   modal = true; await handlers.dropFiles(event([first]));
   assert.equal(opened.length, 2); assert.match(notices.at(-1).key, /当前对话框/);
   modal = false; state.error = true; const count = notices.length;
@@ -247,13 +352,18 @@ test('branch route controls use localized names while raw N/E/M identifiers rema
   assert.match(chart, /BRANCH_ROUTE_NAMES = \{ N: '普通', E: '玄人', M: '达人' \}/);
 });
 
-test('the loop transport omits the clear button while retaining shortcut help and normal loop draft commits', () => {
+test('the selection menu owns measure and note operations; playback has no independent loop switch or range inputs', () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'clear-loop-action' });
-  assert.doesNotMatch(descriptor.template.content, /id="clear-loop"|clearLoopSelection/);
-  assert.doesNotMatch(descriptor.scriptSetup.content, /clear-loop|clearLoopSelection/);
-  assert.match(descriptor.scriptSetup.content, /\['Shift\+F', '清除循环范围'\]/);
-  assert.match(descriptor.scriptSetup.content, /if \(loopDirty.value\) applyLoopDraft\(\); else resetLoopDraft\(\);/);
+  const menu = descriptor.template.content.match(/<details ref="selectionMenu"[\s\S]*?<\/details>/)[0];
+  assert.match(menu, /studio.setLoop\(state.selected \+ 1, state.selected \+ 1\)/);
+  assert.match(menu, /studio.setLoop\(1, state.chart.bars.length\)/);
+  assert.match(menu, /runSelectionAction\(studio.markLoop\)[\s\S]*<kbd aria-hidden="true">F/);
+  assert.match(menu, /runSelectionAction\(studio.clearLoop\)[\s\S]*Shift\+F/);
+  assert.match(menu, /studio.selectAdjacentNote\(-1\)/); assert.match(menu, /studio.selectAdjacentNote\(1\)/);
+  assert.match(menu, /runSelectionAction\(studio.clearNoteSelection\)/);
+  assert.doesNotMatch(descriptor.template.content, /id="loop"|id="loop-first"|id="loop-last"|controls.loop/);
+  assert.match(descriptor.scriptSetup.content, /\['Shift\+F', '取消小节选择'\]/);
 });
 
 test('global navigation previews and commits pointer-drag loop ranges without consuming ordinary clicks', () => {
@@ -283,13 +393,13 @@ test('global navigation previews and commits pointer-drag loop ranges without co
   drag(0, 3);
   assert.equal(measureDrag.value.end, 3); assert.equal(measureDrag.value.dragged, true); assert.equal(writes.length, 0);
   handlers.finishMeasureLoop(event({ clientX: 20 }));
-  assert.deepEqual(writes.at(-1), [1, 4, true]); assert.equal(measureDrag.value, null); assert.equal(captured.size, 0);
+  assert.deepEqual(writes.at(-1), [1, 4]); assert.equal(measureDrag.value, null); assert.equal(captured.size, 0);
   let prevented = 0, stopped = 0;
   const click = { detail: 1, preventDefault: () => prevented++, stopPropagation: () => stopped++ };
   handlers.measureLoopClick(click); assert.equal(prevented, 1); assert.equal(stopped, 1);
   handlers.measureLoopClick(click); assert.equal(prevented, 1);
-  drag(3, 0); handlers.finishMeasureLoop(event({ clientX: 20 })); assert.deepEqual(writes.at(-1), [1, 4, true]);
-  drag(2, 2, 6); handlers.finishMeasureLoop(event({ clientX: 6 })); assert.deepEqual(writes.at(-1), [3, 3, true]);
+  drag(3, 0); handlers.finishMeasureLoop(event({ clientX: 20 })); assert.deepEqual(writes.at(-1), [1, 4]);
+  drag(2, 2, 6); handlers.finishMeasureLoop(event({ clientX: 6 })); assert.deepEqual(writes.at(-1), [3, 3]);
   const count = writes.length;
   drag(1, 1, 4); handlers.finishMeasureLoop(event({ clientX: 4 })); assert.equal(writes.length, count);
   handlers.measureLoopClick(click); assert.equal(prevented, 1);
@@ -301,21 +411,36 @@ test('global navigation previews and commits pointer-drag loop ranges without co
   handlers.cancelMeasureLoop(event({ pointerId: 2 })); assert.notEqual(measureDrag.value, null);
   handlers.cancelMeasureLoop(event()); assert.equal(measureDrag.value, null); assert.equal(writes.length, count);
   drag(0, 2); hit = null;
-  handlers.finishMeasureLoop(event({ clientX: 100 })); assert.deepEqual(writes.at(-1), [1, 3, true]);
+  handlers.finishMeasureLoop(event({ clientX: 100 })); assert.deepEqual(writes.at(-1), [1, 3]);
   assert.match(script, /watch\(\(\) => \[state.activeId, state.chart, state.invalid\], \(\) => cancelMeasureLoop\(\), \{ flush: 'sync' \}\)/);
   assert.match(descriptor.template.content, /@pointercancel="cancelMeasureLoop" @lostpointercapture="cancelMeasureLoop"/);
   assert.match(descriptor.template.content, /@click.capture="measureLoopClick"/);
   assert.match(descriptor.template.content, /:data-measure-index="item.index"/);
-  assert.match(descriptor.template.content, /@click="studio.select\(item.index\)"/);
+  assert.match(descriptor.template.content, /@click="viewMeasure\(\$event, item.index\)"/);
+});
+
+test('Shift-click chooses an inclusive range from the viewed measure or pending F anchor without navigating', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const state = { selected: 2, loopAnchor: null }, ranges = [], views = [];
+  const viewMeasure = runInNewContext(`(${descriptor.scriptSetup.content.match(/function viewMeasure\(event, index\) \{[\s\S]*?\n\}/)[0]})`, {
+    state, studio: { select: index => views.push(index), setLoop: (...args) => ranges.push(args) }
+  });
+  viewMeasure({ shiftKey: false }, 1); assert.deepEqual(views, [1]); assert.equal(ranges.length, 0);
+  viewMeasure({ shiftKey: true }, 0); assert.deepEqual(ranges.at(-1), [1, 3]); assert.deepEqual(views, [1]);
+  state.loopAnchor = 1;
+  viewMeasure({ shiftKey: true }, 3); assert.deepEqual(ranges.at(-1), [2, 4]);
+  assert.match(descriptor.template.content, /:aria-pressed="measureSelected\(item.index\)"/);
+  assert.match(descriptor.template.content, /:aria-current="item.index === state.selected \? 'location' : undefined"/);
+  assert.match(descriptor.template.content, /'note-selected': item.index === state.selectedCell\?\.bar/);
 });
 
 test('the header keeps title and history while global navigation contains full-chart statistics', () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'editor-header' });
   const template = descriptor.template.content;
-  assert.match(template, /<div class="editor-core">\s*<section v-if="studio.bar.value" class="document-toolbar">/);
+  assert.match(template, /<div class="editor-core" :inert="state.editorBlocked">\s*<section v-if="studio.bar.value" class="document-toolbar">/);
   const toolbar = template.match(/<section v-if="studio.bar.value" class="document-toolbar">[\s\S]*?<\/section>/)[0];
-  assert.match(toolbar, /<div class="document-title"><h1 id="song-title"[\s\S]*?<\/h1><span v-if="state.encoding" id="encoding">[\s\S]*?<\/span><\/div>/);
+  assert.match(toolbar, /<div class="document-title">[\s\S]*<h1 id="song-title"[\s\S]*?<\/h1><span id="document-mode"[\s\S]*<span v-if="state.encoding" id="encoding">[\s\S]*?<\/span><\/div>/);
   const timeline = readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8');
   const navigation = timeline.match(/<section class="measure-section">[\s\S]*?<\/section>/)[0];
   assert.match(navigation, /t\('全局导航'\)/);
@@ -395,7 +520,7 @@ test('current position timing lives in note attributes and measure selection liv
   for (const field of ['bpm', 'scroll', 'numerator', 'denominator', 'gogo', 'delay']) assert.ok(descriptor.scriptSetup.content.includes(`timing.${field}`), field);
   for (const id of ['cell-bpm', 'cell-scroll', 'cell-meter']) assert.ok(descriptor.scriptSetup.content.includes(`id: '${id}'`), id);
   const nav = descriptor.template.content.match(/<div class="measure-nav">[\s\S]*?<\/div>/)[0];
-  assert.match(nav, /<label for="bar-number">{{ t\('小节'\) }}<\/label>\s*<button id="bar-prev"[\s\S]*<input id="bar-number"[\s\S]*<button id="bar-next"/);
+  assert.match(nav, /<label for="bar-number">{{ t\('查看小节'\) }}<\/label>\s*<button id="bar-prev"[\s\S]*<input id="bar-number"[\s\S]*<button id="bar-next"/);
   const measure = readFileSync(new URL('MeasureEditor.vue', import.meta.url), 'utf8');
   for (const id of ['bar-prev', 'bar-number', 'bar-next']) {
     assert.ok(nav.includes(`id="${id}"`), id);
@@ -447,7 +572,7 @@ test('the sidebar uses peer sections rather than nesting all editing under a mea
   for (const id of ['bar-badge', 'bar-time', 'division']) assert.ok(properties.includes(`id="${id}"`), id);
   for (const id of ['position-commands', 'measure-commands']) assert.ok(commands.includes(`id="${id}"`), id);
   assert.doesNotMatch(commands, /id="insert-branch-source"|id="command-player-structure"|id="bar-commands"|id="source"/);
-  for (const id of ['branch-condition', 'branch-lower', 'branch-upper', 'branch-end', 'edit-branch-source']) assert.ok(commands.includes(`id="${id}"`), id);
+  for (const id of ['branch-condition', 'branch-lower', 'branch-upper', 'branch-end']) assert.ok(commands.includes(`id="${id}"`), id);
   assert.doesNotMatch(descriptor.template.content, /branch-structure-title|insert-branch-source/);
   assert.doesNotMatch(descriptor.template.content, /command-player-structure|插入双人谱结构/);
   assert.ok(list.includes('id="bar-commands"'));
@@ -511,9 +636,10 @@ test('command groups separate arbitrary positions from measure-start controls', 
   assert.ok(!measure.includes('id="command-numerator"'));
   for (const [group, other, keys] of [[position, measure, ['bpm', 'scroll', 'delay', 'gogo', 'lyric', 'senote']], [measure, position, ['meter', 'barline', 'section', 'levelhold']]]) {
     for (const key of keys) {
-      assert.ok(group.includes(`id="use-${key}"`), key);
-      assert.ok(!other.includes(`id="use-${key}"`), key);
-      assert.equal(descriptor.template.content.split(`id="use-${key}"`).length - 1, 1, key);
+      const id = `${group === position ? 'bar' : 'use'}-${key}`;
+      assert.ok(group.includes(`id="${id}"`), key);
+      assert.ok(!other.includes(`id="${id}"`), key);
+      assert.equal(descriptor.template.content.split(`id="${id}"`).length - 1, 1, key);
     }
     assert.ok(group.includes('@keydown="finishSetting"'));
   }
@@ -521,6 +647,23 @@ test('command groups separate arbitrary positions from measure-start controls', 
   assert.match(descriptor.scriptSetup.content, /numerator: measure.timing.numerator, denominator: measure.timing.denominator/);
   assert.match(descriptor.scriptSetup.content, /barline: measure.timing.barline/);
   assert.match(descriptor.styles[0].content, /\.command-group\{min-width:0;/);
+  assert.doesNotMatch(position, /type="checkbox"| required/);
+  assert.match(position, /<option value="">/);
+  assert.match(position, /GOGO START/); assert.match(position, /GOGO END/);
+});
+
+test('workspace Escape closes the mobile overlay without dismissing nested dialogs or composition', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  const source = descriptor.scriptSetup.content.match(/function workspaceKeydown\(event\) \{[\s\S]*?\n\}/)[0];
+  const mobileWorkspace = { value: true }, workspaceOpen = { value: true };
+  let closed = 0, focused = 0;
+  const handle = runInNewContext(`${source}; workspaceKeydown`, { mobileWorkspace, workspaceOpen, closeWorkspace: () => closed++, workspaceSidebar: { value: { focusToggle: () => focused++ } } });
+  const native = extra => handle({ key: 'Escape', target: { closest: () => null }, preventDefault() { assert.fail('Native Escape must not be consumed'); }, ...extra });
+  for (const extra of [{ isComposing: true }, { keyCode: 229 }, { ctrlKey: true }, { altKey: true }, { shiftKey: true }, { defaultPrevented: true }, { target: { closest: () => ({}) } }]) native(extra);
+  mobileWorkspace.value = false; native({}); mobileWorkspace.value = true;
+  workspaceOpen.value = false; native({}); workspaceOpen.value = true;
+  handle({ key: 'Escape', target: { closest: () => null }, preventDefault() {}, stopPropagation() {} });
+  assert.equal(closed, 1); assert.equal(focused, 1);
 });
 
 test('command changes auto-apply only their own field at the correct scope and validate before writing', () => {
@@ -539,14 +682,18 @@ test('command changes auto-apply only their own field at the correct scope and v
     apply(key, event);
     assert.deepEqual(writes.at(-1), { [key]: expected });
     assert.equal(targets.at(-1), measureKeys.includes(key), key);
-    enabled[key] = false; apply(key, event);
+    if (measureKeys.includes(key)) enabled[key] = false;
+    else fields[key] = '';
+    apply(key, event);
     assert.deepEqual(writes.at(-1), { [key]: null });
     assert.equal(targets.at(-1), measureKeys.includes(key), key);
   }
   apply('meter', event); assert.deepEqual(writes.at(-1), { numerator: 7, denominator: 8 }); assert.equal(targets.at(-1), true);
   enabled.meter = false; apply('meter', event); assert.deepEqual(writes.at(-1), { numerator: null, denominator: null });
   assert.equal(targets.at(-1), true);
-  enabled.scroll = true;
+  fields.scroll = 0;
+  fields.delay = 0; apply('delay', event); assert.deepEqual(writes.at(-1), { delay: 0 });
+  fields.gogo = 'off'; apply('gogo', event); assert.deepEqual(writes.at(-1), { gogo: false });
   const count = writes.length;
   let reported = false;
   apply('scroll', { currentTarget: { querySelectorAll: () => [{ reportValidity: () => { reported = true; return false; } }] } });
@@ -640,19 +787,18 @@ test('snap, zoom and follow controls replace the waveform caption row above the 
   assert.doesNotMatch(readFileSync(new URL('sound.css', import.meta.url), 'utf8'), /\.snap-controls/);
 });
 
-test('editor columns are siblings and the compact transport follows the scrolling center content', () => {
+test('editor columns are siblings and mobile transport can leave the scrolling center content', () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'editor-columns' });
   const template = descriptor.template.content;
-  assert.match(template, /<div class="editor-core">\s*<section v-if="studio.bar.value" class="document-toolbar">[\s\S]*?<\/section>\s*<div class="editor-scroll">/);
+  assert.match(template, /<div class="editor-core" :inert="state.editorBlocked">\s*<section v-if="studio.bar.value" class="document-toolbar">[\s\S]*?<\/section>\s*<div class="editor-scroll">/);
   assert.match(template, /<TimelineEditor v-if="studio.bar.value" \/>/);
-  assert.match(template, /<\/div>\s*<section v-if="studio.bar.value" class="transport">/);
-  assert.match(template, /<\/div><\/section>\s*<\/div>\s*<MeasureEditor v-if="studio.bar.value" \/>/);
+  assert.match(template, /<\/div>\s*<Teleport to="body" :disabled="!mobileWorkspace"><div ref="transportHost" class="transport-host">\s*<section v-if="studio.bar.value" class="transport">/);
+  assert.match(template, /<\/div><\/section>\s*<\/div><\/Teleport>\s*<\/div>\s*<MeasureEditor v-if="studio.bar.value" :inert="state.editorBlocked" \/>/);
   assert.doesNotMatch(template, /id="preview-range"|id="loop-summary"|id="apply-loop"|id="loop-current"/);
-  assert.match(template, /id="loop-first"/); assert.match(template, /id="loop-last"/);
-  assert.match(template, /@focusout="finishLoopEdit"/);
-  assert.match(template, /@keydown.enter.prevent="applyLoopDraft"/);
-  assert.match(template, /@keydown.esc.prevent.stop="resetLoopDraft"/);
+  assert.match(template, /ref="selectionDialog"[\s\S]*@submit.prevent="applySelection"/);
+  assert.match(template, /id="selection-first"/); assert.match(template, /id="selection-last"/);
+  assert.doesNotMatch(template, /loop-controls|loop-range-inputs/);
   const styles = descriptor.styles[0].content;
   assert.match(styles, /\.editor-scroll\{[^}]*overflow:auto/);
   assert.match(styles, /\.transport\{[^}]*flex-shrink:0/);
@@ -680,7 +826,7 @@ test('per-mode deletion confirms the target without changing selection and permi
   assert.match(descriptor.template.content, /仅删除这张谱面/);
   assert.doesNotMatch(descriptor.scriptSetup.content, /canDelete|deletionTargets/);
   assert.match(descriptor.template.content, /id="course-confirm"/);
-  assert.match(descriptor.scriptSetup.content, /t\('多人 - \{p0\}', \{ p0: variant.player \}\)/);
+  assert.match(descriptor.scriptSetup.content, /import \{[^}]*variantLabel[^}]*\} from '\.\/courses\.js'/);
   assert.match(descriptor.template.content, /<\/button>\s*<button v-if="entry.variant" class="tree-remove"/);
   assert.match(descriptor.template.content, /@click.stop="beginDelete\(entry.variant\)"/);
   assert.match(descriptor.scriptSetup.content, /studio.removeCourse\(draft.index\)/);
@@ -693,16 +839,16 @@ test('per-mode deletion confirms the target without changing selection and permi
 test('chart list uses localized difficulty names, decorative replaceable icons and per-mode rating badges', () => {
   const { descriptor } = parse(readFileSync(new URL('CourseControls.vue', import.meta.url), 'utf8'));
   const { bindings } = compileScript(descriptor, { id: 'localized-difficulties' });
-  assert.ok(bindings.courseLabels); assert.ok(bindings.courseLabel);
-  assert.match(descriptor.template.content, /<ListMusic aria-hidden="true" \/>/);
-  assert.match(descriptor.template.content, /t\('谱面列表'\)/);
+  assert.ok(bindings.courseLabel); assert.ok(bindings.variantLabel);
+  assert.match(descriptor.template.content, /<Layers aria-hidden="true" \/>/);
+  assert.match(descriptor.template.content, /t\('难度与模式'\)/);
   assert.match(descriptor.template.content, /<DifficultyIcon :course="group.course" \/>/);
   assert.match(descriptor.template.content, /courseLabel\(group.course\)/);
   assert.match(descriptor.template.content, /courseLabel\(active.course\)/);
   assert.match(descriptor.template.content, /p0: courseLabel\(draft.course\)/);
   assert.match(descriptor.template.content, /★\{\{ entry.level \?\? '—' \}\}/);
   assert.match(descriptor.template.content, /<span v-if="entry.variant" class="tree-level"/);
-  assert.match(descriptor.scriptSetup.content, /courseLabels.value.get\(course\) \?\? course/);
+  assert.match(readFileSync(new URL('courses.js', import.meta.url), 'utf8'), /COURSE_LABELS\[course\] \? t\(COURSE_LABELS\[course\]\) : course/);
   const icon = parse(readFileSync(new URL('DifficultyIcon.vue', import.meta.url), 'utf8')).descriptor;
   compileScript(icon, { id: 'difficulty-icon' });
   for (const course of ['Easy', 'Normal', 'Hard', 'Oni', 'Edit']) assert.ok(icon.scriptSetup.content.includes(`['${course}',`));
@@ -756,7 +902,7 @@ test('the independent song sidebar edits metadata while empty songs expose creat
   const sidebar = parse(readFileSync(new URL('SongWorkspace.vue', import.meta.url), 'utf8')).descriptor;
   compileScript(sidebar, { id: 'song-workspace' });
   assert.match(sidebar.template.content, /<aside class="song-workspace"/);
-  assert.doesNotMatch(sidebar.template.content, /workspace-heading|<h2/);
+  assert.doesNotMatch(sidebar.template.content, /<h2/);
   assert.match(sidebar.styles[0].content, /\.metadata-icon\{color:var\(--green\)\}/);
   assert.match(sidebar.template.content, /:data-song-field="field.key"/);
   assert.match(sidebar.template.content, /@change="updateMetadata\(field.key, \$event\)"/);
@@ -764,7 +910,7 @@ test('the independent song sidebar edits metadata while empty songs expose creat
   assert.match(sidebar.scriptSetup.content, /label: '多语言信息'/);
   assert.match(sidebar.scriptSetup.content, /SONG_FIELDS.filter\(field => field.localized\)/);
   const app = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8')).descriptor;
-  assert.match(app.template.content, /<SongWorkspace v-if="state.chart"/);
+  assert.match(app.template.content, /<SongWorkspace v-if="state.chart" ref="workspaceSidebar" :collapsed="!workspaceOpen"/);
   assert.match(app.template.content, /<TimelineEditor v-if="studio.bar.value"/);
   assert.match(app.template.content, /v-else class="empty-editor"/);
   assert.match(app.template.content, /v-for="course in COURSE_NAMES"/);
@@ -775,17 +921,16 @@ test('the independent song sidebar edits metadata while empty songs expose creat
   assert.match(app.template.content, /class="document-history"/);
   assert.doesNotMatch(app.template.content, /class="metadata-dialog"|id="song-metadata"/);
 });
-test('position editors expose preserved commands and a separate keyboard-safe branch structure dialog', () => {
+test('position editors expose preserved commands and graphical branch controls without a source dialog', () => {
   const { descriptor } = parse(readFileSync(new URL('MeasureEditor.vue', import.meta.url), 'utf8'));
   const { bindings } = compileScript(descriptor, { id: 'command-editors' });
-  assert.ok(bindings.applyBranch); assert.ok(bindings.branchKeydown);
-  for (const id of ['use-lyric', 'use-section', 'use-levelhold', 'use-senote', 'branch-condition', 'branch-end', 'edit-branch-source', 'branch-source']) assert.ok(descriptor.template.content.includes(`id="${id}"`));
+  for (const id of ['bar-lyric', 'use-section', 'use-levelhold', 'bar-senote', 'branch-condition', 'branch-end']) assert.ok(descriptor.template.content.includes(`id="${id}"`));
   assert.ok(bindings.applyBranchCondition); assert.ok(bindings.toggleBranchRoute);
   assert.doesNotMatch(descriptor.template.content, /activeBranch.routes.length === 1 && activeBranch.routes.includes\(route\)/);
   assert.match(descriptor.template.content, /<option value="">\{\{ t\('不启用'\)/);
   assert.match(descriptor.template.content, /:disabled="!canEndBranch \|\| state.invalid"/);
-  assert.match(descriptor.template.content, /<dialog[^>]*@keydown="branchKeydown"/);
-  assert.match(descriptor.scriptSetup.content, /applyBranch\(\)\) void studio.saveChart\(event.shiftKey\)/);
+  assert.doesNotMatch(descriptor.template.content, /edit-branch-source|branch-source-dialog|editBranchAt/);
+  assert.match(descriptor.scriptSetup.content, /applyBranchCondition\(\)\) \{ event.preventDefault\(\); event.stopPropagation\(\); \}/);
 });
 
 test('all five catalogs are complete and preserve interpolation placeholders', () => {
@@ -798,7 +943,7 @@ test('all five catalogs are complete and preserve interpolation placeholders', (
       assert.deepEqual(placeholders(value), placeholders(key), key);
     }
   }
-  const files = ['App.vue', 'SongWorkspace.vue', 'CourseControls.vue', 'StarRating.vue', 'BranchControls.vue', 'TimelineEditor.vue', 'MeasureEditor.vue', 'courses.js', 'useStudio.js', 'chart.js', 'branch-commands.js', 'grid.js', 'note-model.js', 'balloon.js', 'loop.js', 'history.js', 'metadata.js'];
+  const files = ['App.vue', 'SongWorkspace.vue', 'CourseControls.vue', 'StarRating.vue', 'BranchControls.vue', 'TimelineEditor.vue', 'MeasureEditor.vue', 'courses.js', 'useStudio.js', 'pwa.js', 'chart.js', 'branch-commands.js', 'grid.js', 'note-model.js', 'balloon.js', 'loop.js', 'history.js', 'metadata.js'];
   for (const file of files) {
     const source = readFileSync(new URL(file, import.meta.url), 'utf8');
     for (const match of source.matchAll(/'([^'\\\r\n]*(?:\\.[^'\\\r\n]*)*)'/g)) {

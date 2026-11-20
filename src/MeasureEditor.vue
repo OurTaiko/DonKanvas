@@ -1,10 +1,10 @@
 <script setup>
 import { t } from './i18n.js';
 import { computed, inject, reactive, ref, watch } from 'vue';
-import { RotateCcw, Trash2, Headphones, Eraser, Pencil } from '@lucide/vue';
+import { RotateCcw, Trash2, Headphones, Eraser } from '@lucide/vue';
 import { formatTime } from './useStudio.js';
 import { measureStart, measureEnd } from './loop.js';
-import { EDITABLE_COMMANDS, BRANCH_ROUTES, BRANCH_ROUTE_NAMES, branchSource } from './chart.js';
+import { EDITABLE_COMMANDS, BRANCH_ROUTES, BRANCH_ROUTE_NAMES } from './chart.js';
 import { measureBranch } from './branch-commands.js';
 import { NOTE_TYPES } from './note-model.js';
 
@@ -16,7 +16,6 @@ const enabled = reactive({ bpm: false, scroll: false, meter: false, delay: false
 const types = { bpm: ['BPMCHANGE'], scroll: ['SCROLL'], meter: ['MEASURE'], delay: ['DELAY'], gogo: ['GOGOSTART', 'GOGOEND'], barline: ['BARLINEON', 'BARLINEOFF'] };
 const preserved = { lyric: 'LYRIC', section: 'SECTION', levelhold: 'LEVELHOLD', senote: 'SENOTECHANGE' };
 const measureKeys = ['meter', 'barline', 'section', 'levelhold'];
-const branchDialog = ref(null), branchDraft = ref(''), branchIndex = ref(null), branchError = ref('');
 const branchControls = ref(null), branchFields = reactive({ condition: '', lower: 50, upper: 80 });
 const activeBranch = computed(() => measureBranch(state.chart, bar.value));
 const canEndBranch = computed(() => activeBranch.value && state.selected > activeBranch.value.firstBarIndex);
@@ -24,8 +23,6 @@ watch(activeBranch, value => {
   const [condition, lower, upper] = (value?.value ?? ',50,80').split(',').map(part => part.trim());
   Object.assign(branchFields, { condition, lower: Number(lower), upper: Number(upper) });
 }, { immediate: true });
-const currentBranch = computed(() => state.chart?.branches.find(branch => branch.index === bar.value?.branchIndex) ??
-  state.chart?.branches.find(branch => bar.value?.instructions.some(item => item.shared && item.start >= branch.start && item.start < branch.end)));
 const divisions = computed(() => [...new Set([4, 8, 12, 16, 24, 32, 48, 64, 96, 192, bar.value?.notes.length].filter(Boolean))].sort((first, second) => first - second));
 watch([command, measureCommand], ([value, measure]) => {
   if (!value || !measure) return;
@@ -38,17 +35,19 @@ watch([command, measureCommand], ([value, measure]) => {
     if (key === 'lyric') fields.lyric = item?.value ?? '';
     if (key === 'senote') fields.senote = item ? Number(item.value) : 1;
   }
+  for (const key of ['bpm', 'scroll', 'delay', 'gogo', 'lyric', 'senote']) if (!enabled[key]) fields[key] = '';
 }, { immediate: true });
 function movePosition() {
   studio.setCommandPosition(Number(position.numerator), Number(position.denominator));
   position.numerator = command.value.numerator; position.denominator = command.value.denominator;
 }
 function apply(key, event) {
-  if (enabled[key] && [...event.currentTarget.querySelectorAll('input, select')].some(input => !input.reportValidity())) return;
+  const active = measureKeys.includes(key) ? enabled[key] : fields[key] !== '';
+  if ((!measureKeys.includes(key) || active) && [...event.currentTarget.querySelectorAll('input, select')].some(input => !input.reportValidity())) return false;
   if (key === 'meter') {
     return studio.applySettings({ numerator: enabled.meter ? Number(fields.numerator) : null, denominator: enabled.meter ? Number(fields.denominator) : null }, true);
   } else {
-    const value = !enabled[key] ? null :
+    const value = !active ? null :
       ['bpm', 'scroll', 'delay', 'senote'].includes(key) ? Number(fields[key]) :
       ['gogo', 'barline'].includes(key) ? fields[key] === 'on' :
       key === 'lyric' ? fields.lyric : true;
@@ -91,28 +90,6 @@ function finishBranchSetting(event) {
     if (!applyBranchCondition()) { event.preventDefault(); event.stopPropagation(); }
   } else if (event.key === 'Enter') { event.preventDefault(); event.target.blur(); }
 }
-function openBranchEditor(index) {
-  studio.pause(); branchIndex.value = index; branchError.value = '';
-  branchDraft.value = branchSource(state.text, state.chart.branches[index]);
-  branchDialog.value.showModal();
-}
-function editBranchAt(item) {
-  const branch = state.chart.branches.find(branch => item.start >= branch.start && item.start < branch.end);
-  if (branch) openBranchEditor(branch.index);
-}
-function applyBranch() {
-  if (studio.applyBranchSource(branchDraft.value, branchIndex.value)) { branchDialog.value.close(); return true; }
-  branchError.value = state.notice;
-  return false;
-}
-function branchKeydown(event) {
-  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
-    event.preventDefault(); event.stopPropagation();
-    if (!event.repeat && applyBranch()) void studio.saveChart(event.shiftKey);
-  } else if (event.key === 'Escape' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing) {
-    event.preventDefault(); event.stopPropagation(); branchDialog.value.close();
-  }
-}
 </script>
 
 <template>
@@ -136,14 +113,15 @@ function branchKeydown(event) {
       <fieldset id="position-commands" class="command-group">
       <legend>{{ t('任意落点指令') }}</legend>
       <div class="settings-grid" @keydown="finishSetting">
-        <div class="command-field" @change="apply('bpm', $event)"><label class="command-enable"><input id="use-bpm" v-model="enabled.bpm" type="checkbox" :disabled="!bar || state.invalid">BPM</label><input id="bar-bpm" v-model.number="fields.bpm" :aria-label="t('落点 BPM')" type="number" min="0.001" step="any" :disabled="!bar || !enabled.bpm || state.invalid" required></div>
-        <div class="command-field" @change="apply('scroll', $event)"><label class="command-enable"><input id="use-scroll" v-model="enabled.scroll" type="checkbox" :disabled="!bar || state.invalid">{{ t('卷轴倍率') }}</label><input id="bar-scroll" v-model.number="fields.scroll" :aria-label="t('落点卷轴倍率')" type="number" step="any" :disabled="!bar || !enabled.scroll || state.invalid" required></div>
-        <div class="command-field" @change="apply('delay', $event)"><label class="command-enable"><input id="use-delay" v-model="enabled.delay" type="checkbox" :disabled="!bar || state.invalid">{{ t('延迟 / s') }}</label><input id="bar-delay" v-model.number="fields.delay" :aria-label="t('落点延迟')" type="number" step="any" :disabled="!bar || !enabled.delay || state.invalid" required></div>
-        <div class="command-field" @change="apply('gogo', $event)"><label class="command-enable"><input id="use-gogo" v-model="enabled.gogo" type="checkbox" :disabled="!bar || state.invalid">Go-Go Time</label><select id="bar-gogo" v-model="fields.gogo" :aria-label="t('Go-Go 状态')" :disabled="!bar || !enabled.gogo || state.invalid"><option value="on">{{ t('开始') }}</option><option value="off">{{ t('结束') }}</option></select></div>
-        <div class="command-field command-wide" @change="apply('lyric', $event)"><label class="command-enable"><input id="use-lyric" v-model="enabled.lyric" type="checkbox" :disabled="!bar || state.invalid">LYRIC · {{ t('歌词') }}</label><input id="bar-lyric" v-model="fields.lyric" :aria-label="t('歌词')" :disabled="!bar || !enabled.lyric || state.invalid"></div>
-        <div class="command-field" @change="apply('senote', $event)"><label class="command-enable"><input id="use-senote" v-model="enabled.senote" type="checkbox" :disabled="!bar || state.invalid">SENOTECHANGE</label><input id="bar-senote" v-model.number="fields.senote" :aria-label="t('音符唱词编号')" type="number" min="1" max="12" step="1" :disabled="!bar || !enabled.senote || state.invalid" required></div>
+        <div class="command-field" @change="apply('bpm', $event)"><label for="bar-bpm">BPM</label><input id="bar-bpm" v-model.number="fields.bpm" :aria-label="t('落点 BPM')" type="number" min="0.001" step="any" :disabled="!bar || state.invalid"></div>
+        <div class="command-field" @change="apply('scroll', $event)"><label for="bar-scroll">{{ t('卷轴倍率') }}</label><input id="bar-scroll" v-model.number="fields.scroll" :aria-label="t('落点卷轴倍率')" type="number" step="any" :disabled="!bar || state.invalid"></div>
+        <div class="command-field" @change="apply('delay', $event)"><label for="bar-delay">{{ t('延迟 / s') }}</label><input id="bar-delay" v-model.number="fields.delay" :aria-label="t('落点延迟')" type="number" step="any" :disabled="!bar || state.invalid"></div>
+        <div class="command-field" @change="apply('gogo', $event)"><label for="bar-gogo">Go-Go Time</label><select id="bar-gogo" v-model="fields.gogo" :aria-label="t('Go-Go 状态')" :disabled="!bar || state.invalid"><option value="">{{ t('不启用') }}</option><option value="on">GOGO START</option><option value="off">GOGO END</option></select></div>
+        <div class="command-field command-wide" @change="apply('lyric', $event)"><label for="bar-lyric">LYRIC · {{ t('歌词') }}</label><input id="bar-lyric" v-model="fields.lyric" :aria-label="t('歌词')" :disabled="!bar || state.invalid"></div>
+        <div class="command-field" @change="apply('senote', $event)"><label for="bar-senote">SENOTECHANGE</label><input id="bar-senote" v-model.number="fields.senote" :aria-label="t('音符唱词编号')" type="number" min="1" max="12" step="1" :disabled="!bar || state.invalid"></div>
       </div>
       </fieldset>
+      <p class="command-help">{{ t('任意落点指令留空即移除，填写后生效。') }}</p>
       <fieldset id="measure-commands" class="command-group">
         <legend>{{ t('小节级指令') }}</legend>
         <p class="command-help">{{ t('固定写入当前小节起点，不随落点选择改变。') }}</p>
@@ -161,18 +139,16 @@ function branchKeydown(event) {
           </div>
           <div class="branch-route-buttons" role="group" :aria-label="t('分歧路线开关')"><button v-for="route in BRANCH_ROUTES" :id="`branch-route-${route}`" :key="route" type="button" :aria-pressed="activeBranch ? activeBranch.routes.includes(route) : false" :aria-label="t('启用或删除路线 {p0}', { p0: t(BRANCH_ROUTE_NAMES[route]) })" :disabled="!activeBranch || state.invalid" @click="toggleBranchRoute(route)">{{ t(BRANCH_ROUTE_NAMES[route]) }}</button></div>
           <p class="command-help">{{ t('默认普通；取消最后一路或选择不启用时，移除分歧指令并将当前路线转为共用小节。') }}</p>
-          <div class="branch-edit-actions"><button id="branch-end" type="button" :disabled="!canEndBranch || state.invalid" @click="studio.applyMeasureBranch({ type: 'end' })">BRANCHEND · {{ t('结束分歧') }}</button><button id="edit-branch-source" type="button" :disabled="!currentBranch || state.invalid" @click="openBranchEditor(currentBranch.index)"><Pencil />{{ t('编辑分歧结构') }}</button></div>
+          <div class="branch-edit-actions"><button id="branch-end" type="button" :disabled="!canEndBranch || state.invalid" @click="studio.applyMeasureBranch({ type: 'end' })">BRANCHEND · {{ t('结束分歧') }}</button></div>
           <p class="command-help">{{ t('分歧结束写在后续小节开头；该小节及当前路线的后续内容恢复为共用区，其他路线不截断。') }}</p>
         </div>
       </fieldset>
-      <p class="command-help">{{ t('LYRIC、SECTION、LEVELHOLD、SENOTECHANGE 仅编辑与标注，不模拟游戏效果。共用指令仍为只读。') }}</p>
     </form>
     <section class="inspector-section" aria-labelledby="measure-command-list-title" @focusin="state.playing && studio.pause()">
       <div class="inspector-heading"><h2 id="measure-command-list-title">{{ t('本小节指令') }}</h2></div>
       <div id="bar-commands" class="command-list">
         <div v-for="item in bar?.instructions || []" :key="item.start" class="command-row">
           <button type="button" class="command-locate" :title="t('定位指令 {p0}', { p0: state.text.slice(item.start, item.end) })" :disabled="state.invalid" @click="locate(item)"><small>{{ item.slot }}/{{ bar.notes.length }} · {{ formatTime(item.time) }}</small><span>{{ state.text.slice(item.start, item.end) }}</span></button>
-          <button v-if="['BRANCHSTART', 'BRANCHEND', ...BRANCH_ROUTES].includes(item.name)" type="button" class="icon" :title="t('编辑分歧结构')" :aria-label="t('编辑分歧结构')" :disabled="state.invalid" @click="editBranchAt(item)"><Pencil /></button>
           <button type="button" class="icon" :title="item.shared ? t('共用指令（只读）') : t('删除指令 {p0}', { p0: state.text.slice(item.start, item.end) })" :aria-label="item.shared ? t('共用指令（只读）') : t('删除指令 {p0}', { p0: state.text.slice(item.start, item.end) })" :disabled="state.invalid || item.shared" @click="studio.removeCommand(item)"><Trash2 /></button>
         </div>
         <span v-if="!bar?.instructions.length" class="command-empty">{{ t('无指令') }}</span>
@@ -184,15 +160,6 @@ function branchKeydown(event) {
       <div class="source-meta"><span id="slots">{{ bar?.notes.length || 0 }} {{ t('格') }}</span><span>0–9 / A / B</span></div>
       <div class="aside-actions"><button id="preview" :disabled="!bar || state.invalid" @click="studio.loopCurrent(true)"><Headphones />{{ t('试听本小节') }}</button><button id="clear" class="icon" :title="t('清空本小节')" :aria-label="t('清空本小节')" :disabled="!bar || state.invalid" @click="studio.clearBar"><Eraser /></button></div>
     </section>
-    <dialog ref="branchDialog" class="branch-source-dialog" aria-labelledby="branch-source-title" @keydown="branchKeydown">
-      <form @submit.prevent="applyBranch">
-        <h2 id="branch-source-title">{{ t('编辑分歧结构') }}</h2>
-        <p>{{ t('使用完整的 #BRANCHSTART、#N / #E / #M 与 #BRANCHEND。p / r / s 条件及两项阈值原样保存；路线时长可以不同，试听仍手动选路。') }}</p>
-        <textarea id="branch-source" v-model="branchDraft" :aria-label="t('分歧结构源码')" spellcheck="false" required></textarea>
-        <p v-if="branchError" class="branch-source-error" role="alert">{{ branchError }}</p>
-        <div class="branch-edit-actions"><button type="button" @click="branchDialog.close()">{{ t('取消') }}</button><button type="submit" class="primary">{{ t('应用分歧结构') }}</button></div>
-      </form>
-    </dialog>
   </aside>
 </template>
 
@@ -205,5 +172,4 @@ function branchKeydown(event) {
 .measure-branch-commands{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}.branch-route-buttons{display:flex;gap:8px}.branch-route-buttons button{flex:1;min-width:0}.branch-route-buttons button[aria-pressed=true]{background:var(--green);border-color:var(--green);color:#fff}.branch-route-buttons button[aria-pressed=true]:disabled{opacity:.7}
 @media(max-width:900px){.measure-editor{overflow:visible;border-left:0;border-top:1px solid var(--line)}}
 .command-wide{grid-column:1/-1}.command-help{font-size:12px;line-height:1.6;color:var(--muted);margin:8px 0}.branch-edit-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
-.branch-source-dialog{width:min(780px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;border:1px solid var(--line);border-radius:8px;padding:20px;color:var(--ink)}.branch-source-dialog::backdrop{background:#202a2870}.branch-source-dialog p{font-size:13px;line-height:1.6}.branch-source-dialog textarea{display:block;width:100%;height:min(45vh,380px);resize:vertical;font:13px/1.6 Consolas,monospace}.branch-source-error{color:var(--red)}
 </style>

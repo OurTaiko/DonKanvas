@@ -2,10 +2,93 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRenderer, nextTick } from 'vue';
 import { useStudio } from './useStudio.js';
-import { locale } from './i18n.js';
+import { locale, formatMessage } from './i18n.js';
 import { COURSE_NAMES, courseLevel } from './courses.js';
 
 const chart = 'TITLE:Vue session\nBPM:120\nOFFSET:0\nCOURSE:Oni\nLEVEL:1\n#START\n1000,\n2000,\n#END\n';
+
+test('chart pickers allow unknown Android MIME types while application validation rejects non-TJA files', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    const selected = file('phone.TJA'); selected.type = 'application/octet-stream';
+    window.showOpenFilePicker = async options => {
+      assert.equal(options.multiple, true); assert.equal(options.types, undefined);
+      return [{ getFile: async () => selected }];
+    };
+    await studio.openCharts();
+    assert.equal(studio.state.filename, 'phone.TJA');
+    const text = studio.state.text, notice = studio.state.notice;
+    await studio.openChart({ name: 'not-a-chart.txt', arrayBuffer() { assert.fail('Rejected files must not be read'); } });
+    assert.equal(studio.state.text, text); assert.equal(studio.state.documents.length, 1);
+    assert.equal(studio.state.notice, notice); assert.equal(studio.state.error, false);
+    assert.match(formatMessage(studio.state.fileErrors[0].error), /\.tja/);
+  } finally { cleanup(); }
+});
+
+test('file read and parse errors queue for dialogs without replacing the current document or inline notice', async () => {
+  const { studio, saved, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file());
+    studio.setBpm(150); studio.select(1);
+    const text = studio.state.text, chart = studio.state.chart, undo = studio.state.undo;
+    const notice = studio.state.notice, selected = studio.state.selected;
+    await studio.openChart(file('broken.tja', 'invalid'));
+    await studio.openChart({ name: 'unreadable.tja', async arrayBuffer() { throw new Error('Read denied'); } });
+    assert.deepEqual(studio.state.fileErrors.map(item => item.filename), ['broken.tja', 'unreadable.tja']);
+    assert.match(formatMessage(studio.state.fileErrors[1].error), /Read denied/);
+    assert.equal(studio.state.text, text); assert.equal(studio.state.chart, chart);
+    assert.equal(studio.state.undo, undo); assert.equal(studio.state.selected, selected);
+    assert.equal(studio.state.notice, notice); assert.equal(studio.state.error, false);
+    await studio.openChart(file('valid.tja'));
+    assert.equal(studio.state.filename, 'valid.tja'); assert.equal(studio.state.documents.length, 2);
+    assert.equal(studio.state.fileErrors.length, 2);
+    assert.ok(!JSON.stringify(workspace(saved)).includes('fileErrors'));
+  } finally { cleanup(); }
+});
+
+test('canceling file selection is not a modal error while picker failures are queued', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    window.showOpenFilePicker = async () => { const error = new Error('Canceled'); error.name = 'AbortError'; throw error; };
+    await studio.openCharts();
+    assert.equal(studio.state.fileErrors.length, 0); assert.equal(studio.state.error, false);
+    const notice = studio.state.notice;
+    window.showOpenFilePicker = async () => { throw new Error('Picker denied'); };
+    await studio.openCharts();
+    assert.equal(studio.state.fileErrors.length, 1);
+    assert.match(formatMessage(studio.state.fileErrors[0].error), /Picker denied/);
+    assert.equal(studio.state.notice, notice);
+  } finally { cleanup(); }
+});
+
+test('confirmed PWA reload persists pending source and history without a second unload warning', async () => {
+  const { studio, handlers, saved, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file()); studio.setBpm(150); studio.editSource('invalid source');
+    let reloaded = false;
+    window.location = { reload: () => { reloaded = true; } };
+    assert.equal(studio.reloadForUpdate(), true); assert.equal(reloaded, true);
+    const document = workspace(saved).documents[0];
+    assert.equal(document.source, 'invalid source'); assert.equal(document.invalid, true);
+    assert.equal(document.undo.length, 1); assert.match(document.text, /BPM:150/);
+    handlers.get('beforeunload')({ preventDefault() { assert.fail('Restart was already confirmed'); } });
+  } finally { cleanup(); }
+});
+
+test('PWA reload refuses in-progress saves and failed draft storage', async () => {
+  const { studio, handlers, mock, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file()); studio.setBpm(150);
+    window.location = { reload() { assert.fail('Unsafe reload must be blocked'); } };
+    studio.state.saving = true; assert.equal(studio.reloadForUpdate(), false);
+    studio.state.saving = false;
+    mock('localStorage', { setItem() { throw new Error('Storage full'); }, getItem() { return null; } });
+    assert.equal(studio.reloadForUpdate(), false); assert.equal(studio.state.error, true);
+    let warned = false;
+    handlers.get('beforeunload')({ preventDefault() { warned = true; } });
+    assert.equal(warned, true);
+  } finally { cleanup(); }
+});
 
 test('Q/E seeks adjacent measure starts using actual tempo and meter without changing selected notes or edits', async () => {
   const { studio, handlers, cleanup } = mountStudio();
@@ -26,7 +109,7 @@ test('Q/E seeks adjacent measure starts using actual tempo and meter without cha
     assert.equal(studio.state.playing, false); assert.equal(studio.state.selected, 0);
     assert.deepEqual(studio.state.selectedCell, selection); assert.deepEqual(studio.state.commandCell, command);
     assert.equal(studio.state.source, source); assert.equal(studio.state.text, text);
-    assert.equal(studio.state.undo.length, history); assert.equal(studio.controls.loop, false);
+    assert.equal(studio.state.undo.length, history); assert.equal(studio.range.value, null);
   } finally { cleanup(); }
 });
 
@@ -83,24 +166,159 @@ test('empty-song difficulty actions create exactly one blank single-player chart
   } finally { cleanup(); }
 });
 
-test('opening, restoring and switching files default to continuous playback while explicit loops remain available', async () => {
+test('new and restored files have no selected range; switching preserves each file selection', async () => {
   const saved = new Map(), mounted = mountStudio(saved);
   const { studio, mock, ticks } = mounted;
   const { context } = fakeAudio(mock);
   try {
-    assert.equal(studio.controls.loop, false);
+    assert.equal(studio.range.value, null);
     await studio.openChart(file()); const first = studio.state.activeId;
     await studio.play(); context.currentTime = 2.535; ticks.frame();
     near(studio.state.position, 2.5); assert.equal(studio.state.selected, 1);
     context.currentTime = 4.1; ticks.schedule(); assert.equal(studio.state.playing, false);
-    studio.setLoop(1, 2, true); assert.equal(studio.controls.loop, true);
-    await studio.openChart(file('second.tja')); assert.equal(studio.controls.loop, false);
-    studio.controls.loop = true; studio.switchChart(first); assert.equal(studio.controls.loop, false);
+    studio.setLoop(1, 2); assert.deepEqual(studio.range.value, [1, 2]);
+    await studio.openChart(file('second.tja')); assert.equal(studio.range.value, null);
+    studio.setLoop(2, 2); studio.switchChart(first);
     assert.deepEqual(studio.range.value, [1, 2]);
-    studio.newChart(); assert.equal(studio.controls.loop, false);
+    studio.newChart(); assert.equal(studio.range.value, null);
   } finally { mounted.cleanup(); }
   const restored = mountStudio(saved);
-  try { assert.equal(restored.studio.controls.loop, false); } finally { restored.cleanup(); }
+  try { assert.equal(restored.studio.range.value, null); } finally { restored.cleanup(); }
+});
+
+test('measure clipboard is shared between file tabs and paste is one undoable transaction with selection remapping', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file('copy.tja', chart));
+    studio.setLoop(1, 2); studio.select(1); studio.seek(.5);
+    assert.equal(studio.copyMeasures(), true);
+    assert.equal(studio.state.undo.length, 0); assert.equal(studio.state.selected, 1);
+    assert.equal(studio.state.position, .5); assert.deepEqual(studio.range.value, [1, 2]);
+    const clipboard = studio.state.copiedMeasures;
+    await studio.openChart(file('paste.tja', chart.replace('1000,\n2000,', '3000,\n4000,')));
+    studio.setLoop(2, 2); studio.select(0); studio.selectNote(1, 1); studio.select(0);
+    assert.equal(studio.state.copiedMeasures, clipboard);
+    const before = studio.state.text;
+    assert.equal(studio.requestPaste(), true); assert.equal(studio.state.pasteRequest, 1);
+    assert.equal(studio.pasteMeasures('insert'), true);
+    assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['1000', '2000', '3000', '4000']);
+    assert.deepEqual(studio.range.value, [4, 4]); assert.equal(studio.state.selectedCell, null);
+    assert.equal(studio.state.undo.length, 1); assert.equal(studio.state.selected, 0);
+    studio.history(); assert.equal(studio.state.text, before); assert.deepEqual(studio.range.value, [2, 2]);
+    studio.history(true); assert.equal(studio.state.chart.bars.length, 4);
+    studio.history(); studio.select(1);
+    assert.equal(studio.pasteMeasures('overwrite'), true);
+    assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['3000', '1000', '2000']);
+    assert.equal(studio.state.undo.length, 1);
+  } finally { cleanup(); }
+});
+
+test('unsafe branch overwrite and invalid source leave chart, selections and history untouched', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file('copy.tja', chart)); studio.setLoop(1, 2); studio.copyMeasures();
+    await studio.openChart(file('branch.tja', branchChart)); studio.select(0);
+    const before = studio.state.text;
+    assert.equal(studio.pasteMeasures('overwrite'), undefined);
+    assert.match(studio.state.notice, /分歧边界，无法粘贴/); assert.equal(studio.state.error, true);
+    assert.equal(studio.state.text, before); assert.equal(studio.state.undo.length, 0);
+    assert.deepEqual(studio.state.branchRoutes, ['N']); assert.equal(studio.state.selected, 0);
+    const clipboard = studio.state.copiedMeasures;
+    studio.editSource('invalid source');
+    assert.equal(studio.copyMeasures(), undefined); assert.equal(studio.state.copiedMeasures, clipboard);
+    assert.equal(studio.requestPaste(), undefined); assert.equal(studio.state.pasteRequest, 0);
+    assert.equal(studio.pasteMeasures('insert'), undefined); assert.equal(studio.state.text, before);
+  } finally { cleanup(); }
+});
+
+test('measure clipboard and selection shortcuts preserve native editing, modal keys, modifiers and repeats', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const press = (key, extra = {}) => handlers.get('keydown')({ key, ctrlKey: true, preventDefault() {}, ...extra });
+  try {
+    await studio.openChart(file());
+    studio.select(1); press('a'); assert.deepEqual(studio.range.value, [1, 2]);
+    press('A', { shiftKey: true }); assert.deepEqual(studio.range.value, [2, 2]);
+    press('c'); assert.equal(studio.state.copiedMeasures.length, 1);
+    assert.match(studio.state.copiedMeasures[0].source, /2000/);
+    press('v'); assert.equal(studio.state.pasteRequest, 1);
+    press('v', { repeat: true }); assert.equal(studio.state.pasteRequest, 1);
+    studio.state.editorBlocked = true;
+    for (const key of ['a', 'c', 'v', 'z', 'q', 'e', 'f', '1']) press(key, { ctrlKey: ['a', 'c', 'v', 'z'].includes(key), preventDefault() { assert.fail('Covered editor shortcuts must not execute'); } });
+    assert.equal(studio.state.pasteRequest, 1); assert.equal(studio.state.undo.length, 0);
+    studio.state.editorBlocked = false;
+    const native = extra => press('a', { preventDefault() { assert.fail('Native key must not be consumed'); }, ...extra });
+    for (const tagName of ['INPUT', 'TEXTAREA', 'SELECT']) { document.activeElement = { tagName }; native({}); }
+    document.activeElement = { isContentEditable: true }; native({});
+    document.activeElement = { closest: () => ({}) }; native({});
+    document.activeElement = null;
+    native({ altKey: true }); native({ isComposing: true }); native({ keyCode: 229 }); native({ defaultPrevented: true });
+    press('a', { ctrlKey: false, metaKey: true }); assert.deepEqual(studio.range.value, [1, 2]);
+    document.getSelection = () => ({ toString: () => 'Selected help text' });
+    press('c', { preventDefault() { assert.fail('Text copying must remain native'); } });
+  } finally { cleanup(); }
+});
+
+test('viewing another measure preserves note and range selections and the playback position; note edits target the selected note', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file('independent.tja', chart.replace('2000,', '2000,\n3000,\n#BPMCHANGE 240\n4000,')));
+    studio.selectNote(0, 1); studio.setLoop(2, 3); studio.seek(.75);
+    const note = studio.state.selectedCell;
+    studio.select(3);
+    assert.equal(studio.state.selected, 3); assert.equal(studio.state.selectedCell, note);
+    assert.deepEqual(studio.range.value, [2, 3]); near(studio.state.position, .75);
+    assert.equal(studio.state.followPlayback, false); assert.equal(studio.command.value.bar, 3);
+    assert.equal(studio.command.value.numerator, 0); assert.match(studio.state.source, /4000/);
+    assert.equal(studio.command.value.timing.bpm, 240); assert.equal(studio.currentTiming.value.bpm, 120);
+    studio.chooseNote('2');
+    assert.equal(studio.state.chart.bars[0].notes, '2000'); assert.equal(studio.bar.value.notes, '4000');
+    assert.equal(studio.state.selected, 3); assert.deepEqual(studio.range.value, [2, 3]);
+  } finally { cleanup(); }
+});
+
+test('viewing during playback does not restart music, and selected notes survive playback following and clearing the range', async () => {
+  const { studio, mock, ticks, cleanup } = mountStudio();
+  const { context, sources } = fakeAudio(mock);
+  try {
+    await studio.openChart(file('playing-selection.tja', chart.replace('2000,', '2000,\n3000,\n4000,')));
+    await studio.openAudio(audioFile()); studio.controls.hits = false;
+    studio.selectNote(0, 1); studio.setLoop(2, 3); await studio.play();
+    const music = sources.at(-1), count = sources.length, note = studio.state.selectedCell;
+    context.currentTime = .535; ticks.frame(); near(studio.state.position, 2.5);
+    assert.equal(studio.state.selectedCell, note);
+    studio.select(3);
+    assert.equal(studio.state.playing, true); assert.equal(music.stopped, undefined);
+    assert.equal(sources.length, count); near(studio.state.position, 2.5);
+    assert.equal(studio.state.selected, 3); assert.equal(studio.state.followPlayback, false);
+    context.currentTime = .735; ticks.frame(); near(studio.state.position, 2.7);
+    studio.clearLoop(); await Promise.resolve();
+    near(studio.state.position, 2.7); assert.equal(studio.state.selectedCell, note);
+    context.currentTime = 4.07; ticks.frame(); near(studio.state.position, 6);
+    assert.equal(studio.state.playing, true); assert.equal(studio.state.selectedCell, note);
+    context.currentTime = 6.17; ticks.schedule();
+    assert.equal(studio.state.playing, false); near(studio.state.position, 8);
+  } finally { cleanup(); }
+});
+
+test('note selectors count only actual notes, skip empty measures, retain the range and report invalid or exhausted selections', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file('note-selection.tja', chart.replace('1000,\n2000,', '1002,\n0000,\n0030,')));
+    studio.setLoop(2, 3);
+    assert.equal(studio.selectNote(0, 2), true);
+    assert.equal(studio.cell.value.note, '2'); assert.equal(studio.cell.value.numerator, 3);
+    assert.equal(studio.selectAdjacentNote(1), true);
+    assert.equal(studio.cell.value.bar, 2); assert.equal(studio.cell.value.note, '3');
+    const last = studio.state.selectedCell;
+    assert.equal(studio.selectAdjacentNote(1), undefined); assert.match(studio.state.notice, /没有下一个音符/);
+    assert.equal(studio.state.selectedCell, last); assert.deepEqual(studio.range.value, [2, 3]);
+    assert.equal(studio.selectAdjacentNote(-1), true); assert.equal(studio.cell.value.bar, 0);
+    assert.equal(studio.selectNote(1, 1), undefined); assert.match(studio.state.notice, /只有 0 个音符/);
+    assert.equal(studio.selectNote(99, 1), undefined); assert.match(studio.state.notice, /有效的小节编号/);
+    studio.clearNoteSelection(); assert.equal(studio.cell.value, null); assert.deepEqual(studio.range.value, [2, 3]);
+    assert.equal(studio.selectAdjacentNote(-1), undefined); assert.match(studio.state.notice, /请先选择/);
+    assert.equal(studio.state.undo.length, 0);
+  } finally { cleanup(); }
 });
 
 test('measure branch commands ignore note position and integrate route toggles, conditions, ending, history and invalid-source guards', async () => {
@@ -214,7 +432,7 @@ test('playback timing follows the playhead with follow disabled, while the edit 
   const { context } = fakeAudio(mock);
   try {
     await studio.openChart(file('live-timing.tja', chart.replace('1000,', '10\n#BPMCHANGE 240\n#SCROLL 2\n20,')));
-    studio.controls.loop = false; await nextTick();
+    await nextTick();
     studio.setCommandPosition(0, 1);
     await studio.play();
     studio.state.followPlayback = false; await nextTick();
@@ -1005,7 +1223,7 @@ test('branch preview schedules only selected notes and switching stops active vo
   const { context, sources } = fakeAudio(mock);
   try {
     await studio.openChart(file('branches.tja', branchChart));
-    studio.controls.loop = false; await nextTick();
+    await nextTick();
     studio.changeBranch(0, 'N');
     await studio.play(2);
     assert.equal(sources.length, 1);
@@ -1277,8 +1495,9 @@ test('new, rename, close and legacy draft migration work without server APIs', a
     studio.closeChart(first); assert.equal(studio.state.activeId, second);
     studio.closeChart(second); assert.equal(studio.state.chart, null); assert.equal(studio.state.activeId, null);
     assert.equal(studio.state.documents.length, 0); assert.deepEqual(workspace(saved).documents, []);
-    await studio.openAudio(file('music.wav')); assert.equal(studio.state.error, true);
+    await studio.openAudio(file('music.wav')); assert.equal(studio.state.fileErrors.length, 1);
     await studio.openChart(file('broken.tja', 'invalid')); assert.equal(studio.state.documents.length, 0);
+    assert.equal(studio.state.fileErrors.length, 2);
   } finally { cleanup(); }
 });
 
@@ -1662,7 +1881,7 @@ test('charts play synthesized notes without music, advance their own clock and s
   const { studio, mock, ticks, cleanup } = mountStudio();
   const { context, sources } = fakeAudio(mock);
   try {
-    await studio.openChart(file()); studio.controls.loop = false; await nextTick();
+    await studio.openChart(file()); await nextTick();
     assert.equal(studio.duration.value, 4);
     await studio.play();
     assert.equal(studio.state.playing, true); assert.equal(studio.state.buffer, null);
@@ -1681,7 +1900,7 @@ test('unaccompanied playback loops and seeks without duplicate hits and changes 
   const { studio, mock, ticks, cleanup } = mountStudio();
   const { context, sources } = fakeAudio(mock);
   try {
-    await studio.openChart(file()); studio.controls.loop = true; await nextTick(); await studio.play();
+    await studio.openChart(file()); studio.setLoop(1, 1); await nextTick(); await studio.play();
     context.currentTime = 1.98; ticks.schedule();
     assert.equal(sources.length, 2); near(sources[1].when, 2.035);
     context.currentTime = 1.99; ticks.schedule(); assert.equal(sources.length, 2);
@@ -1700,7 +1919,7 @@ test('silent playback still stops without animation frames; music playback retai
   const { studio, mock, ticks, cleanup } = mountStudio();
   const { context, sources } = fakeAudio(mock);
   try {
-    await studio.openChart(file()); studio.controls.loop = false; studio.controls.hits = false; await nextTick();
+    await studio.openChart(file()); studio.controls.hits = false; await nextTick();
     await studio.play();
     assert.equal(sources.length, 0); assert.match(studio.state.notice, /仅运行播放头/);
     context.currentTime = 4.1; ticks.schedule();
@@ -1782,10 +2001,12 @@ test('corrupt manually loaded audio is explicit and leaves chart playback usable
   const { context } = fakeAudio(mock);
   try {
     await studio.openChart(file('fixture.tja', waveChart('song.mp3')));
+    const notice = studio.state.notice;
     context.decodeAudioData = async () => { throw new Error('corrupt audio'); };
     await studio.openAudio(audioFile('song.mp3'));
-    assert.equal(studio.state.buffer, null); assert.match(studio.state.notice, /corrupt audio/);
-    assert.equal(studio.state.error, true);
+    assert.equal(studio.state.buffer, null); assert.equal(studio.state.notice, notice);
+    assert.match(formatMessage(studio.state.fileErrors[0].error), /corrupt audio/);
+    assert.equal(studio.state.error, false);
     await studio.play(); assert.equal(studio.state.playing, true);
   } finally { cleanup(); }
 });
@@ -1864,7 +2085,7 @@ test('clearing loops removes range and pending markers without seeking, selectin
     handlers.get('keydown')({ key: 'f', preventDefault() {} });
     const cell = studio.state.selectedCell, command = studio.state.commandCell, source = studio.state.source, start = studio.state.viewStart;
     studio.clearLoop();
-    assert.equal(studio.state.customLoop, null); assert.equal(studio.state.loopAnchor, null); assert.equal(studio.controls.loop, false);
+    assert.equal(studio.state.customLoop, null); assert.equal(studio.state.loopAnchor, null);
     near(studio.state.position, 2.5); assert.equal(studio.state.playing, false);
     assert.equal(studio.state.selectedCell, cell); assert.equal(studio.state.commandCell, command);
     assert.equal(studio.state.source, source); assert.equal(studio.state.viewStart, start); assert.equal(studio.state.followPlayback, false);
@@ -1872,7 +2093,7 @@ test('clearing loops removes range and pending markers without seeking, selectin
     assert.equal(studio.state.documents[0].customLoop, null);
   } finally { mounted.cleanup(); }
   const restored = mountStudio(saved);
-  try { assert.equal(restored.studio.state.customLoop, null); assert.equal(restored.studio.controls.loop, false); } finally { restored.cleanup(); }
+  try { assert.equal(restored.studio.range.value, null); } finally { restored.cleanup(); }
 });
 
 test('clearing an active loop continues from the exact playback position beyond the old range', async () => {
@@ -1883,7 +2104,7 @@ test('clearing an active loop continues from the exact playback position beyond 
     context.currentTime = .535; ticks.frame(); near(studio.state.position, .5);
     studio.clearLoop(); await nextTick(); await Promise.resolve();
     near(studio.state.position, .5); assert.equal(studio.state.playing, true);
-    assert.equal(studio.controls.loop, false); assert.equal(studio.state.customLoop, null);
+    assert.equal(studio.range.value, null);
     context.currentTime = 3.07; ticks.frame(); near(studio.state.position, 3);
     assert.equal(studio.state.selected, 1); assert.equal(studio.state.playing, true);
     assert.equal(studio.state.text, chart);
@@ -1904,7 +2125,7 @@ test('Shift+F clears confirmed and pending loops, ignores repeats and preserves 
     document.activeElement = null;
     for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'isComposing']) native({ [modifier]: true });
     press({ repeat: true }); assert.deepEqual(studio.state.customLoop, [1, 2]);
-    press(); assert.equal(studio.state.customLoop, null); assert.equal(studio.controls.loop, false);
+    press(); assert.equal(studio.range.value, null);
     handlers.get('keydown')({ key: 'f', preventDefault() {} }); assert.equal(studio.state.loopAnchor, 0);
     press(); assert.equal(studio.state.loopAnchor, null);
     studio.setLoop(1, 2, true); studio.editSource('unfinished');
@@ -1918,22 +2139,22 @@ test('F selects inclusive forward, reverse and single-measure loops without alte
   const source = chart.replace('2000,', '2000,\n3000,\n4000,');
   try {
     await studio.openChart(file('four.tja', source));
-    studio.setLoop(2, 3); studio.controls.loop = false;
+    studio.setLoop(2, 3);
     studio.selectCell({ bar: 1, numerator: 1, denominator: 4, divisions: 16 });
     const position = studio.state.position, cell = studio.state.selectedCell;
     press();
-    assert.equal(studio.state.loopAnchor, 1); assert.equal(studio.controls.loop, false);
+    assert.equal(studio.state.loopAnchor, 1);
     assert.equal(studio.state.position, position); assert.equal(studio.state.selectedCell, cell);
     assert.deepEqual(studio.range.value, [2, 3]); assert.equal(studio.state.playing, false);
     press({ repeat: true }); assert.equal(studio.state.loopAnchor, 1);
     studio.select(3); press({ key: 'F' });
     assert.deepEqual(studio.range.value, [2, 4]); assert.equal(studio.state.loopAnchor, null);
-    assert.equal(studio.controls.loop, true); assert.equal(studio.state.playing, false);
-    near(studio.state.position, 2);
+    assert.equal(studio.state.playing, false);
+    assert.equal(studio.state.position, position); assert.equal(studio.state.selectedCell, cell);
     studio.select(3); press(); studio.select(0); press();
     assert.deepEqual(studio.range.value, [1, 4]);
     studio.select(2); press(); press();
-    assert.deepEqual(studio.range.value, [3, 3]); near(studio.state.position, 4);
+    assert.deepEqual(studio.range.value, [3, 3]); assert.equal(studio.state.position, position);
     assert.equal(studio.state.text, source); assert.equal(studio.state.undo.length, 0);
     assert.ok(!JSON.stringify(workspace(saved)).includes('loopAnchor'));
   } finally { cleanup(); }
@@ -1958,6 +2179,127 @@ test('F preserves native inputs, dialogs, modifiers and composition, and needs a
     studio.editSource('unfinished'); native();
     assert.equal(studio.state.loopAnchor, null); assert.equal(studio.state.invalid, true);
     assert.equal(studio.state.text, chart); assert.equal(studio.state.undo.length, 0);
+  } finally { cleanup(); }
+});
+
+test('IME physical F keys select and clear ranges for Process, legacy 229 and composing events', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const press = overrides => handlers.get('keydown')({ key: 'Process', code: 'KeyF', preventDefault() {}, ...overrides });
+  try {
+    await studio.openChart(file());
+    for (const event of [{}, { key: 'f', keyCode: 229 }, { key: 'f', isComposing: true }, { key: 'Unidentified', isComposing: true }]) {
+      studio.select(0); press(event);
+      assert.equal(studio.state.loopAnchor, 0);
+      press({ ...event, repeat: true }); assert.equal(studio.state.loopAnchor, 0);
+      studio.select(1); press(event);
+      assert.deepEqual(studio.range.value, [1, 2]); assert.equal(studio.state.loopAnchor, null);
+      press({ ...event, shiftKey: true }); assert.equal(studio.range.value, null);
+    }
+    assert.equal(studio.state.text, chart); assert.equal(studio.state.undo.length, 0);
+    assert.equal(studio.state.playing, false);
+  } finally { cleanup(); }
+});
+
+test('IME physical keys edit notes, move the selection, change snap and seek without changing their shortcut meanings', async () => {
+  const { studio, handlers, mock, cleanup } = mountStudio();
+  fakeAudio(mock);
+  const press = code => handlers.get('keydown')({ key: 'Process', code, keyCode: 229, isComposing: true, preventDefault() {} });
+  try {
+    await studio.openChart(file());
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 4, divisions: 16 });
+    press('Digit2'); assert.equal(studio.cell.value.note, '2');
+    press('Minus'); assert.equal(studio.cell.value.note, 'A');
+    press('Equal'); assert.equal(studio.cell.value.note, 'B');
+    press('KeyD'); near(studio.cell.value.numerator / studio.cell.value.denominator, 1 / 16);
+    press('KeyA'); near(studio.cell.value.numerator / studio.cell.value.denominator, 0);
+    press('KeyW'); assert.equal(studio.controls.snap, 24);
+    press('KeyS'); assert.equal(studio.controls.snap, 16);
+    press('KeyE'); near(studio.state.position, 2);
+    press('KeyQ'); near(studio.state.position, 0);
+    press('Space'); await Promise.resolve(); assert.equal(studio.state.playing, true);
+    press('Space'); assert.equal(studio.state.playing, false);
+    assert.equal(studio.state.undo.length, 3);
+  } finally { cleanup(); }
+});
+
+test('IME physical shortcuts preserve native text entry, dialogs, blocked editing and events without usable physical keys', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const native = overrides => handlers.get('keydown')({ key: 'Process', code: 'KeyF', keyCode: 229, isComposing: true, preventDefault() { assert.fail('Native IME action must be preserved'); }, ...overrides });
+  try {
+    await studio.openChart(file());
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 4, divisions: 16 });
+    for (const activeElement of [
+      ...['INPUT', 'TEXTAREA', 'SELECT'].map(tagName => ({ tagName })),
+      { tagName: 'DIV', isContentEditable: true }, { tagName: 'BUTTON', closest: () => ({}) }
+    ]) {
+      document.activeElement = activeElement;
+      for (const code of ['KeyF', 'Digit2', 'Space']) native({ code });
+    }
+    document.activeElement = null;
+    studio.state.editorBlocked = true; native(); studio.state.editorBlocked = false;
+    for (const code of [undefined, '', 'Unidentified', 'Enter']) native({ code });
+    for (const modifier of ['ctrlKey', 'metaKey', 'altKey']) native({ [modifier]: true });
+    assert.equal(studio.state.loopAnchor, null); assert.equal(studio.state.text, chart);
+    assert.equal(studio.state.undo.length, 0);
+  } finally { cleanup(); }
+});
+
+test('keyup-only IME letters select ranges, navigate, change snap and seek', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const release = (key, extra = {}) => handlers.get('keyup')({ key, code: `Key${key.toUpperCase()}`, preventDefault() {}, ...extra });
+  try {
+    await studio.openChart(file());
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 4, divisions: 16 });
+    release('w'); assert.equal(studio.controls.snap, 24);
+    release('s'); assert.equal(studio.controls.snap, 16);
+    release('d'); near(studio.cell.value.numerator / studio.cell.value.denominator, 1 / 16);
+    release('a'); near(studio.cell.value.numerator / studio.cell.value.denominator, 0);
+    release('e'); near(studio.state.position, 2);
+    release('q'); near(studio.state.position, 0);
+    release('f'); assert.equal(studio.state.loopAnchor, 0); assert.equal(studio.range.value, null);
+    studio.select(1); release('f'); assert.deepEqual(studio.range.value, [1, 2]);
+    release('f', { shiftKey: true }); assert.equal(studio.range.value, null);
+    assert.equal(studio.state.text, chart); assert.equal(studio.state.undo.length, 0);
+  } finally { cleanup(); }
+});
+
+test('paired keydown and keyup do not execute twice and lost releases reset on blur', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const event = (key, extra = {}) => ({ key, code: `Key${key.toUpperCase()}`, preventDefault() {}, ...extra });
+  try {
+    await studio.openChart(file());
+    for (const extra of [{}, { key: 'Process', isComposing: true, keyCode: 229 }]) {
+      handlers.get('keydown')(event('w', extra)); assert.equal(studio.controls.snap, 24);
+      handlers.get('keyup')(event('w')); assert.equal(studio.controls.snap, 24);
+      handlers.get('keydown')(event('s', extra));
+      handlers.get('keyup')(event('s')); assert.equal(studio.controls.snap, 16);
+      handlers.get('keydown')(event('f', extra));
+      handlers.get('keydown')(event('f', { ...extra, repeat: true }));
+      handlers.get('keyup')(event('f'));
+      assert.equal(studio.state.loopAnchor, 0); assert.equal(studio.range.value, null);
+      studio.clearLoop();
+    }
+    handlers.get('keydown')(event('f')); studio.clearLoop();
+    handlers.get('blur')();
+    handlers.get('keyup')(event('f')); assert.equal(studio.state.loopAnchor, 0);
+  } finally { cleanup(); }
+});
+
+test('keyup fallback preserves native typing and does not trigger after focus leaves an input', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const native = extra => handlers.get('keyup')({ key: 'f', code: 'KeyF', preventDefault() { assert.fail('Native keyup must be preserved'); }, ...extra });
+  try {
+    await studio.openChart(file());
+    for (const activeElement of [
+      ...['INPUT', 'TEXTAREA', 'SELECT'].map(tagName => ({ tagName })),
+      { tagName: 'DIV', isContentEditable: true }, { tagName: 'BUTTON', closest: () => ({}) }
+    ]) { document.activeElement = activeElement; native(); }
+    document.activeElement = { tagName: 'INPUT' };
+    handlers.get('keydown')({ key: 'f', code: 'KeyF', preventDefault() { assert.fail('Input keydown must be preserved'); } });
+    document.activeElement = null; native();
+    for (const flag of ['ctrlKey', 'metaKey', 'altKey', 'defaultPrevented', 'repeat']) native({ [flag]: true });
+    studio.state.editorBlocked = true; native();
+    assert.equal(studio.state.loopAnchor, null); assert.equal(studio.state.text, chart);
   } finally { cleanup(); }
 });
 
@@ -1990,13 +2332,13 @@ test('F leaves active playback untouched at the first endpoint and loops through
   const { context } = fakeAudio(mock);
   const press = () => handlers.get('keydown')({ key: 'f', preventDefault() {} });
   try {
-    await studio.openChart(file()); studio.controls.loop = false; await nextTick();
+    await studio.openChart(file()); await nextTick();
     await studio.play();
     context.currentTime = .535; ticks.frame(); near(studio.state.position, .5);
     press(); assert.equal(studio.state.playing, true); near(studio.state.position, .5);
-    assert.equal(studio.state.customLoop, null); assert.equal(studio.controls.loop, false);
+    assert.equal(studio.range.value, null);
     studio.state.selected = 1; press(); await nextTick(); await Promise.resolve();
-    assert.equal(studio.state.playing, true); assert.equal(studio.controls.loop, true);
+    assert.equal(studio.state.playing, true);
     assert.deepEqual(studio.range.value, [1, 2]); near(studio.state.position, 0);
     context.currentTime = 3.07; ticks.frame(); near(studio.state.position, 2.5);
     context.currentTime = 5.07; ticks.frame(); near(studio.state.position, .5);
@@ -2008,21 +2350,21 @@ test('drag-selected loop ranges enable repetition without starting paused playba
   const { studio, mock, ticks, cleanup } = mountStudio();
   const { context } = fakeAudio(mock);
   try {
-    await studio.openChart(file()); studio.controls.loop = false; await nextTick();
+    await studio.openChart(file()); await nextTick();
     assert.equal(studio.setLoop(2, 2, true), true);
-    assert.equal(studio.controls.loop, true); assert.equal(studio.state.playing, false);
-    assert.deepEqual(studio.range.value, [2, 2]); near(studio.state.position, 2);
+    assert.equal(studio.state.playing, false);
+    assert.deepEqual(studio.range.value, [2, 2]); near(studio.state.position, 0);
     assert.equal(studio.state.text, chart); assert.equal(studio.state.undo.length, 0);
-    studio.controls.loop = false; await nextTick(); await studio.play();
+    await studio.play();
     context.currentTime = .535; ticks.frame(); near(studio.state.position, 2.5);
     assert.equal(studio.setLoop(1, 1, true), true);
     await nextTick(); await Promise.resolve();
-    assert.equal(studio.controls.loop, true); assert.equal(studio.state.playing, true);
+    assert.equal(studio.state.playing, true);
     assert.deepEqual(studio.range.value, [1, 1]); near(studio.state.position, 0);
     context.currentTime = 3.07; ticks.frame(); near(studio.state.position, .5);
-    studio.pause(); studio.controls.loop = false; await nextTick();
+    studio.pause(); await nextTick();
     assert.equal(studio.setLoop(2, 1, true), undefined);
-    assert.equal(studio.controls.loop, false); assert.deepEqual(studio.range.value, [1, 1]);
+    assert.deepEqual(studio.range.value, [1, 1]);
     assert.equal(studio.state.error, true);
   } finally { cleanup(); }
 });
@@ -2031,13 +2373,13 @@ test('loop range applies while playing, clamps both endpoints, restarts at the r
   const { studio, mock, ticks, cleanup } = mountStudio();
   const { context } = fakeAudio(mock);
   try {
-    await studio.openChart(file()); studio.controls.loop = false; await nextTick();
+    await studio.openChart(file()); await nextTick();
     await studio.play();
     context.currentTime = 1.035; ticks.frame(); near(studio.state.position, 1);
     assert.equal(studio.setLoop(2, 200), true);
     await Promise.resolve();
     assert.deepEqual(studio.range.value, [2, 2]); near(studio.state.position, 2);
-    assert.equal(studio.state.selected, 1);
+    assert.equal(studio.state.selected, 0);
     assert.equal(studio.state.playing, true);
     context.currentTime = 1.57; ticks.frame(); near(studio.state.position, 2.5);
     assert.equal(studio.setLoop(-100, 200), true); await Promise.resolve();
@@ -2047,11 +2389,12 @@ test('loop range applies while playing, clamps both endpoints, restarts at the r
     assert.match(studio.state.notice, /结束小节不能早于/);
     assert.equal(studio.setLoop(1.5, 2), undefined);
     assert.deepEqual(studio.range.value, [1, 2]);
-    studio.controls.loop = true; await nextTick(); await Promise.resolve();
+    await nextTick(); await Promise.resolve();
     studio.setLoop(2, 2); await Promise.resolve();
     context.currentTime = 4.105; ticks.frame(); near(studio.state.position, 2.5);
     assert.equal(studio.state.playing, true);
-    studio.pause(); studio.setLoop(99, 99); assert.deepEqual(studio.range.value, [2, 2]); near(studio.state.position, 2);
+    studio.pause(); const position = studio.state.position;
+    studio.setLoop(99, 99); assert.deepEqual(studio.range.value, [2, 2]); near(studio.state.position, position);
   } finally { cleanup(); }
 });
 
@@ -2152,9 +2495,10 @@ test('note shortcuts do not edit without a cell, inside inputs or dialogs, or wi
       for (const key of ['1', '0', '-', '=', 'Delete', 'Backspace']) press({ key });
     }
     document.activeElement = null;
-    for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'isComposing']) {
+    for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey']) {
       for (const key of ['1', '0', '-', '=', 'Delete', 'Backspace']) press({ key, [modifier]: true });
     }
+    press({ isComposing: true, code: undefined });
     assert.equal(studio.state.text, original); assert.equal(studio.state.undo.length, 0);
     studio.editSource('unfinished');
     for (const key of ['1', '0', '-', '=', 'Delete', 'Backspace']) press({ key });
@@ -2254,7 +2598,8 @@ test('space preserves typing, disclosure, dialog, modified and composing keyboar
       assert.equal(studio.state.playing, false);
     }
     document.activeElement = { tagName: 'DIV' };
-    for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'isComposing']) press({ [modifier]: true });
+    for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey']) press({ [modifier]: true });
+    press({ isComposing: true, code: undefined });
     assert.equal(studio.state.playing, false);
   } finally { cleanup(); }
 });
@@ -2285,7 +2630,7 @@ test('playback pages advance after the same beat count at different BPM without 
   const { context } = fakeAudio(mock);
   try {
     await studio.openChart(file('tempo-pages.tja', chart.replace('BPM:120', 'BPM:100').replace('1000,\n2000,', '1111,\n1111,\n#BPMCHANGE 200\n1111,\n1111,\n1111,\n1111,')));
-    studio.controls.loop = false; await nextTick(); await studio.play();
+    await nextTick(); await studio.play();
     context.currentTime = 4.734; ticks.frame(); near(studio.visible.value.startBeat, 0);
     context.currentTime = 4.835; ticks.frame(); near(studio.visible.value.startBeat, 8); near(studio.state.position, 4.8);
     context.currentTime = 7.235; ticks.frame(); near(studio.visible.value.startBeat, 16); near(studio.state.position, 7.2);
@@ -2340,7 +2685,7 @@ test('playback holds each page until its boundary and manual panning suspends fo
   const { studio, mock, ticks, cleanup } = mountStudio();
   const { context } = fakeAudio(mock);
   try {
-    await studio.openChart(file('long.tja', longChart)); studio.controls.loop = false; await nextTick();
+    await studio.openChart(file('long.tja', longChart)); await nextTick();
     await studio.play();
     context.currentTime = 1.535; ticks.frame(); near(studio.visible.value.start, 0);
     context.currentTime = 4.034; ticks.frame(); near(studio.visible.value.start, 0);
@@ -2365,13 +2710,13 @@ test('loop wrap and explicit navigation reposition the viewport without changing
   const { context } = fakeAudio(mock);
   try {
     await studio.openChart(file('long.tja', longChart)); studio.setLoop(2, 5, true); await studio.play();
-    context.currentTime = 2.535; ticks.frame(); near(studio.visible.value.start, 2);
-    context.currentTime = 4.035; ticks.frame(); near(studio.visible.value.start, 6);
-    context.currentTime = 8.535; ticks.frame(); near(studio.visible.value.start, 2);
+    context.currentTime = 2.535; ticks.frame(); near(studio.visible.value.start, 4);
+    context.currentTime = 4.035; ticks.frame(); near(studio.visible.value.start, 4);
+    context.currentTime = 8.535; ticks.frame(); near(studio.visible.value.start, 0);
     assert.deepEqual(studio.range.value, [2, 5]); assert.equal(studio.state.playing, true);
     studio.pause(); studio.panTimeline(10.2);
-    studio.select(1); near(studio.visible.value.start, 2); assert.equal(studio.state.followPlayback, true);
-    studio.panTimeline(8.5); studio.setLoop(3, 4); near(studio.visible.value.start, 4);
+    studio.select(1); near(studio.visible.value.start, 2); assert.equal(studio.state.followPlayback, false);
+    studio.panTimeline(8.5); studio.setLoop(3, 4); near(studio.visible.value.start, 8.5);
   } finally { cleanup(); }
 });
 
@@ -2529,7 +2874,7 @@ test('navigation and snap shortcuts preserve native inputs, modifiers, dialogs a
     document.activeElement = null;
     for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'isComposing']) {
       for (const key of ['ArrowLeft', 'ArrowRight', 'a', 'd', 'w', 's']) {
-        if (key === 's' && ['ctrlKey', 'metaKey'].includes(modifier)) continue;
+        if (['s', 'a'].includes(key) && ['ctrlKey', 'metaKey'].includes(modifier)) continue;
         native({ key, [modifier]: true });
       }
     }

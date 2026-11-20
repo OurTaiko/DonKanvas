@@ -303,6 +303,7 @@ test('replacing settings preserves comments, CRLF and other courses and sums del
   assert.equal(result.bars[0].bpm, 90);
   assert.equal(result.bars[0].start, .825);
   assert.equal(result.bars[0].gogo, false);
+  assert.match(edited, /#DELAY 0/);
   assert.ok(edited.includes('// tempo\r\n'));
   assert.ok(edited.includes('// pause\r\n'));
   assert.ok(edited.endsWith('COURSE:Easy\r\n#START\r\n2000,\r\n#END\r\n'));

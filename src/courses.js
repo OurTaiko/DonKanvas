@@ -1,7 +1,9 @@
-import { message, LocalizedError } from './i18n.js';
+import { t, message, LocalizedError } from './i18n.js';
 
 export const COURSE_NAMES = ['Easy', 'Normal', 'Hard', 'Oni', 'Edit'];
 export const COURSE_LABELS = { Easy: '简单', Normal: '普通', Hard: '困难', Oni: '魔王', Edit: '里魔王' };
+export const courseLabel = course => COURSE_LABELS[course] ? t(COURSE_LABELS[course]) : course;
+export const variantLabel = variant => variant.player === 'single' ? t('单人') : variant.player === 'shared' ? t('多人 - 共用') : t('多人 - {p0}', { p0: variant.player });
 const courseName = value => (/^[0-4]$/.test(value) ? COURSE_NAMES[Number(value)] : COURSE_NAMES.find(name => name.toLowerCase() === value.toLowerCase())) ?? value;
 const copiedFields = /^(?:LEVEL|BALLOON(?:NOR|EXP|MAS)?|SCOREMODE|SCOREINIT|SCOREDIFF|TOTAL|GAUGEINCR|HIDDENBRANCH|EXAM[123])$/;
 
