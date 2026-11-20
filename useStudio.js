@@ -13,8 +13,8 @@ import { songMetadata, setSongMetadata } from './metadata.js';
 
 const WORKSPACE_KEY = 'tja-wave-workspace';
 const chartFileTypes = [{ description: 'TJA 谱面', accept: { 'text/plain': ['.tja'] } }];
-const documentFields = ['text', 'chart', 'selected', 'course', 'buffer', 'peaks', 'position', 'undo', 'redo', 'filename', 'savedText', 'fileHandle', 'sourceHandle', 'chartPath', 'saving', 'dirty', 'invalid', 'selectedCell', 'commandCell', 'source', 'sourceState', 'encoding', 'audioName', 'customLoop'];
-const emptyDocument = () => ({ text: '', chart: null, selected: 0, course: 0, buffer: null, peaks: [], position: 0, undo: [], redo: [], filename: 'chart.tja', savedText: null, fileHandle: null, sourceHandle: null, chartPath: '', saving: false, dirty: false, invalid: false, selectedCell: null, commandCell: null, source: '', sourceState: '已同步', encoding: '', audioName: '无伴奏 · 可直接播放谱面', customLoop: null });
+const documentFields = ['text', 'chart', 'selected', 'course', 'buffer', 'peaks', 'position', 'viewStart', 'followPlayback', 'undo', 'redo', 'filename', 'savedText', 'fileHandle', 'sourceHandle', 'chartPath', 'saving', 'dirty', 'invalid', 'selectedCell', 'commandCell', 'source', 'sourceState', 'encoding', 'audioName', 'customLoop'];
+const emptyDocument = () => ({ text: '', chart: null, selected: 0, course: 0, buffer: null, peaks: [], position: 0, viewStart: 0, followPlayback: true, undo: [], redo: [], filename: 'chart.tja', savedText: null, fileHandle: null, sourceHandle: null, chartPath: '', saving: false, dirty: false, invalid: false, selectedCell: null, commandCell: null, source: '', sourceState: '已同步', encoding: '', audioName: '无伴奏 · 可直接播放谱面', customLoop: null });
 function chartFilename(name) {
   name = name.trim();
   if (!name || /[\\/:*?"<>|\r\n]/.test(name)) throw new Error('请输入有效的谱面文件名。');
@@ -37,10 +37,15 @@ export function useStudio() {
   const range = computed(() => state.customLoop || [state.selected + 1, state.selected + 1]);
   const metadata = computed(() => songMetadata(state.text));
   const duration = computed(() => state.buffer?.duration ?? state.chart?.bars.reduce((end, item) => Math.max(end, measureEnd(item)), 0) ?? 0);
+  const timelineBounds = computed(() => state.chart?.bars.reduce((bounds, item) => ({ start: Math.min(bounds.start, measureStart(item)), end: Math.max(bounds.end, measureEnd(item)) }), { start: 0, end: duration.value }) || { start: 0, end: 0 });
+  const viewSpan = computed(() => state.chart ? 240 / state.chart.baseBpm * controls.view : 1);
   const visible = computed(() => {
     if (!state.chart) return null;
-    const bars = state.chart.bars.slice(state.selected, state.selected + controls.view);
-    return { bars, start: Math.min(...bars.map(measureStart)), end: Math.max(...bars.map(measureEnd)) };
+    const bounds = timelineBounds.value;
+    const start = Math.max(bounds.start, Math.min(state.viewStart, Math.max(bounds.start, bounds.end - viewSpan.value)));
+    const end = start + viewSpan.value;
+    const bars = state.chart.bars.filter(item => measureEnd(item) >= start && measureStart(item) <= end);
+    return { bars, start, end };
   });
   const stats = computed(() => {
     const notes = [...(bar.value?.notes || '')];
@@ -111,6 +116,7 @@ export function useStudio() {
     if (!looping && position >= loopEnd) position = 0;
     position = Math.max(0, Math.min(position, Math.max(0, duration.value - .001)));
     origin = position; anchor = context.currentTime + .035; scheduledUntil = anchor; state.position = position; state.playing = true;
+    state.followPlayback = true; followTime(position);
     if (state.buffer) {
       music = context.createBufferSource(); music.buffer = state.buffer; music.playbackRate.value = playbackRate; music.connect(gain);
       music.loop = looping; music.loopStart = loopStart; music.loopEnd = loopEnd;
@@ -182,6 +188,17 @@ export function useStudio() {
     if (waveChanged) void autoAudio(); else if (playing) void play(position);
   }
   function requireValid() { if (state.invalid) throw new Error('请先修正当前小节源码。'); }
+  function panTimeline(start, manual = true) {
+    if (!Number.isFinite(start)) { notice('时间轴位置须为有限数值。', true); return; }
+    if (!state.chart) return;
+    const bounds = timelineBounds.value;
+    state.viewStart = Math.max(bounds.start, Math.min(start, Math.max(bounds.start, bounds.end - viewSpan.value)));
+    if (manual) state.followPlayback = false;
+  }
+  function followTime(position) {
+    const { start, end } = visible.value;
+    if (position < start || position >= end) panTimeline(start + Math.floor((position - start) / viewSpan.value) * viewSpan.value, false);
+  }
   function select(index, seek = true) {
     if (!state.chart) return;
     guard(() => {
@@ -189,6 +206,7 @@ export function useStudio() {
       const playing = state.playing; pause(); state.selectedCell = null; state.commandCell = null;
       state.selected = Math.max(0, Math.min(state.chart.bars.length - 1, index));
       if (seek) state.position = Math.max(0, measureStart(bar.value));
+      panTimeline(measureStart(bar.value), false); state.followPlayback = true;
       syncSource(); persist(); if (playing) void play();
     });
   }
@@ -245,6 +263,7 @@ export function useStudio() {
       last = Math.max(1, Math.min(state.chart.bars.length, last));
       const resolved = resolveLoop(state.chart.bars, first, last, Infinity);
       const playing = state.playing; pause(); state.customLoop = [first, last]; state.position = resolved.start;
+      panTimeline(resolved.start, false); state.followPlayback = true;
       if (!state.invalid) { state.selected = first - 1; state.selectedCell = null; state.commandCell = null; syncSource(); }
       if (persist()) notice(`循环范围已设为第 ${first}–${last} 小节。`);
       if (playing) void play(resolved.start);
@@ -254,12 +273,14 @@ export function useStudio() {
   function loopCurrent(preview = false) {
     if (!bar.value) return;
     const playing = state.playing; pause(); state.customLoop = null; state.position = Math.max(0, measureStart(bar.value));
+    panTimeline(measureStart(bar.value), false); state.followPlayback = true;
     if (preview) controls.loop = true;
     if (preview || playing) void play();
   }
   function stop() {
     pause();
     if (bar.value) state.position = Math.max(0, controls.loop ? Math.min(...state.chart.bars.slice(range.value[0] - 1, range.value[1]).map(measureStart)) : measureStart(bar.value));
+    if (state.chart) { panTimeline(state.position, false); state.followPlayback = true; }
   }
   function previewRange() {
     if (!state.chart) return;
@@ -275,6 +296,7 @@ export function useStudio() {
       requireValid(); const chart = parseChart(state.text, parser, value); pause();
       state.course = value; state.chart = chart; state.selected = 0; state.selectedCell = null; state.commandCell = null; state.customLoop = null;
       state.position = Math.max(0, measureStart(chart.bars[0])); syncSource(); persist();
+      panTimeline(measureStart(chart.bars[0]), false); state.followPlayback = true;
     });
   }
   function leaveDocument() {
@@ -327,7 +349,7 @@ export function useStudio() {
   function loadChart(bytes, name, fileHandle = null, chartPath = '') {
     const decoded = decodeChart(bytes), chart = parseChart(decoded.text, parser, 0);
     leaveDocument();
-    const document = shallowReactive({ ...emptyDocument(), id: nextDocumentId++, text: decoded.text, savedText: decoded.text, fileHandle, sourceHandle: fileHandle, chartPath, chart, filename: name, encoding: decoded.encoding, position: Math.max(0, measureStart(chart.bars[0])) });
+    const document = shallowReactive({ ...emptyDocument(), id: nextDocumentId++, text: decoded.text, savedText: decoded.text, fileHandle, sourceHandle: fileHandle, chartPath, chart, filename: name, encoding: decoded.encoding, position: Math.max(0, measureStart(chart.bars[0])), viewStart: measureStart(chart.bars[0]) });
     state.documents = [...state.documents, document]; activate(document);
     syncSource(); if (persist()) notice('谱面已载入，可直接播放音符音或载入伴奏。');
   }
@@ -443,7 +465,7 @@ export function useStudio() {
         if (!Number.isSafeInteger(id) || id < 1 || ids.has(id)) throw new Error('本地谱面编号无效。');
         ids.add(id);
         const selected = Math.max(0, Math.min(item.selected, chart.bars.length - 1));
-        return shallowReactive({ ...emptyDocument(), id, text: item.text, savedText, filename: item.filename, course: item.course, chart, selected, undo, redo, dirty: item.text !== savedText, invalid: Boolean(item.invalid), encoding: item.encoding || '', source: item.invalid ? item.source : barSource(item.text, chart.bars[selected]), sourceState: item.invalid ? '格式错误' : '已同步', position: Math.max(0, measureStart(chart.bars[selected])) });
+        return shallowReactive({ ...emptyDocument(), id, text: item.text, savedText, filename: item.filename, course: item.course, chart, selected, undo, redo, dirty: item.text !== savedText, invalid: Boolean(item.invalid), encoding: item.encoding || '', source: item.invalid ? item.source : barSource(item.text, chart.bars[selected]), sourceState: item.invalid ? '格式错误' : '已同步', position: Math.max(0, measureStart(chart.bars[selected])), viewStart: measureStart(chart.bars[selected]) });
       });
       if (state.documents.length && !confirm('恢复草稿会替换所有已打开谱面，是否继续？')) return;
       pause(); clearTimeout(sourceTimer); ++audioRequest;
@@ -532,16 +554,15 @@ export function useStudio() {
     if (musicDuck && value === 0) { musicDuck.gain.cancelScheduledValues(context.currentTime); musicDuck.gain.setValueAtTime(1, context.currentTime); }
   });
   watch(() => controls.hits, () => { silence(); if (context) scheduledUntil = context.currentTime; });
+  watch(() => state.followPlayback, follow => { if (follow && state.chart) followTime(state.position); });
   function animate() {
     if (state.playing) {
       const position = currentTime(); state.position = position;
-      if ((!controls.loop || state.customLoop) && !state.invalid && document.activeElement?.id !== 'source') {
-        const { start, end } = visible.value;
-        if (position >= end || position < start) {
-          const containing = state.chart.bars.findLastIndex(item => position >= measureStart(item) && position < measureEnd(item));
-          const next = containing >= 0 ? containing : state.chart.bars.findLastIndex(item => measureStart(item) <= position);
-          if (next >= 0 && next !== state.selected) { state.selected = next; state.selectedCell = null; state.commandCell = null; syncSource(); }
-        }
+      if (state.followPlayback) followTime(position);
+      if (state.followPlayback && (!controls.loop || state.customLoop) && !state.invalid && document.activeElement?.id !== 'source') {
+        const containing = state.chart.bars.findLastIndex(item => position >= measureStart(item) && position < measureEnd(item));
+        const next = containing >= 0 ? containing : state.chart.bars.findLastIndex(item => measureStart(item) <= position);
+        if (next >= 0 && next !== state.selected) { state.selected = next; state.selectedCell = null; state.commandCell = null; syncSource(); }
       }
     }
     frame = requestAnimationFrame(animate);
@@ -551,9 +572,10 @@ export function useStudio() {
       event.preventDefault(); if (!event.repeat) void saveChart(event.shiftKey); return;
     }
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
-    if (event.code === 'Space') {
-      if (['BUTTON', 'SUMMARY'].includes(document.activeElement?.tagName)) return;
-      event.preventDefault(); if (state.playing) pause(); else void play();
+    if (event.code === 'Space' || event.key === ' ') {
+      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing || document.activeElement?.tagName === 'SUMMARY' || document.activeElement?.closest?.('dialog, [role="dialog"]')) return;
+      event.preventDefault();
+      if (!event.repeat) { if (state.playing) pause(); else void play(); }
     }
     else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); history(event.shiftKey); }
     else if (/^[0-9]$/.test(event.key)) chooseNote(event.key);
@@ -573,5 +595,5 @@ export function useStudio() {
     disposed = true; clearTimeout(sourceTimer); clearInterval(scheduler); cancelAnimationFrame(frame);
     pause(); void context?.close(); document.removeEventListener('keydown', keydown); window.removeEventListener('beforeunload', beforeUnload);
   });
-  return { state, controls, bar, spans, visible, stats, cell, command, range, duration, metadata, notice, pause, play, stop, previewRange, seek, select, selectCell, setCommandPosition, applySettings, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, loopCurrent, setSnap, changeCourse, openChart, openCharts, openAudio, autoAudio, chooseMediaDirectory, setMediaFiles, newChart, switchChart, closeChart, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
+  return { state, controls, bar, spans, visible, viewSpan, timelineBounds, stats, cell, command, range, duration, metadata, notice, pause, play, stop, previewRange, seek, panTimeline, select, selectCell, setCommandPosition, applySettings, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, loopCurrent, setSnap, changeCourse, openChart, openCharts, openAudio, autoAudio, chooseMediaDirectory, setMediaFiles, newChart, switchChart, closeChart, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
 }

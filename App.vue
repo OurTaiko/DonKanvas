@@ -155,7 +155,7 @@ async function openFile(event, audio = false) {
     <div id="notice" role="status" aria-live="polite" :class="{ error: state.error }">{{ state.notice }}</div>
     <section class="transport"><div class="transport-left">
       <button id="previous" class="icon" title="上一小节" aria-label="上一小节" :disabled="!state.chart" @click="studio.select(state.selected - 1)"><SkipBack /></button>
-      <button id="play" class="play icon" title="播放 / 暂停（空格）" :aria-label="state.playing ? '暂停' : '播放'" :disabled="!state.chart" @click="state.playing ? studio.pause() : studio.play()"><Pause v-if="state.playing" /><Play v-else /></button>
+      <button id="play" class="play icon" title="播放 / 暂停（空格）" aria-keyshortcuts="Space" :aria-label="state.playing ? '暂停' : '播放'" :disabled="!state.chart" @click="state.playing ? studio.pause() : studio.play()"><Pause v-if="state.playing" /><Play v-else /></button>
       <button id="stop" class="icon" title="停止" aria-label="停止" :disabled="!state.chart" @click="studio.stop"><Square /></button>
       <button id="next" class="icon" title="下一小节" aria-label="下一小节" :disabled="!state.chart" @click="studio.select(state.selected + 1)"><SkipForward /></button>
       <div class="time"><b id="time">{{ formatTime(state.position) }}</b><span id="duration">/ {{ formatTime(duration) }}</span></div>

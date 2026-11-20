@@ -66,11 +66,15 @@ test('Vue session preserves editing, command positions, history, drafts and life
     studio.setCommandPosition(1, 2); studio.applySettings({ delay: -3 });
     assert.ok(studio.state.source.includes('#DELAY -3'));
     assert.equal(studio.bar.value.end, 0);
+    assert.equal(studio.timelineBounds.value.start, -2);
+    assert.equal(studio.timelineBounds.value.end, 4);
+    studio.panTimeline(-2);
     assert.equal(studio.visible.value.start, -2);
-    assert.equal(studio.visible.value.end, 4);
+    assert.equal(studio.visible.value.end, 2);
     studio.controls.view = 1;
     assert.equal(studio.visible.value.start, -2);
-    assert.equal(studio.visible.value.end, 1);
+    assert.equal(studio.visible.value.end, 0);
+    assert.ok(studio.visible.value.bars.some(item => item.index === 0));
     studio.stop(); assert.equal(studio.state.position, 0);
     studio.setSnap(7); assert.equal(studio.controls.snap, 7);
     studio.setSnap(769); assert.equal(studio.controls.snap, 7);
@@ -794,14 +798,125 @@ test('song metadata is one undoable edit, survives saving/restoring, and WAVE ed
   finally { restored.cleanup(); }
 });
 
-test('space on buttons and volume disclosure keeps native keyboard activation instead of toggling playback', async () => {
-  const { studio, handlers, cleanup } = mountStudio();
+test('space toggles playback from the timeline and editing buttons without repeating while held', async () => {
+  const { studio, handlers, mock, cleanup } = mountStudio();
+  fakeAudio(mock);
+  let prevented = 0;
+  const press = repeat => handlers.get('keydown')({ key: ' ', code: 'Space', repeat, preventDefault() { prevented++; } });
   try {
     await studio.openChart(file());
-    for (const tagName of ['BUTTON', 'SUMMARY']) {
+    for (const tagName of ['DIV', 'BUTTON']) {
       document.activeElement = { tagName };
-      handlers.get('keydown')({ key: ' ', code: 'Space', preventDefault() { assert.fail('Native keyboard activation must be preserved'); } });
+      press(false); await Promise.resolve();
+      assert.equal(studio.state.playing, true);
+      press(true); assert.equal(studio.state.playing, true);
+      press(false); assert.equal(studio.state.playing, false);
+      press(true); assert.equal(studio.state.playing, false);
+    }
+    assert.equal(prevented, 8);
+  } finally { cleanup(); }
+});
+
+test('space preserves typing, disclosure, dialog, modified and composing keyboard actions', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const press = overrides => handlers.get('keydown')({ key: ' ', code: 'Space', preventDefault() { assert.fail('Native keyboard action must be preserved'); }, ...overrides });
+  try {
+    await studio.openChart(file());
+    for (const activeElement of [
+      ...['INPUT', 'TEXTAREA', 'SELECT', 'SUMMARY'].map(tagName => ({ tagName })),
+      { tagName: 'DIV', isContentEditable: true },
+      { tagName: 'BUTTON', closest: selector => { assert.equal(selector, 'dialog, [role="dialog"]'); return {}; } }
+    ]) {
+      document.activeElement = activeElement;
+      press({});
       assert.equal(studio.state.playing, false);
     }
+    document.activeElement = { tagName: 'DIV' };
+    for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'isComposing']) press({ [modifier]: true });
+    assert.equal(studio.state.playing, false);
+  } finally { cleanup(); }
+});
+
+const longChart = chart.replace('1000,\n2000,', '1000,\n'.repeat(10).trimEnd());
+
+test('timeline panning is continuous and independent of selection, playback, text and per-chart history', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file('first.tja', longChart));
+    const first = studio.state.activeId, original = studio.state.text;
+    studio.panTimeline(.375);
+    near(studio.visible.value.start, .375); near(studio.visible.value.end, 4.375);
+    assert.equal(studio.state.selected, 0); assert.equal(studio.state.position, 0);
+    assert.equal(studio.state.text, original); assert.equal(studio.state.undo.length, 0);
+    studio.panTimeline(4.125);
+    assert.deepEqual(studio.visible.value.bars.map(item => item.index), [2, 3, 4]);
+    studio.selectCell({ bar: 2, numerator: 1, denominator: 4, divisions: 16 });
+    near(studio.visible.value.start, 4.125);
+    studio.controls.view = 1; near(studio.visible.value.end, 6.125);
+    assert.equal(studio.state.followPlayback, false);
+    await studio.openChart(file('second.tja', longChart)); studio.panTimeline(9.25);
+    studio.switchChart(first);
+    near(studio.visible.value.start, 4.125); assert.equal(studio.state.followPlayback, false);
+    assert.equal(studio.cell.value.numerator, 1);
+    studio.editSource('unfinished');
+    studio.panTimeline(5.5);
+    assert.equal(studio.state.source, 'unfinished'); assert.equal(studio.state.invalid, true);
+  } finally { cleanup(); }
+});
+
+test('timeline bounds include audio tails and negative timing segments and clamp scrolling at both ends', async () => {
+  const { studio, mock, cleanup } = mountStudio();
+  fakeAudio(mock);
+  try {
+    await studio.openChart(file()); await studio.openAudio(audioFile());
+    assert.equal(studio.timelineBounds.value.end, 8);
+    studio.panTimeline(1000); near(studio.visible.value.start, 4); near(studio.visible.value.end, 8);
+    studio.panTimeline(-1000); near(studio.visible.value.start, 0);
+    studio.panTimeline(Infinity); assert.match(studio.state.notice, /有限数值/);
+    studio.controls.view = 8; near(studio.visible.value.start, 0); near(studio.viewSpan.value, 16);
+    await studio.openChart(file('overlap.tja', chart.replace('1000,\n2000,', '10\n#DELAY -3\n20,')));
+    assert.equal(studio.timelineBounds.value.start, -2); assert.equal(studio.timelineBounds.value.end, 1);
+    studio.controls.view = 1; studio.panTimeline(-2);
+    near(studio.visible.value.start, -2); near(studio.visible.value.end, 0);
+    assert.ok(studio.visible.value.bars.some(item => item.index === 0));
+  } finally { cleanup(); }
+});
+
+test('playback holds each page until its boundary and manual panning suspends follow without pausing music', async () => {
+  const { studio, mock, ticks, cleanup } = mountStudio();
+  const { context } = fakeAudio(mock);
+  try {
+    await studio.openChart(file('long.tja', longChart)); studio.controls.loop = false; await nextTick();
+    await studio.play();
+    context.currentTime = 1.535; ticks.frame(); near(studio.visible.value.start, 0);
+    context.currentTime = 4.034; ticks.frame(); near(studio.visible.value.start, 0);
+    context.currentTime = 4.035; ticks.frame(); near(studio.visible.value.start, 4);
+    context.currentTime = 4.135; ticks.frame(); near(studio.visible.value.start, 4);
+    studio.panTimeline(8.25);
+    context.currentTime = 5.035; ticks.frame();
+    near(studio.visible.value.start, 8.25); near(studio.state.position, 5);
+    assert.equal(studio.state.playing, true); assert.equal(studio.state.selected, 2);
+    studio.state.followPlayback = true; await nextTick(); ticks.frame();
+    near(studio.visible.value.start, 4.25); assert.equal(studio.state.selected, 2);
+    studio.controls.rate = .5; await nextTick(); await Promise.resolve();
+    context.currentTime = 6.07; ticks.frame(); near(studio.state.position, 5.5); near(studio.visible.value.start, 4.25);
+    context.currentTime = 12.07; ticks.frame(); near(studio.visible.value.start, 8.25);
+    await studio.play(17.25);
+    near(studio.visible.value.start, 16); near(studio.visible.value.end, 20);
+  } finally { cleanup(); }
+});
+
+test('loop wrap and explicit navigation reposition the viewport without changing loop boundaries', async () => {
+  const { studio, mock, ticks, cleanup } = mountStudio();
+  const { context } = fakeAudio(mock);
+  try {
+    await studio.openChart(file('long.tja', longChart)); studio.setLoop(2, 5); await studio.play();
+    context.currentTime = 2.535; ticks.frame(); near(studio.visible.value.start, 2);
+    context.currentTime = 4.035; ticks.frame(); near(studio.visible.value.start, 6);
+    context.currentTime = 8.535; ticks.frame(); near(studio.visible.value.start, 2);
+    assert.deepEqual(studio.range.value, [2, 5]); assert.equal(studio.state.playing, true);
+    studio.pause(); studio.panTimeline(10.2);
+    studio.select(1); near(studio.visible.value.start, 2); assert.equal(studio.state.followPlayback, true);
+    studio.panTimeline(8.5); studio.setLoop(3, 4); near(studio.visible.value.start, 4);
   } finally { cleanup(); }
 });
