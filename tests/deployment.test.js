@@ -15,6 +15,12 @@ test('locked dependency tarballs use only the public npm registry', () => {
   }
 });
 
+test('GitHub Pages automatically publishes main and retains manual deployment', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/deploy-pages.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /on:\s+push:\s+branches:\s*\[main\]/);
+  assert.match(workflow, /^\s+workflow_dispatch:/m);
+});
+
 test('GitHub Pages pins installation to the public registry and checks the lockfile first', () => {
   const workflow = readFileSync(new URL('../.github/workflows/deploy-pages.yml', import.meta.url), 'utf8');
   assert.match(workflow, /registry-url: https:\/\/registry\.npmjs\.org\//);

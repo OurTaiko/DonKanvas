@@ -56,13 +56,13 @@
 
 ## GitHub Pages
 
-仓库包含 `.github/workflows/deploy-pages.yml`，推送到 `master` 时自动构建并发布，也可在 Actions 中选择 **Deploy GitHub Pages → Run workflow** 手动发布。
+仓库包含 [部署工作流](./.github/workflows/deploy-pages.yml)，推送到主干 `main` 时自动构建并发布到 GitHub Pages，也可在 Actions 中选择 **Deploy GitHub Pages → Run workflow** 手动发布。
 
 首次部署前，在仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。流程使用 Node.js 24，执行 `npm ci`、`npm run build`，通过官方 Pages Actions 上传并发布 `dist/`，不需要个人访问令牌，也不需要提交构建产物或创建 `gh-pages` 分支。
 
 Actions 在 Node.js 设置和 `npm ci --registry=https://registry.npmjs.org/` 中显式指定公共 npm 源。锁文件的所有 tarball 地址均指向 `https://registry.npmjs.org/`；安装前运行 `node --test tests/deployment.test.js` 检查，避免意外提交本机镜像或私有源地址。此配置不更改开发者本机的 npm 源；依赖版本与完整性校验值保持锁定。若本机屏蔽公共源，可使用已有依赖运行测试与构建；公共源的实际下载安装需在可访问公共源的 CI 环境验证。
 
-如果 **Settings → Environments → github-pages** 设置了部署分支限制，请允许 `master` 部署。
+如果 **Settings → Environments → github-pages** 设置了部署分支限制，请允许 `main` 部署。
 
 默认访问地址为 https://ourtaiko.github.io/web-tja-studio/ 。现有 Vite 配置使用相对资源路径 `base: './'`，可直接在该项目子路径下运行。部署成功后也可在工作流的 `github-pages` 环境中查看实际网址；构建失败时不会发布新版本。
 
