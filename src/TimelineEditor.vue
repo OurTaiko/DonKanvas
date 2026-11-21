@@ -47,9 +47,9 @@ function viewMeasure(event, index) {
     studio.setLoop(Math.min(anchor, index) + 1, Math.max(anchor, index) + 1);
   } else studio.select(index);
 }
-const viewport = ref(null), viewportWidth = ref(1);
+const viewport = ref(null), viewportWidth = studio.timelineWidth;
 const snaps = SNAP_DIVISIONS;
-const zooms = [[1 / 16, '1/16'], [1 / 8, '1/8'], [1 / 4, '1/4'], [1 / 2, '1/2'], [1, '1'], [2, '2'], [4, '4'], [8, '8']];
+const zooms = [[1 / 2, '1/2'], [1, '1'], [2, '2'], [3, '3'], [4, '4'], [6, '6'], [8, '8']];
 const firstBeat = computed(() => timelineScale.value.beatAt(timelineBounds.value.start));
 const totalBeats = computed(() => timelineScale.value.beatAt(timelineBounds.value.end) - firstBeat.value);
 const scrollBeats = computed(() => Math.max(0, totalBeats.value - viewBeats.value));
@@ -347,7 +347,7 @@ onUnmounted(() => { cancelMeasureLoop(); observer?.disconnect(); });
       <div class="lane-head editor-tools">
         <label>{{ t('吸附细分') }}<select id="snap-division" v-model="controls.snapChoice" @change="snapChange"><option v-for="value in snaps" :key="value" :value="String(value)">{{ value }} {{ t('分') }}</option><option value="custom">{{ t('自定义') }}</option></select></label>
         <label v-show="controls.snapChoice === 'custom'" id="custom-snap-label">{{ t('每小节等分') }}<input id="custom-snap" ref="customSnap" v-model.number="controls.customSnap" type="number" min="1" max="768" step="1" @change="studio.setSnap(Number(controls.customSnap))"></label>
-        <label :title="t('以 4/4 小节的拍数作为缩放参考')">{{ t('缩放') }}<select id="view" v-model.number="controls.view" :aria-label="t('时间轴缩放')"><option v-for="[value, label] in zooms" :key="value" :value="value">{{ label }} {{ t('小节宽') }}</option></select></label>
+        <label :title="t('以 4/4 小节的拍数作为缩放参考')">{{ t('缩放') }}<select id="view" v-model.number="controls.view" :aria-label="t('时间轴缩放')"><option value="auto">{{ t('自动') }}</option><option v-for="[value, label] in zooms" :key="value" :value="value">{{ label }} {{ t('小节宽') }}</option></select></label>
         <label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox">{{ t('跟随播放') }}</label>
       </div>
       <div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @contextmenu.prevent></canvas></div></div>

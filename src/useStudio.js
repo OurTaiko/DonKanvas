@@ -1,5 +1,5 @@
 import { t, message, LocalizedError, formatMessage } from './i18n.js';
-import { computed, onMounted, onUnmounted, reactive, shallowReactive, watch } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, shallowReactive, watch } from 'vue';
 import { TJAParser as parser } from 'tja';
 import { BRANCH_ROUTES, decodeChart, parseChart, insertEmptyBar, resizeNotes, setBaseBpm, barTimeAt, barStateAt, barStateAtTime, setPositionSettings, clearPositionSettings, barSource } from './chart.js';
 import { createHitBuffer, MIX_DEFAULTS, duckMusic } from './hit-audio.js';
@@ -12,6 +12,7 @@ import { HISTORY_LIMIT, textDiff, applyDiff } from './history.js';
 import { songMetadata, setSongMetadata } from './metadata.js';
 import { addCourse, deleteCourse, addPlayerCharts, setCourseLevel } from './courses.js';
 import { createBeatTimeline } from './timeline.js';
+import { noteHitRadius } from './note-render.js';
 
 const WORKSPACE_KEY = 'tja-wave-workspace';
 const chartFileTypes = () => [{ description: t('TJA 谱面'), accept: { 'text/plain': ['.tja'] } }];
@@ -32,7 +33,7 @@ export const formatTime = value => {
 export function useStudio() {
   const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, playing: false, loopAnchor: null, copiedMeasures: null, pasteRequest: 0, editorBlocked: false, fileErrors: [], saveState: '尚未打开谱面', noticeMessage: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', get notice() { return formatMessage(this.noticeMessage); }, error: false });
   let nextDocumentId = 1, viewAnimation = null, reloadApproved = false;
-  const controls = reactive({ hits: true, rate: 1, volume: MIX_DEFAULTS.music, hitVolume: MIX_DEFAULTS.hits, view: 2, snap: GRID_DIVISIONS, snapChoice: '16', customSnap: GRID_DIVISIONS });
+  const controls = reactive({ hits: true, rate: 1, volume: MIX_DEFAULTS.music, hitVolume: MIX_DEFAULTS.hits, view: 'auto', snap: GRID_DIVISIONS, snapChoice: '16', customSnap: GRID_DIVISIONS });
   const bar = computed(() => state.chart?.bars[state.selected]);
   const spans = computed(() => state.chart ? longNoteSpans(state.chart.bars) : []);
   const range = computed(() => state.customLoop);
@@ -40,7 +41,10 @@ export function useStudio() {
   const duration = computed(() => state.buffer?.duration ?? state.chart?.bars.reduce((end, item) => Math.max(end, measureEnd(item)), 0) ?? 0);
   const timelineBounds = computed(() => state.chart?.bars.reduce((bounds, item) => ({ start: Math.min(bounds.start, measureStart(item)), end: Math.max(bounds.end, measureEnd(item)) }), { start: 0, end: duration.value }) || { start: 0, end: 0 });
   const timelineScale = computed(() => createBeatTimeline(state.chart));
-  const viewBeats = computed(() => 4 * controls.view);
+  const timelineWidth = ref(1);
+  const viewBeats = computed(() => controls.view === 'auto'
+    ? Math.max(1, timelineWidth.value) / (2 * noteHitRadius('1') * .9) / 4
+    : 4 * controls.view);
   const visible = computed(() => {
     if (!state.chart) return null;
     const bounds = timelineBounds.value, scale = timelineScale.value;
@@ -326,7 +330,11 @@ export function useStudio() {
   function selectCell(position) {
     if (state.invalid) return;
     if (!state.chart?.bars[position.bar]) { notice(message('请先创建难度谱面。'), true); return; }
-    pause(); state.selected = position.bar; state.selectedCell = position; state.commandCell = { ...position }; syncSource(); persist();
+    pause(); state.selected = position.bar; state.selectedCell = position; state.commandCell = { ...position }; rewindToSelectedNote(); syncSource(); persist();
+  }
+  function rewindToSelectedNote() {
+    const selected = cell.value;
+    if (selected && selected.note !== '0') state.position = Math.max(0, measureStart(state.chart.bars[selected.bar]));
   }
   function clearNoteSelection() {
     state.selectedCell = null; state.commandCell = null; snapshot();
@@ -389,6 +397,7 @@ export function useStudio() {
       if (!Number.isSafeInteger(numerator) || !Number.isSafeInteger(denominator) || numerator < 0 || denominator < 1 || numerator > denominator || denominator > 65536) throw new LocalizedError(message('指令位置须在 0/1 至 1/1 之间，分母最多 65536。'));
       pause(); state.commandCell = { bar: state.selected, numerator, denominator };
       state.selectedCell = numerator < denominator ? { ...state.commandCell, divisions: controls.snap } : null;
+      rewindToSelectedNote();
     });
   }
   function applySettings(settings, atMeasureStart = false) { return guard(() => { requireValid(); commit(setPositionSettings(state.text, state.chart, atMeasureStart ? measureCommand.value : command.value, settings, parser)); return true; }); }
@@ -891,5 +900,5 @@ export function useStudio() {
     pause(); void context?.close(); document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup);
     window.removeEventListener('blur', clearShortcutKeys); window.removeEventListener('beforeunload', beforeUnload);
   });
-  return { state, controls, bar, spans, visible, viewSpan, viewBeats, timelineScale, timelineBounds, chartStats, stats, cell, command, measureCommand, currentTiming, range, duration, metadata, notice, reportFileError, pause, play, stop, seek, seekMeasure, panTimeline, select, selectCell, selectNote, selectAdjacentNote, clearNoteSelection, setCommandPosition, applySettings, applyBranchSource, applyMeasureBranch, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, clearLoop, markLoop, loopCurrent, setSnap, changeCourse, createCourse, removeCourse, createPlayerCharts, setLevel, changeAllBranches, changeBranch, openChart, openCharts, openAudio, newChart, switchChart, closeChart, insertBar, deleteBar, copyMeasures, requestPaste, pasteMeasures, reloadForUpdate, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
+  return { state, controls, bar, spans, visible, viewSpan, viewBeats, timelineWidth, timelineScale, timelineBounds, chartStats, stats, cell, command, measureCommand, currentTiming, range, duration, metadata, notice, reportFileError, pause, play, stop, seek, seekMeasure, panTimeline, select, selectCell, selectNote, selectAdjacentNote, clearNoteSelection, setCommandPosition, applySettings, applyBranchSource, applyMeasureBranch, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, clearLoop, markLoop, loopCurrent, setSnap, changeCourse, createCourse, removeCourse, createPlayerCharts, setLevel, changeAllBranches, changeBranch, openChart, openCharts, openAudio, newChart, switchChart, closeChart, insertBar, deleteBar, copyMeasures, requestPaste, pasteMeasures, reloadForUpdate, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
 }

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createRenderer, nextTick } from 'vue';
 import { useStudio } from './useStudio.js';
 import { locale, formatMessage } from './i18n.js';
+import { drawNote } from './note-render.js';
 import { COURSE_NAMES, courseLevel } from './courses.js';
 
 const chart = 'TITLE:Vue session\nBPM:120\nOFFSET:0\nCOURSE:Oni\nLEVEL:1\n#START\n1000,\n2000,\n#END\n';
@@ -318,6 +319,41 @@ test('note selectors count only actual notes, skip empty measures, retain the ra
     studio.clearNoteSelection(); assert.equal(studio.cell.value, null); assert.deepEqual(studio.range.value, [2, 3]);
     assert.equal(studio.selectAdjacentNote(-1), undefined); assert.match(studio.state.notice, /请先选择/);
     assert.equal(studio.state.undo.length, 0);
+  } finally { cleanup(); }
+});
+
+test('selecting actual notes rewinds to their measure start while blank positions and viewing leave playback position unchanged', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file('rewind.tja', chart.replace('1000,\n2000,', '1000,\n#BPMCHANGE 60\n#MEASURE 3/4\n#DELAY .5\n0200,\n3000,')));
+    studio.setLoop(1, 3); studio.seek(5);
+    studio.selectCell({ bar: 1, numerator: 1, denominator: 4, divisions: 16 });
+    near(studio.state.position, 2);
+    assert.equal(studio.cell.value.note, '2'); assert.ok(studio.cell.value.time > 2);
+    studio.seek(5); studio.selectCell({ bar: 1, numerator: 0, denominator: 4, divisions: 16 });
+    near(studio.state.position, 5);
+    studio.select(0); near(studio.state.position, 5);
+    studio.selectNote(1, 1); near(studio.state.position, 2);
+    studio.selectAdjacentNote(1); near(studio.state.position, 5.5);
+    studio.seek(6); studio.select(1); studio.setCommandPosition(1, 4);
+    near(studio.state.position, 2);
+    studio.seek(6); studio.setCommandPosition(1, 2); near(studio.state.position, 6);
+    assert.deepEqual(studio.range.value, [1, 3]); assert.equal(studio.state.undo.length, 0);
+    assert.equal(studio.state.playing, false);
+  } finally { cleanup(); }
+});
+
+test('selecting a note pauses live playback before rewinding and clamps negative measure starts to zero', async () => {
+  const { studio, mock, ticks, cleanup } = mountStudio();
+  const { context } = fakeAudio(mock);
+  try {
+    await studio.openChart(file());
+    await studio.play(); context.currentTime = 3.035; ticks.frame();
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 4, divisions: 16 });
+    assert.equal(studio.state.playing, false); near(studio.state.position, 0);
+    context.currentTime = 4; ticks.frame(); near(studio.state.position, 0);
+    await studio.openChart(file('negative.tja', chart.replace('OFFSET:0', 'OFFSET:1')));
+    studio.seek(2); studio.selectNote(0, 1); near(studio.state.position, 0);
   } finally { cleanup(); }
 });
 
@@ -986,7 +1022,7 @@ function mountStudio(saved = new Map()) {
   mock('confirm', () => true);
   const renderer = createRenderer({ createComment: () => ({}), insert() {}, remove() {}, parentNode() {}, nextSibling() {} });
   let studio;
-  const app = renderer.createApp({ setup() { studio = useStudio(); return () => null; } });
+  const app = renderer.createApp({ setup() { studio = useStudio(); studio.timelineWidth.value = 576; return () => null; } });
   app.mount({});
   return { studio, saved, listeners, handlers, ticks, mock, app, cleanup() {
     app.unmount();
@@ -2605,6 +2641,41 @@ test('space preserves typing, disclosure, dialog, modified and composing keyboar
 });
 
 const longChart = chart.replace('1000,\n2000,', '1000,\n'.repeat(10).trimEnd());
+
+test('automatic zoom packs sixteenth notes within ten percent of their rendered diameter across workspace sizes and tempos', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    assert.equal(studio.controls.view, 'auto');
+    let radius, stroke;
+    const brush = new Proxy({}, {
+      get: (_, key) => key === 'arc' ? (x, y, value) => { radius = value; } : () => {},
+      set: (_, key, value) => { if (key === 'lineWidth') stroke = value; return true; }
+    });
+    for (const note of ['1', '2']) {
+      drawNote(brush, note, 0, 0);
+      const diameter = 2 * radius + stroke;
+      for (const bpm of [60, 120, 240]) {
+        await studio.openChart(file(`auto-${note}-${bpm}.tja`, chart.replace('BPM:120', `BPM:${bpm}`).replace('1000,\n2000,', `${note.repeat(16)},\n#BPMCHANGE ${bpm * 2}\n${note.repeat(16)},`)));
+        for (const width of [240, 305, 619, 980, 1600]) {
+          studio.timelineWidth.value = width;
+          near(studio.viewBeats.value, width / 72);
+          for (const bar of studio.state.chart.bars) {
+            const first = studio.timelineScale.value.beatAt(bar.start);
+            const second = studio.timelineScale.value.beatAt(bar.start + bar.duration / 16);
+            const spacing = (second - first) / studio.viewBeats.value * width;
+            const overlap = (diameter - spacing) / diameter;
+            assert.ok(overlap <= .1 + 1e-10);
+            near(overlap, .1);
+          }
+        }
+      }
+    }
+    studio.controls.view = 1.25; near(studio.viewBeats.value, 5);
+    studio.timelineWidth.value = 305; near(studio.viewBeats.value, 5);
+    studio.controls.view = 'auto'; near(studio.viewBeats.value, 305 / 72);
+    assert.equal(studio.state.playing, false); assert.equal(studio.state.undo.length, 0);
+  } finally { cleanup(); }
+});
 
 test('beat-based views show equally spaced measures across BPM changes and preserve the musical viewport through edits and history', async () => {
   const { studio, cleanup } = mountStudio();

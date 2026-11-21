@@ -1,6 +1,7 @@
 // Translation order: English, Japanese, Traditional Chinese, Korean.
 export const translations = {
   '文件载入失败': ['Failed to load file', 'ファイルの読み込みに失敗しました', '檔案載入失敗', '파일을 불러오지 못했습니다'],
+  '自动': ['Auto', '自動', '自動', '자동'],
   '复制小节': ['Copy measures', '小節をコピー', '複製小節', '마디 복사'],
   '粘贴小节': ['Paste measures', '小節を貼り付け', '貼上小節', '마디 붙여넣기'],
   '粘贴': ['Paste', '貼り付け', '貼上', '붙여넣기'],
