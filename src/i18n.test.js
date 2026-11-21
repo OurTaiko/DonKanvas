@@ -566,10 +566,10 @@ test('note choices fill responsive equal-width columns with consistent height, r
   assert.match(descriptor.template.content, /:aria-label="`\$\{t\(type.name\)\}/);
 });
 
-test('the note editor uses compact wrapping attributes and stable value and balloon input slots', () => {
+test('the note editor uses compact wrapping attributes and stable value slots', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   const { bindings } = compileScript(descriptor, { id: 'stable-note-inspector' });
-  for (const binding of ['cellAttributes', 'balloonStatus']) assert.ok(bindings[binding], binding);
+  assert.ok(bindings.cellAttributes);
   const template = descriptor.template.content;
   assert.match(template, /class="cell-inspector" :aria-label="t\('音符编辑'\)"/);
   assert.doesNotMatch(template, /cell-heading|cell-current/);
@@ -579,17 +579,26 @@ test('the note editor uses compact wrapping attributes and stable value and ball
   assert.doesNotMatch(descriptor.scriptSetup.content, /cell-location|小节内位置|小节 \/ 格位/);
   assert.match(template, /v-for="attribute in cellAttributes"/);
   assert.match(template, /<dd :id="attribute.id" :title="attribute.value">/);
-  assert.match(template, /class="balloon-control" :class="\{ 'is-inactive': !cell \|\| cell.ordinal < 0 \}"/);
-  assert.match(template, /aria-describedby="balloon-count-state"/);
-  assert.match(template, /:disabled="!cell \|\| cell.ordinal < 0 \|\| state.invalid"/);
-  assert.match(template, /@change="studio.setBalloon\(Number\(\$event.target.value\)\)"/);
+  assert.doesNotMatch(template, /balloon-count|balloon-control/);
   const styles = readFileSync(new URL('sound.css', import.meta.url), 'utf8');
   assert.match(styles, /\.cell-inspector dl\{display:flex;flex-wrap:wrap;/);
   assert.match(styles, /\.cell-inspector dl>div\{[^}]*max-width:100%;height:24px/);
   assert.match(styles, /\.cell-inspector dd\{[^}]*line-height:24px;[^}]*text-overflow:ellipsis;white-space:nowrap/);
   for (const id of ['cell-time', 'cell-fraction', 'cell-long']) assert.match(styles, new RegExp(`#${id}\\{width:\\d+ch\\}`));
-  assert.match(styles, /\.balloon-control.is-inactive\{visibility:hidden;pointer-events:none\}/);
   assert.doesNotMatch(readFileSync(new URL('SongWorkspace.vue', import.meta.url), 'utf8'), /离开输入框时自动应用/);
+});
+
+test('balloon and special roll counts are edited in the right note panel', () => {
+  const { descriptor } = parse(readFileSync(new URL('MeasureEditor.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'balloon-inspector' });
+  const section = descriptor.template.content.match(/<section[^>]*aria-labelledby="note-palette-title">[\s\S]*?<\/section>/)[0];
+  assert.match(section, /id="balloon-count"/);
+  assert.match(section, /v-if="cell && cell.ordinal >= 0" class="balloon-control command-field"/);
+  assert.ok(section.includes('<label for="balloon-count">{{ t(\'气球 / 特殊连打（#{p0}）敲击次数\', { p0: cell.ordinal + 1 }) }}</label>'));
+  assert.match(section, /:disabled="state.invalid"/);
+  assert.match(section, /@change="studio.setBalloon\(Number\(\$event.target.value\)\)"/);
+  assert.match(section, /@keydown.enter="!\$event.isComposing && \$event.keyCode !== 229 && \$event.target.blur\(\)"/);
+  assert.doesNotMatch(section, /balloon-count-state|气球敲击次数|balloonStatus/);
 });
 
 test('current position timing lives in note attributes and measure selection lives in the header', () => {

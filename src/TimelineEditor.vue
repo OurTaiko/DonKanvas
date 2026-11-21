@@ -28,10 +28,6 @@ const cellAttributes = computed(() => {
     ...(selected?.span ? [{ id: 'cell-long', label: '长音状态', value: `${t(NOTE_TYPES[Number(selected.span.note)].name)} · ${(selected.span.end - selected.span.start).toFixed(3)} s · ${selected.span.complete ? t('已结束') : t('缺少结束标记')}` }] : [])
   ];
 });
-const balloonStatus = computed(() => {
-  const selected = cell.value;
-  return selected && selected.ordinal >= 0 ? t('第 {p0} 个气球{p1}', { p0: selected.ordinal + 1, p1: Number.isSafeInteger(selected.count) && selected.count > 0 ? '' : t(' · 未设置次数') }) : '';
-});
 const timeline = ref(null), overview = ref(null), customSnap = ref(null), hover = ref(null);
 const measures = ref(null), measureDrag = ref(null);
 const measureSelection = computed(() => measureDrag.value?.dragged
@@ -355,10 +351,6 @@ onUnmounted(() => { cancelMeasureLoop(); observer?.disconnect(); });
       <section class="cell-inspector" :aria-label="t('音符编辑')">
         <dl>
           <div v-for="attribute in cellAttributes" :key="attribute.id"><dt>{{ t(attribute.label) }}</dt><dd :id="attribute.id" :title="attribute.value">{{ attribute.value }}</dd></div>
-          <div class="balloon-control" :class="{ 'is-inactive': !cell || cell.ordinal < 0 }">
-            <dt><label for="balloon-count">{{ t('气球敲击次数') }}</label></dt>
-            <dd><input id="balloon-count" type="number" min="1" step="1" :aria-label="t('气球敲击次数')" aria-describedby="balloon-count-state" :title="balloonStatus" :value="Number.isSafeInteger(cell?.count) && cell.count > 0 ? cell.count : ''" :placeholder="t('未设置')" :disabled="!cell || cell.ordinal < 0 || state.invalid" @change="studio.setBalloon(Number($event.target.value))"><output id="balloon-count-state">{{ balloonStatus }}</output></dd>
-          </div>
         </dl>
         <div class="measure-info">
           <span v-if="state.playing && currentTiming.bar.index !== state.selected">{{ t('播放小节 {p0}', { p0: String(currentTiming.bar.index + 1).padStart(3, '0') }) }}</span>

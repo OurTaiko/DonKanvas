@@ -97,6 +97,10 @@ function finishBranchSetting(event) {
     <section class="inspector-section" aria-labelledby="note-palette-title">
       <div class="inspector-heading"><h2 id="note-palette-title">{{ t('音符编辑') }}</h2></div>
       <div id="palette" class="palette"><button v-for="type in NOTE_TYPES" :key="type.value" :title="`${t(type.name)}（${type.shortcut ?? type.value}）`" :aria-label="`${t(type.name)}（${type.shortcut ?? type.value}）`" :data-value="type.value" :disabled="!cell || state.invalid" :class="{ active: cell?.note === type.value }" :aria-pressed="cell?.note === type.value" @click="studio.chooseNote(type.value)"><span class="choice-icon" aria-hidden="true"><span class="choice-symbol" :class="type.shape"></span></span><span class="choice-name"><span>{{ t(type.name) }}</span></span><small>{{ type.shortcut ?? type.value }}</small></button></div>
+      <div v-if="cell && cell.ordinal >= 0" class="balloon-control command-field">
+        <label for="balloon-count">{{ t('气球 / 特殊连打（#{p0}）敲击次数', { p0: cell.ordinal + 1 }) }}</label>
+        <input id="balloon-count" type="number" min="1" step="1" :value="Number.isSafeInteger(cell.count) && cell.count > 0 ? cell.count : ''" :placeholder="t('未设置')" :disabled="state.invalid" @change="studio.setBalloon(Number($event.target.value))" @keydown.enter="!$event.isComposing && $event.keyCode !== 229 && $event.target.blur()">
+      </div>
     </section>
     <section class="selection-position inspector-section" aria-labelledby="selected-position-title" @focusin="state.playing && studio.pause()">
       <div class="inspector-heading"><h2 id="selected-position-title">{{ t('当前选择的位置') }}</h2></div>
@@ -170,6 +174,7 @@ function finishBranchSetting(event) {
 .command-group{min-width:0;margin:12px 0 0;padding:10px 0 0;border:0;border-top:1px dashed var(--line)}.command-group legend{padding:0 8px 0 0;font-size:11px;font-weight:500;color:var(--muted)}.selection-position .command-position{margin-top:0}.selection-position>output{display:block;margin-top:8px;font-size:12px;color:var(--muted)}
 .selection-position input,.command-group input:not([type=checkbox]),.command-group select{box-sizing:border-box;width:100%;min-width:0;max-width:none;height:32px;min-height:32px;margin:0;padding:6px 8px;border:1px solid var(--line);border-radius:4px;background:#fff;font-size:12px;line-height:18px}.selection-position .meter-inputs input,.command-group .meter-inputs input{width:0;flex:1 1 0}
 .measure-branch-commands{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}.branch-route-buttons{display:flex;gap:8px}.branch-route-buttons button{flex:1;min-width:0}.branch-route-buttons button[aria-pressed=true]{background:var(--green);border-color:var(--green);color:#fff}.branch-route-buttons button[aria-pressed=true]:disabled{opacity:.7}
+.balloon-control{margin-top:12px;font-size:11px;color:var(--muted)}.balloon-control label{line-height:1.5;overflow-wrap:anywhere}.balloon-control input{width:100%;min-width:0;height:32px;padding:6px 8px;font-size:12px}
 @media(max-width:900px){.measure-editor{overflow:visible;border-left:0;border-top:1px solid var(--line)}}
 .command-wide{grid-column:1/-1}.command-help{font-size:12px;line-height:1.6;color:var(--muted);margin:8px 0}.branch-edit-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 </style>
