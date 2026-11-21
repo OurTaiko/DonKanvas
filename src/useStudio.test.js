@@ -2299,6 +2299,47 @@ test('keyup-only IME letters select ranges, navigate, change snap and seek', asy
   } finally { cleanup(); }
 });
 
+test('keyup-only IME Space toggles playback on the first release after Q/E without duplicating paired events', async () => {
+  const { studio, handlers, mock, cleanup } = mountStudio();
+  fakeAudio(mock);
+  const event = code => ({ key: 'Process', code, keyCode: 229, isComposing: true, preventDefault() {} });
+  try {
+    await studio.openChart(file());
+    handlers.get('keyup')(event('KeyE')); near(studio.state.position, 2);
+    handlers.get('keyup')(event('Space')); await Promise.resolve();
+    assert.equal(studio.state.playing, true);
+    handlers.get('keyup')(event('KeyQ')); await Promise.resolve();
+    near(studio.state.position, 0); assert.equal(studio.state.playing, true);
+    handlers.get('keyup')(event('Space'));
+    assert.equal(studio.state.playing, false);
+    for (const playing of [true, false]) {
+      handlers.get('keydown')(event('Space')); await Promise.resolve();
+      assert.equal(studio.state.playing, playing);
+      handlers.get('keydown')({ ...event('Space'), repeat: true });
+      handlers.get('keyup')(event('Space')); await Promise.resolve();
+      assert.equal(studio.state.playing, playing);
+    }
+  } finally { cleanup(); }
+});
+
+test('keyup-only Space preserves native controls and modified actions, including focus changes during a press', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const event = extra => ({ key: ' ', code: 'Space', preventDefault() { assert.fail('Native Space action must be preserved'); }, ...extra });
+  try {
+    await studio.openChart(file());
+    for (const activeElement of [
+      ...['INPUT', 'TEXTAREA', 'SELECT', 'SUMMARY'].map(tagName => ({ tagName })),
+      { tagName: 'DIV', isContentEditable: true }, { tagName: 'BUTTON', closest: () => ({}) }
+    ]) { document.activeElement = activeElement; handlers.get('keyup')(event()); }
+    document.activeElement = { tagName: 'INPUT' };
+    handlers.get('keydown')(event());
+    document.activeElement = null; handlers.get('keyup')(event());
+    for (const flag of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'defaultPrevented', 'repeat']) handlers.get('keyup')(event({ [flag]: true }));
+    studio.state.editorBlocked = true; handlers.get('keyup')(event());
+    assert.equal(studio.state.playing, false);
+  } finally { cleanup(); }
+});
+
 test('paired keydown and keyup do not execute twice and lost releases reset on blur', async () => {
   const { studio, handlers, cleanup } = mountStudio();
   const event = (key, extra = {}) => ({ key, code: `Key${key.toUpperCase()}`, preventDefault() {}, ...extra });

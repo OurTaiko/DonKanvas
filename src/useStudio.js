@@ -793,17 +793,18 @@ export function useStudio() {
     frame = requestAnimationFrame(animate);
   }
   const shortcutKeysDown = new Set();
-  function shortcutLetter(event) {
+  function shortcutKey(event) {
+    if (event.code === 'Space' || event.key === ' ') return ' ';
     return /^Key[WSADQEF]$/.test(event.code) ? event.code.slice(3).toLowerCase()
       : /^[wsadqef]$/i.test(event.key) ? event.key.toLowerCase() : null;
   }
   function keydown(event) {
-    const key = shortcutLetter(event);
+    const key = shortcutKey(event);
     if (key) shortcutKeysDown.add(key);
     handleShortcut(event);
   }
   function keyup(event) {
-    const key = shortcutLetter(event);
+    const key = shortcutKey(event);
     if (!key || shortcutKeysDown.delete(key) || event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
     handleShortcut(event);
   }
