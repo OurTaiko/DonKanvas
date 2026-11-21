@@ -171,9 +171,80 @@ function changeLanguage(code) {
   if (error) studio.notice(message('语言偏好保存失败：{p0}', { p0: error }), true);
   closePopover(languageMenu.value);
 }
+const topMenus = () => [fileMenu.value, editMenu.value, selectionMenu.value, settingsMenu.value];
+let altMenuPending = false, menuReturnFocus = null;
+function cancelAltMenu() { altMenuPending = false; }
+function altMenuKeydown(event) {
+  if (event.key !== 'Alt') { cancelAltMenu(); return; }
+  if (event.repeat || event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing || event.keyCode === 229 || event.getModifierState?.('AltGraph') || document.activeElement?.closest?.('dialog, [role="dialog"]')) return;
+  altMenuPending = true;
+  event.preventDefault();
+}
+function leaveMenuBar() {
+  for (const menu of topMenus()) menu.open = false;
+  if (menuReturnFocus?.isConnected) menuReturnFocus.focus({ preventScroll: true });
+  else document.activeElement?.blur();
+  menuReturnFocus = null;
+}
+function altMenuKeyup(event) {
+  if (event.key !== 'Alt' || !altMenuPending) return;
+  cancelAltMenu();
+  if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing || event.getModifierState?.('AltGraph') || document.activeElement?.closest?.('dialog, [role="dialog"]')) return;
+  event.preventDefault();
+  if (topMenus().some(menu => menu.contains(document.activeElement))) leaveMenuBar();
+  else {
+    menuReturnFocus = document.activeElement;
+    for (const menu of topMenus()) menu.open = false;
+    fileMenu.value.querySelector('summary').focus({ preventScroll: true });
+  }
+}
+function menuItems(menu) {
+  const panel = menu.querySelector('summary').nextElementSibling;
+  return [...panel.querySelectorAll('button:not(:disabled), a[href], summary, [tabindex="0"]')]
+    .filter(item => item.getClientRects().length && !item.closest('[inert]') &&
+      (item.tagName === 'SUMMARY' ? item.parentElement.parentElement.closest('details') : item.closest('details')) === menu);
+}
+function openKeyboardMenu(menu, last = false) {
+  menu.open = true;
+  positionPopover(menu);
+  const items = menuItems(menu);
+  (last ? items.at(-1) : items[0])?.focus();
+  if (!items.length) menu.querySelector('summary').nextElementSibling.focus();
+}
+function switchKeyboardMenu(menu, direction) {
+  const menus = topMenus(), opened = menu.open;
+  const next = menus[(menus.indexOf(menu) + direction + menus.length) % menus.length];
+  menu.open = false;
+  next.querySelector('summary').focus({ preventScroll: true });
+  if (opened) openKeyboardMenu(next);
+}
 function popoverKeydown(event, menu) {
-  if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closePopover(menu); }
-  else if (!event.ctrlKey && !event.metaKey && !event.altKey) event.stopPropagation();
+  if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.keyCode === 229) return;
+  event.stopPropagation();
+  const root = topMenus().find(item => item.contains(menu));
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    if (menu.open) closePopover(menu);
+    else if (menu !== root) closePopover(root);
+    else leaveMenuBar();
+  } else if (['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+    event.preventDefault();
+    if (event.key === 'ArrowLeft' && menu !== root && menu.open) closePopover(menu);
+    else if (event.key === 'ArrowRight' && event.target.tagName === 'SUMMARY' && menu !== root) openKeyboardMenu(menu);
+    else switchKeyboardMenu(root, event.key === 'ArrowLeft' ? -1 : 1);
+  } else if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+    event.preventDefault();
+    const level = menu !== root && event.target === menu.querySelector('summary') ? root : menu;
+    const items = menuItems(level), index = items.indexOf(document.activeElement);
+    if (!level.open || index < 0) openKeyboardMenu(level, event.key === 'ArrowUp' || event.key === 'End');
+    else {
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
+      items[next]?.focus();
+    }
+  } else if (event.key === 'Enter' && event.target.tagName === 'SUMMARY') {
+    event.preventDefault();
+    if (menu.open) closePopover(menu); else openKeyboardMenu(menu);
+  }
 }
 function dismissPopovers(event) {
   for (const menu of [fileMenu.value, editMenu.value, selectionMenu.value, settingsMenu.value, languageMenu.value, shortcutMenu.value, projectMenu.value]) {
@@ -252,13 +323,16 @@ onMounted(() => {
   document.addEventListener('pointerdown', dismissPopovers);
   document.addEventListener('focusin', dismissPopovers);
   document.addEventListener('keydown', fileKeydown);
+  document.addEventListener('keydown', altMenuKeydown, true);
+  document.addEventListener('keyup', altMenuKeyup, true);
+  window.addEventListener('blur', cancelAltMenu);
   document.addEventListener('dragover', dragOverFiles);
   document.addEventListener('drop', dropFiles);
   window.addEventListener('resize', resizeLayout);
   window.addEventListener('scroll', positionMenus, true);
   if (!import.meta.env.DEV && 'serviceWorker' in navigator) void checkUpdate(true);
 });
-onUnmounted(() => { appDisposed = true; tabsObserver.disconnect(); transportObserver.disconnect(); document.removeEventListener('pointerdown', dismissPopovers); document.removeEventListener('focusin', dismissPopovers); document.removeEventListener('keydown', fileKeydown); document.removeEventListener('dragover', dragOverFiles); document.removeEventListener('drop', dropFiles); window.removeEventListener('resize', resizeLayout); window.removeEventListener('scroll', positionMenus, true); });
+onUnmounted(() => { appDisposed = true; tabsObserver.disconnect(); transportObserver.disconnect(); document.removeEventListener('pointerdown', dismissPopovers); document.removeEventListener('focusin', dismissPopovers); document.removeEventListener('keydown', fileKeydown); document.removeEventListener('keydown', altMenuKeydown, true); document.removeEventListener('keyup', altMenuKeyup, true); window.removeEventListener('blur', cancelAltMenu); document.removeEventListener('dragover', dragOverFiles); document.removeEventListener('drop', dropFiles); window.removeEventListener('resize', resizeLayout); window.removeEventListener('scroll', positionMenus, true); });
 function chooseCharts() {
   if (typeof window.showOpenFilePicker === 'function') void studio.openCharts();
   else chartFile.value.click();
@@ -475,6 +549,7 @@ async function dropFiles(event) {
 .file-popover summary{gap:6px;padding:7px 10px;font-size:12px}.file-popover .menu-chevron{width:12px;height:12px}
 .file-panel{position:fixed;z-index:30;width:300px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 54px);overflow:auto;overscroll-behavior:contain;padding:5px;border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 6px 24px #202a2820}
 .file-panel button{width:100%;border:0;background:transparent;text-align:left;white-space:normal;gap:8px}.file-actions .file-panel button span{display:inline;flex:1;min-width:0;overflow-wrap:anywhere}.file-panel button:not(:disabled):hover{background:#edf5ef}.file-panel kbd{font:11px ui-monospace,monospace;color:var(--muted);flex-shrink:0;max-width:48%;overflow-wrap:anywhere}.file-panel hr{margin:5px 0;border:0;border-top:1px solid var(--line)}.file-panel h3{margin:8px 10px 3px;font-size:11px}.file-actions .file-panel .choice-icon{display:grid;flex:0 0 17px;width:17px;height:17px}.file-actions .file-panel .choice-symbol{display:block;flex:none;transform:scale(.75)}.file-actions .file-panel .choice-symbol.large{transform:scale(.65)}.file-actions .file-panel .choice-symbol.roll{transform:scale(.45)}.file-actions .file-panel .choice-symbol.balloon{transform:scale(.55)}.file-actions .file-panel .choice-symbol.end{transform:rotate(45deg) scale(.75)}
+.file-actions>.file-popover>summary:focus-visible,.settings-popover>summary:focus-visible{background:#e1ece5}
 .selection-help{padding:8px;font-size:11px;line-height:1.6}.selection-dialog{width:min(420px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:auto;padding:20px;border:1px solid var(--line);border-radius:8px}.selection-dialog::backdrop{background:#202a2870}.selection-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}.selection-fields label{display:grid;gap:6px;font-size:12px}.selection-fields input{width:100%;min-width:0}.selection-dialog p{line-height:1.6;overflow-wrap:anywhere}.selection-dialog .error{color:#bd352b;margin-top:10px}.selection-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .update-toast{position:fixed;right:12px;top:46px;z-index:50;width:360px;max-width:calc(100% - 24px);max-height:calc(100dvh - 58px);overflow:auto;padding:14px;border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 6px 24px #202a2820}.update-toast p{line-height:1.6;overflow-wrap:anywhere}.update-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
 .language-panel{position:absolute;right:0;top:calc(100% + 6px);z-index:30;width:200px;max-width:calc(100vw - 24px);padding:5px;border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 6px 24px #202a2820}.language-panel button{display:flex;justify-content:space-between;width:100%;border:0;background:transparent;text-align:left}.language-panel button[aria-pressed=true]{color:var(--green);background:#edf5ef}.language-panel button:hover{background:#edf5ef}.language-panel svg{width:16px;height:16px}

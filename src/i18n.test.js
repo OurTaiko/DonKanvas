@@ -104,6 +104,56 @@ test('new and open shortcuts use existing actions from inputs, suppress repeat a
   assert.equal(prevented, 6); assert.equal(calls.length, 4);
 });
 
+test('Alt activates menu keyboard navigation, skips disabled items and restores focus without consuming Alt combinations', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  const script = descriptor.scriptSetup.content;
+  const source = script.slice(script.indexOf('const topMenus ='), script.indexOf('function dismissPopovers('));
+  const document = { activeElement: null };
+  function element(id) {
+    return { id, tagName: 'BUTTON', isConnected: true, closest: () => null, getClientRects: () => [1], focus() { document.activeElement = this; }, blur() { document.activeElement = null; } };
+  }
+  function menu(id, disabled = false) {
+    const entry = element(`${id}-item`), summary = { ...element(`${id}-toggle`), tagName: 'SUMMARY' };
+    const panel = { ...element(`${id}-panel`), querySelectorAll: () => disabled ? [] : [entry] };
+    summary.nextElementSibling = panel;
+    const result = { open: false, summary, entry, panel, querySelector: () => summary, contains(target) { return [this, summary, entry, panel].includes(target); } };
+    entry.closest = selector => selector === 'details' ? result : null;
+    return result;
+  }
+  const menus = [menu('file'), menu('edit', true), menu('selection'), menu('settings')];
+  const handlers = runInNewContext(`${source}; ({ altMenuKeydown, altMenuKeyup, popoverKeydown })`, {
+    document, fileMenu: { value: menus[0] }, editMenu: { value: menus[1] }, selectionMenu: { value: menus[2] }, settingsMenu: { value: menus[3] },
+    positionPopover() {}, closePopover(menu) { menu.open = false; menu.summary.focus(); }
+  });
+  const original = element('editor'); original.focus();
+  const press = key => handlers.popoverKeydown({ key, target: document.activeElement, preventDefault() {}, stopPropagation() {} }, menus.find(menu => menu.contains(document.activeElement)));
+  const alt = { key: 'Alt', preventDefault() {} };
+  handlers.altMenuKeydown(alt); handlers.altMenuKeyup(alt);
+  assert.equal(document.activeElement, menus[0].summary);
+  press('ArrowDown'); assert.equal(document.activeElement, menus[0].entry); assert.equal(menus[0].open, true);
+  press('ArrowRight'); assert.equal(document.activeElement, menus[1].panel);
+  assert.equal(menus[0].open, false); assert.equal(menus[1].open, true);
+  press('ArrowRight'); assert.equal(document.activeElement, menus[2].entry);
+  press('Escape'); assert.equal(menus[2].open, false); assert.equal(document.activeElement, menus[2].summary);
+  press('Escape'); assert.equal(document.activeElement, original);
+  handlers.altMenuKeydown(alt); handlers.altMenuKeydown({ key: 'n', ctrlKey: true, altKey: true });
+  handlers.altMenuKeyup(alt); assert.equal(document.activeElement, original);
+  handlers.altMenuKeydown({ ...alt, isComposing: true }); handlers.altMenuKeyup(alt);
+  assert.equal(document.activeElement, original);
+  const settings = menus[3], child = menu('language'), last = element('about');
+  child.summary.parentElement = { parentElement: { closest: () => settings } };
+  last.closest = selector => selector === 'details' ? settings : null;
+  settings.panel.querySelectorAll = () => [settings.entry, child.summary, last];
+  const contains = settings.contains;
+  settings.contains = target => contains.call(settings, target) || child.contains(target) || target === last;
+  settings.open = true; child.summary.focus();
+  const childKey = key => handlers.popoverKeydown({ key, target: document.activeElement, preventDefault() {}, stopPropagation() {} }, child);
+  childKey('ArrowDown'); assert.equal(document.activeElement, last); assert.equal(child.open, false);
+  child.summary.focus(); childKey('ArrowUp'); assert.equal(document.activeElement, settings.entry); assert.equal(child.open, false);
+  child.summary.focus(); childKey('ArrowRight'); assert.equal(document.activeElement, child.entry); assert.equal(child.open, true);
+  childKey('ArrowLeft'); assert.equal(document.activeElement, child.summary); assert.equal(child.open, false);
+});
+
 test('folder authorization and automatic matching have no UI or runtime entry points', () => {
   const app = readFileSync(new URL('App.vue', import.meta.url), 'utf8');
   const studio = readFileSync(new URL('useStudio.js', import.meta.url), 'utf8');
