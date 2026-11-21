@@ -2299,6 +2299,51 @@ test('keyup-only IME letters select ranges, navigate, change snap and seek', asy
   } finally { cleanup(); }
 });
 
+test('keyup-only IME digits edit the selected note on the first release after A/D', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const release = code => handlers.get('keyup')({ key: 'Process', code, keyCode: 229, isComposing: true, preventDefault() {} });
+  try {
+    await studio.openChart(file());
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 4, divisions: 16 });
+    for (const prefix of ['Digit', 'Numpad']) {
+      for (const digit of '1234567890') {
+        release('KeyD'); release('KeyA');
+        const selection = { ...studio.state.selectedCell };
+        release(`${prefix}${digit}`);
+        assert.equal(studio.cell.value.note, digit);
+        assert.deepEqual(studio.state.selectedCell, selection);
+      }
+    }
+  } finally { cleanup(); }
+});
+
+test('numeric keyup fallback deduplicates paired presses and preserves native editing and modified keys', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  let prevented = 0;
+  const event = extra => ({ key: '2', code: 'Digit2', preventDefault() { prevented++; }, ...extra });
+  try {
+    await studio.openChart(file());
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 4, divisions: 16 });
+    handlers.get('keydown')(event({ key: 'Process', keyCode: 229, isComposing: true }));
+    assert.equal(studio.cell.value.note, '2');
+    const history = studio.state.undo.length;
+    handlers.get('keydown')(event({ repeat: true }));
+    handlers.get('keyup')(event());
+    assert.equal(prevented, 2); assert.equal(studio.state.undo.length, history);
+    const native = extra => event({ preventDefault() { assert.fail('Native numeric key must be preserved'); }, ...extra });
+    for (const activeElement of [
+      ...['INPUT', 'TEXTAREA', 'SELECT'].map(tagName => ({ tagName })),
+      { tagName: 'DIV', isContentEditable: true }, { tagName: 'BUTTON', closest: () => ({}) }
+    ]) { document.activeElement = activeElement; handlers.get('keyup')(native()); }
+    document.activeElement = { tagName: 'INPUT' };
+    handlers.get('keydown')(native());
+    document.activeElement = null; handlers.get('keyup')(native());
+    for (const flag of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'defaultPrevented', 'repeat']) handlers.get('keyup')(native({ [flag]: true }));
+    studio.state.editorBlocked = true; handlers.get('keyup')(native());
+    assert.equal(studio.cell.value.note, '2'); assert.equal(studio.state.undo.length, history);
+  } finally { cleanup(); }
+});
+
 test('keyup-only IME Space toggles playback on the first release after Q/E without duplicating paired events', async () => {
   const { studio, handlers, mock, cleanup } = mountStudio();
   fakeAudio(mock);

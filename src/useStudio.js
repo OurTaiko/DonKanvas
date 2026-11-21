@@ -795,6 +795,8 @@ export function useStudio() {
   const shortcutKeysDown = new Set();
   function shortcutKey(event) {
     if (event.code === 'Space' || event.key === ' ') return ' ';
+    if (/^(Digit|Numpad)[0-9]$/.test(event.code)) return event.code.slice(-1);
+    if (/^[0-9]$/.test(event.key)) return event.key;
     return /^Key[WSADQEF]$/.test(event.code) ? event.code.slice(3).toLowerCase()
       : /^[wsadqef]$/i.test(event.key) ? event.key.toLowerCase() : null;
   }
