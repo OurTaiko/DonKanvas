@@ -242,6 +242,34 @@ test('global navigation displays the pending F loop endpoint and documents cance
   assert.match(descriptor.styles[0].content, /#measures button.loop-anchor\{outline:2px dashed var\(--green\)/);
 });
 
+test('all snap grids draw dashed subdivisions and solid meter beats without duplicate guides', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const script = descriptor.scriptSetup.content;
+  const source = script.slice(script.indexOf('    const guideDivisions ='), script.indexOf("    brush.fillStyle = '#68776e'"));
+  for (const [snap, numerator] of [[4, 4], [12, 4], [24, 4], [7, 4], [12, 3], [14, 7], [16, 4], [16, 3]]) {
+    const strokes = [];
+    const brush = {
+      strokeStyle: '', dash: [], setLineDash(dash) { this.dash = [...dash]; }, beginPath() {}, lineTo() {},
+      moveTo(x) { this.x = x; },
+      stroke() { strokes.push({ x: this.x, color: this.strokeStyle, dash: this.dash }); }
+    };
+    runInNewContext(source, {
+      controls: { snap }, GRID_DIVISIONS: 16,
+      item: { numerator, barline: true, branchStart: false },
+      brush, barTimeAt: (_, fraction) => fraction, x: fraction => fraction * 3360, height: 278
+    });
+    const expected = new Set([
+      ...Array.from({ length: snap }, (_, step) => Math.round(step / snap * 3360) + .5),
+      ...Array.from({ length: numerator }, (_, step) => Math.round(step / numerator * 3360) + .5)
+    ]);
+    assert.deepEqual(new Set(strokes.map(line => line.x)), expected);
+    assert.equal(strokes.length, expected.size);
+    assert.ok(strokes.every(line => line.color !== '#e3e9e1'));
+    assert.equal(strokes.filter(line => line.color !== '#b7cbd0').length, numerator);
+    for (const line of strokes) assert.deepEqual(line.dash, line.color === '#b7cbd0' ? [2, 3] : []);
+  }
+});
+
 test('audio loading is the rightmost control in the active chart transport', () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   const template = descriptor.template.content;

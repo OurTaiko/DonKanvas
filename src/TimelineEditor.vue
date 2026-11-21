@@ -145,17 +145,18 @@ function draw() {
     for (const event of item.events.filter(event => event.name === 'DELAY')) { brush.fillStyle = '#d9a83b22'; brush.fillRect(x(event.time), 23, x(event.endTime) - x(event.time), height - 48); }
     if (item.index === state.selected) { brush.fillStyle = '#16745b08'; brush.fillRect(x(measureStart(item)), 0, x(measureEnd(item)) - x(measureStart(item)), height); }
     if (measureSelected(item.index)) { brush.fillStyle = '#16745b'; brush.fillRect(x(measureStart(item)), 20, x(measureEnd(item)) - x(measureStart(item)), 3); }
+    const guideDivisions = item.numerator;
     brush.strokeStyle = '#b7cbd0'; brush.lineWidth = 1; brush.setLineDash([2, 3]);
     for (let step = 1; step < controls.snap; step++) {
-      if (step * GRID_DIVISIONS % controls.snap === 0) continue;
+      if (step * guideDivisions % controls.snap === 0) continue;
       const pos = x(barTimeAt(item, step / controls.snap));
       brush.beginPath(); brush.moveTo(Math.round(pos) + .5, 23); brush.lineTo(Math.round(pos) + .5, height - 25); brush.stroke();
     }
     brush.setLineDash([]);
-    for (let step = 0; step < GRID_DIVISIONS; step++) {
+    for (let step = 0; step < guideDivisions; step++) {
       if (step === 0 && !item.barline && !item.branchStart) continue;
-      const pos = x(barTimeAt(item, step / GRID_DIVISIONS));
-      brush.strokeStyle = step === 0 ? item.branchStart ? '#b88a24' : '#6d9480' : step % 4 === 0 ? '#a4bcae' : '#e3e9e1'; brush.lineWidth = 1; brush.beginPath(); brush.moveTo(Math.round(pos) + .5, 23); brush.lineTo(Math.round(pos) + .5, height - 25); brush.stroke();
+      const pos = x(barTimeAt(item, step / guideDivisions));
+      brush.strokeStyle = step === 0 ? item.branchStart ? '#b88a24' : '#6d9480' : '#a4bcae'; brush.lineWidth = 1; brush.beginPath(); brush.moveTo(Math.round(pos) + .5, 23); brush.lineTo(Math.round(pos) + .5, height - 25); brush.stroke();
     }
     brush.fillStyle = '#68776e'; brush.font = '11px Studio, sans-serif'; brush.fillText(`${String(item.index + 1).padStart(3, '0')}  ${item.route || ''}${item.gogo ? ' GOGO' : ''}`, x(item.start) + 8, 15);
     for (const event of item.instructions) {
