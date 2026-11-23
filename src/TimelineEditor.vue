@@ -7,10 +7,11 @@ import { measureStart, measureEnd } from './loop.js';
 import { GRID_DIVISIONS, SNAP_DIVISIONS } from './grid.js';
 import { NOTE_TYPES, selectCell, cellValue } from './note-model.js';
 import { drawLongSpan, drawNote, drawNoteSelection, noteHitRadius } from './note-render.js';
+import { createTimelineViewport, TIMELINE_GUTTER } from './timeline.js';
 import { formatTime } from './useStudio.js';
 
 const studio = inject('studio');
-const { state, controls, bar, spans, visible, viewBeats, timelineScale, timelineBounds, cell, stats, chartStats, currentTiming, range } = studio;
+const { state, controls, bar, spans, visible, viewBeats, timelineScale, timelineBounds, timelineScrollBounds, cell, stats, chartStats, currentTiming, range } = studio;
 const balloonHits = computed(() => {
   const { balloon, special } = chartStats.value;
   return balloon === null || special === null ? null : balloon + special;
@@ -46,10 +47,10 @@ function viewMeasure(event, index) {
 const viewport = ref(null), viewportWidth = studio.timelineWidth;
 const snaps = SNAP_DIVISIONS;
 const zooms = [[1 / 2, '1/2'], [1, '1'], [2, '2'], [3, '3'], [4, '4'], [6, '6'], [8, '8']];
-const firstBeat = computed(() => timelineScale.value.beatAt(timelineBounds.value.start));
-const totalBeats = computed(() => timelineScale.value.beatAt(timelineBounds.value.end) - firstBeat.value);
+const firstBeat = computed(() => timelineScale.value.beatAt(timelineScrollBounds.value.start));
+const totalBeats = computed(() => timelineScale.value.beatAt(timelineScrollBounds.value.end) - firstBeat.value);
 const scrollBeats = computed(() => Math.max(0, totalBeats.value - viewBeats.value));
-const contentWidth = computed(() => Math.max(viewportWidth.value, Math.min(16000000, totalBeats.value / viewBeats.value * viewportWidth.value)));
+const contentWidth = computed(() => Math.max(viewportWidth.value, Math.min(16000000, totalBeats.value / viewBeats.value * viewportWidth.value)) + TIMELINE_GUTTER * 2);
 let observer, wheelTarget = null, programmaticLeft = null, scrollGeometry = '';
 function syncScroll() {
   const element = viewport.value;
@@ -120,19 +121,22 @@ function draw() {
   if (!timeline.value || !overview.value) return;
   if (!state.chart) { canvasContext(timeline.value); canvasContext(overview.value); return; }
   const canvas = timeline.value;
-  canvas.style.width = `${viewportWidth.value}px`;
+  canvas.style.width = `${viewportWidth.value + TIMELINE_GUTTER * 2}px`;
   syncScroll();
-  const { bars, start, end, startBeat } = visible.value, { brush, width, height } = canvasContext(canvas);
-  const scale = timelineScale.value, beats = viewBeats.value;
-  const x = time => (scale.beatAt(time) - startBeat) / beats * width, noteY = height - 61;
-  brush.fillStyle = '#f3f7f2'; brush.fillRect(0, 23, width, 130);
-  brush.fillStyle = '#f6f7f3'; brush.fillRect(0, noteY - 30, width, 60);
+  const { bars, start, end, startBeat } = visible.value, { brush, height } = canvasContext(canvas);
+  const scale = timelineScale.value, beats = viewBeats.value, width = viewportWidth.value;
+  const { x } = createTimelineViewport(scale, visible.value, beats, width), noteY = height - 61;
+  const noteLaneHeight = height - 25 - (noteY - 30);
+  brush.fillStyle = '#f3f7f2'; brush.fillRect(TIMELINE_GUTTER, 23, width, 130);
+  brush.fillStyle = '#f6f7f3'; brush.fillRect(TIMELINE_GUTTER, noteY - 30, width, noteLaneHeight);
+  brush.save(); brush.translate(TIMELINE_GUTTER, 0);
   drawWave(brush, width, start, end, 88, 59, fraction => scale.timeAt(startBeat + fraction * beats));
+  brush.restore();
   const eventLabelEnds = [];
   for (const item of bars) {
     let gogo = item.gogo, segmentStart = item.start;
     for (const event of [...item.events.filter(event => event.name.startsWith('GOGO')), { time: item.end, name: 'GOGOEND' }]) {
-      if (gogo) { brush.fillStyle = '#e5ac3220'; brush.fillRect(x(segmentStart), noteY - 30, x(event.time) - x(segmentStart), 60); }
+      if (gogo) { brush.fillStyle = '#e5ac3220'; brush.fillRect(x(segmentStart), noteY - 30, x(event.time) - x(segmentStart), noteLaneHeight); }
       segmentStart = event.time; gogo = event.name === 'GOGOSTART';
     }
     if (item.delay) {
@@ -161,7 +165,7 @@ function draw() {
       brush.strokeStyle = '#ad7e27'; brush.setLineDash([3, 3]); brush.beginPath(); brush.moveTo(pos, 23); brush.lineTo(pos, height - 25); brush.stroke(); brush.setLineDash([]);
       brush.font = '10px Studio, sans-serif';
       const label = event.name === 'SCROLL' ? `×${event.value}` : event.name.startsWith('GOGO') ? event.name === 'GOGOSTART' ? 'GOGO ON' : 'GOGO OFF' : event.value ? `${event.name} ${event.value}` : event.name;
-      const labelWidth = brush.measureText(label).width, left = Math.max(3, Math.min(pos + 3, width - labelWidth - 3));
+      const labelWidth = brush.measureText(label).width, left = Math.max(TIMELINE_GUTTER + 3, Math.min(pos + 3, TIMELINE_GUTTER + width - labelWidth - 3));
       let row = 0;
       while (row < 6 && (eventLabelEnds[row] ?? -Infinity) > left - 6) row++;
       if (row < 6) {
@@ -171,8 +175,7 @@ function draw() {
     }
     for (let beat = 0; beat < item.numerator; beat++) { const pos = x(barTimeAt(item, beat / item.numerator)); brush.fillStyle = '#859087'; brush.font = '9px Studio, sans-serif'; brush.fillText(String(beat + 1), pos + 4, height - 7); }
   }
-  brush.strokeStyle = '#6d9480'; brush.lineWidth = 1; brush.beginPath(); brush.moveTo(width - .5, 23); brush.lineTo(width - .5, height - 25); brush.stroke();
-  brush.strokeStyle = '#b7c8bc'; brush.beginPath(); brush.moveTo(0, noteY); brush.lineTo(width, noteY); brush.stroke();
+  brush.strokeStyle = '#b7c8bc'; brush.lineWidth = 1; brush.beginPath(); brush.moveTo(TIMELINE_GUTTER, noteY); brush.lineTo(TIMELINE_GUTTER + width, noteY); brush.stroke();
   for (const span of spans.value) drawLongSpan(brush, span, x, noteY, start, end);
   for (const item of bars) for (let index = 0; index < item.notes.length; index++) {
     const note = item.notes[index]; if (note !== '0') drawNote(brush, note, x(barTimeAt(item, index / item.notes.length)), noteY);
@@ -190,7 +193,10 @@ function draw() {
     }
   }
   const position = state.position;
-  if (position >= start && position <= end) { brush.fillStyle = '#c43e35'; brush.fillRect(x(position), 20, 1.5, height - 40); brush.beginPath(); brush.moveTo(x(position) - 4, 20); brush.lineTo(x(position) + 4, 20); brush.lineTo(x(position), 26); brush.fill(); }
+  if (position >= start && position <= end) { brush.fillStyle = '#c43e35'; brush.fillRect(x(position), 23, 1.5, height - 48); brush.beginPath(); brush.moveTo(x(position) - 4, 20); brush.lineTo(x(position) + 4, 20); brush.lineTo(x(position), 26); brush.fill(); }
+  brush.fillStyle = '#b8b8b880';
+  brush.fillRect(0, 23, TIMELINE_GUTTER, height - 48);
+  brush.fillRect(TIMELINE_GUTTER + width, 23, TIMELINE_GUTTER, height - 48);
   const overviewContext = canvasContext(overview.value), bounds = timelineBounds.value, total = Math.max(.001, bounds.end - bounds.start);
   const overviewX = time => (time - bounds.start) / total * overviewContext.width;
   drawWave(overviewContext.brush, overviewContext.width, bounds.start, bounds.end, overviewContext.height / 2, overviewContext.height * .44);
@@ -227,18 +233,9 @@ function timelineCell(item, time, x) {
   return selected;
 }
 function point(event) {
-  const rect = timeline.value.getBoundingClientRect(), { startBeat, bars } = visible.value;
-  const scale = timelineScale.value, beats = viewBeats.value;
-  const time = scale.timeAt(startBeat + Math.max(0, Math.min(.999999, (event.clientX - rect.left) / rect.width)) * beats);
-  const x = value => (scale.beatAt(value) - startBeat) / beats * rect.width;
-  let item = bars.findLast(item => time >= measureStart(item) && time < measureEnd(item)), distance = Infinity;
-  for (const candidate of bars) for (let index = 0; index < candidate.notes.length; index++) {
-    const note = candidate.notes[index];
-    if (note === '0') continue;
-    const difference = Math.abs(x(barTimeAt(candidate, index / candidate.notes.length)) - x(time));
-    if (difference <= noteHitRadius(note) && difference < distance) { item = candidate; distance = difference; }
-  }
-  return { rect, time, item, x };
+  const rect = timeline.value.getBoundingClientRect();
+  const projection = createTimelineViewport(timelineScale.value, visible.value, viewBeats.value, viewportWidth.value);
+  return { rect, ...projection.hitTest(event.clientX - rect.left) };
 }
 function pointerMove(event) {
   if (!state.chart || state.invalid) return;
@@ -250,10 +247,11 @@ function pointerMove(event) {
 function pointerDown(event) {
   if (!state.chart || state.invalid) return;
   const { rect, time, item, x } = point(event);
-  if (event.clientY - rect.top < rect.height - 100) { studio.seek(time); return; }
+  if (event.clientY - rect.top < rect.height - 100) { studio.seek(Math.max(timelineBounds.value.start, Math.min(timelineBounds.value.end, time))); return; }
   if (item) {
     event.preventDefault(); viewport.value.focus({ preventScroll: true });
-    studio.selectCell({ bar: item.index, divisions: controls.snap, ...timelineCell(item, time, x) });
+    const pixel = event.clientX - rect.left;
+    studio.selectCell({ bar: item.index, divisions: controls.snap, ...timelineCell(item, time, x) }, pixel < TIMELINE_GUTTER || pixel >= TIMELINE_GUTTER + viewportWidth.value);
   }
 }
 function overviewClick(event) {
@@ -319,7 +317,7 @@ watch(() => state.playing, playing => {
   if (playing && viewport.value) { stopScrolling(); programmaticLeft = viewport.value.scrollLeft; }
 }, { flush: 'sync' });
 onMounted(() => {
-  const resize = () => { if (viewport.value) { viewportWidth.value = viewport.value.clientWidth; draw(); } };
+  const resize = () => { if (viewport.value) { viewportWidth.value = Math.max(1, viewport.value.clientWidth - TIMELINE_GUTTER * 2); draw(); } };
   observer = new ResizeObserver(resize); observer.observe(viewport.value); observer.observe(overview.value.parentElement); resize();
 });
 onUnmounted(() => { cancelMeasureLoop(); observer?.disconnect(); });
@@ -347,7 +345,7 @@ onUnmounted(() => { cancelMeasureLoop(); observer?.disconnect(); });
         <label :title="t('以 4/4 小节的拍数作为缩放参考')">{{ t('缩放') }}<select id="view" v-model.number="controls.view" :aria-label="t('时间轴缩放')"><option value="auto">{{ t('自动') }}</option><option v-for="[value, label] in zooms" :key="value" :value="value">{{ label }} {{ t('小节宽') }}</option></select></label>
         <label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox">{{ t('跟随播放') }}</label>
       </div>
-      <div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @contextmenu.prevent></canvas></div></div>
+      <div class="timeline-frame"><div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @contextmenu.prevent></canvas></div></div></div>
       <section class="cell-inspector" :aria-label="t('音符编辑')">
         <dl>
           <div v-for="attribute in cellAttributes" :key="attribute.id"><dt>{{ t(attribute.label) }}</dt><dd :id="attribute.id" :title="attribute.value">{{ attribute.value }}</dd></div>
@@ -378,6 +376,9 @@ onUnmounted(() => { cancelMeasureLoop(); observer?.disconnect(); });
 
 <style>
 .timeline-wrap{height:auto;padding:0;overscroll-behavior-x:contain}
+.timeline-frame{position:relative;isolation:isolate}
+.timeline-frame:focus-within::after{content:'';position:absolute;inset:0;z-index:1;border:2px solid var(--green);pointer-events:none}
+.timeline-frame .timeline-wrap:focus{outline:none}
 #measures{user-select:none;touch-action:pan-y}#measures.dragging,#measures.dragging button{cursor:crosshair}#measures button.loop-preview{outline:1px solid var(--green);outline-offset:-1px}
 #measure-loop-anchor{font-size:11px;color:var(--green);font-variant-numeric:tabular-nums}#measures button.loop-anchor{outline:2px dashed var(--green);outline-offset:-2px}
 #measures button.in-selection{box-shadow:inset 0 3px 0 var(--green)}#measures button.note-selected{position:relative}#measures button.note-selected::after{content:'';position:absolute;right:4px;bottom:4px;width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 2px #fff}

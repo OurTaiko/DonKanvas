@@ -1,3 +1,29 @@
+import { barTimeAt } from './chart.js';
+import { measureStart, measureEnd } from './loop.js';
+import { noteHitRadius } from './note-render.js';
+
+export const TIMELINE_GUTTER = 24;
+
+export function createTimelineViewport(scale, visible, beats, width) {
+  const x = time => TIMELINE_GUTTER + (scale.beatAt(time) - visible.startBeat) / beats * width;
+  const timeAt = pixel => scale.timeAt(visible.startBeat + (pixel - TIMELINE_GUTTER) / width * beats);
+  return {
+    x,
+    timeAt,
+    hitTest(pixel) {
+      const time = timeAt(pixel);
+      let item = visible.bars.findLast(item => time >= measureStart(item) && time < measureEnd(item)), distance = Infinity;
+      for (const candidate of visible.bars) for (let index = 0; index < candidate.notes.length; index++) {
+        const note = candidate.notes[index];
+        if (note === '0') continue;
+        const difference = Math.abs(x(barTimeAt(candidate, index / candidate.notes.length)) - pixel);
+        if (difference <= noteHitRadius(note) && difference < distance) { item = candidate; distance = difference; }
+      }
+      return { time, item, x };
+    }
+  };
+}
+
 function intervalAt(points, value, key) {
   let low = 0, high = points.length;
   while (low < high) {

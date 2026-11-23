@@ -11,7 +11,7 @@ import { balloonInfo, balloonTotals, setBalloonCount, replaceBarWithBalloons, re
 import { HISTORY_LIMIT, textDiff, applyDiff } from './history.js';
 import { songMetadata, setSongMetadata } from './metadata.js';
 import { addCourse, deleteCourse, addPlayerCharts, setCourseLevel } from './courses.js';
-import { createBeatTimeline } from './timeline.js';
+import { createBeatTimeline, TIMELINE_GUTTER } from './timeline.js';
 import { noteHitRadius } from './note-render.js';
 
 const WORKSPACE_KEY = 'tja-wave-workspace';
@@ -45,9 +45,17 @@ export function useStudio() {
   const viewBeats = computed(() => controls.view === 'auto'
     ? Math.max(1, timelineWidth.value) / (2 * noteHitRadius('1') * .9) / 4
     : 4 * controls.view);
+  const timelineScrollBounds = computed(() => {
+    const bounds = timelineBounds.value, scale = timelineScale.value;
+    const first = scale.beatAt(bounds.start), padding = viewBeats.value * TIMELINE_GUTTER / Math.max(1, timelineWidth.value);
+    return {
+      start: scale.timeAt(first - padding),
+      end: scale.timeAt(Math.max(scale.beatAt(bounds.end) + padding, first + viewBeats.value))
+    };
+  });
   const visible = computed(() => {
     if (!state.chart) return null;
-    const bounds = timelineBounds.value, scale = timelineScale.value;
+    const bounds = timelineScrollBounds.value, scale = timelineScale.value;
     const first = scale.beatAt(bounds.start), last = scale.beatAt(bounds.end);
     const startBeat = Math.max(first, Math.min(scale.beatAt(state.viewStart), Math.max(first, last - viewBeats.value)));
     const endBeat = startBeat + viewBeats.value;
@@ -290,8 +298,8 @@ export function useStudio() {
       return true;
     });
   }
-  function clampTimelineStart(start) {
-    const bounds = timelineBounds.value, scale = timelineScale.value;
+  function clampTimelineStart(start, bounds = timelineScrollBounds.value) {
+    const scale = timelineScale.value;
     const first = scale.beatAt(bounds.start), last = scale.beatAt(bounds.end);
     return scale.timeAt(Math.max(first, Math.min(scale.beatAt(start), Math.max(first, last - viewBeats.value))));
   }
@@ -307,7 +315,7 @@ export function useStudio() {
   function followTime(position) {
     const { startBeat, endBeat } = visible.value, scale = timelineScale.value;
     const beat = scale.beatAt(position);
-    if (beat < startBeat || beat >= endBeat) panTimeline(scale.timeAt(startBeat + Math.floor((beat - startBeat) / viewBeats.value) * viewBeats.value), false);
+    if (beat < startBeat || beat >= endBeat) panTimeline(clampTimelineStart(scale.timeAt(startBeat + Math.floor((beat - startBeat) / viewBeats.value) * viewBeats.value), timelineBounds.value), false);
   }
   function select(index) {
     if (!state.chart?.bars.length) return;
@@ -327,10 +335,11 @@ export function useStudio() {
     const target = Math.max(0, index + direction);
     if (target < bars.length) seek(Math.max(0, measureStart(bars[target])));
   }
-  function selectCell(position) {
+  function selectCell(position, reveal = false) {
     if (state.invalid) return;
     if (!state.chart?.bars[position.bar]) { notice(message('请先创建难度谱面。'), true); return; }
     pause(); state.selected = position.bar; state.selectedCell = position; state.commandCell = { ...position }; rewindToSelectedNote(); syncSource(); persist();
+    if (reveal) revealCell(true);
   }
   function rewindToSelectedNote() {
     const selected = cell.value;
@@ -387,9 +396,18 @@ export function useStudio() {
       if (index < 0 || index >= state.chart.bars.length) return;
     }
     selectCell({ bar: index, numerator: slot, denominator, divisions });
-    const time = barTimeAt(state.chart.bars[index], slot / denominator), scale = timelineScale.value;
+    revealCell();
+  }
+  function revealCell(wholeNote = false) {
+    const selected = cell.value;
+    if (!selected) return;
+    const time = selected.time, scale = timelineScale.value;
     const beat = scale.beatAt(time), start = scale.beatAt(viewAnimation?.target ?? visible.value.start);
-    if (beat < start || beat >= start + viewBeats.value) panTimeline(scale.timeAt(beat - viewBeats.value * .25), false, true);
+    const margin = wholeNote ? (noteHitRadius(selected.note) + 2) * viewBeats.value / Math.max(1, timelineWidth.value) : 0;
+    if (beat < start + margin || beat >= start + viewBeats.value - margin) {
+      const target = scale.timeAt(beat - viewBeats.value * .25);
+      panTimeline(wholeNote ? target : clampTimelineStart(target, timelineBounds.value), false, true);
+    }
   }
   function setCommandPosition(numerator, denominator) {
     guard(() => {
@@ -903,5 +921,5 @@ export function useStudio() {
     pause(); void context?.close(); document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup);
     window.removeEventListener('blur', clearShortcutKeys); window.removeEventListener('beforeunload', beforeUnload);
   });
-  return { state, controls, bar, spans, visible, viewSpan, viewBeats, timelineWidth, timelineScale, timelineBounds, chartStats, stats, cell, command, measureCommand, currentTiming, range, duration, metadata, notice, reportFileError, pause, play, stop, seek, seekMeasure, panTimeline, select, selectCell, selectNote, selectAdjacentNote, clearNoteSelection, setCommandPosition, applySettings, applyBranchSource, applyMeasureBranch, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, clearLoop, markLoop, loopCurrent, setSnap, changeCourse, createCourse, removeCourse, createPlayerCharts, setLevel, changeAllBranches, changeBranch, openChart, openCharts, openAudio, newChart, switchChart, closeChart, insertBar, deleteBar, copyMeasures, requestPaste, pasteMeasures, reloadForUpdate, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
+  return { state, controls, bar, spans, visible, viewSpan, viewBeats, timelineWidth, timelineScale, timelineBounds, timelineScrollBounds, chartStats, stats, cell, command, measureCommand, currentTiming, range, duration, metadata, notice, reportFileError, pause, play, stop, seek, seekMeasure, panTimeline, select, selectCell, selectNote, selectAdjacentNote, clearNoteSelection, setCommandPosition, applySettings, applyBranchSource, applyMeasureBranch, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, clearLoop, markLoop, loopCurrent, setSnap, changeCourse, createCourse, removeCourse, createPlayerCharts, setLevel, changeAllBranches, changeBranch, openChart, openCharts, openAudio, newChart, switchChart, closeChart, insertBar, deleteBar, copyMeasures, requestPaste, pasteMeasures, reloadForUpdate, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
 }

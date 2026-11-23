@@ -2,10 +2,42 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TJAParser } from 'tja';
 import { parseChart, barTimeAt } from './chart.js';
-import { createBeatTimeline } from './timeline.js';
+import { createBeatTimeline, createTimelineViewport } from './timeline.js';
 
 const chart = (body, bpm = 100, offset = 0) => `TITLE:Beat timeline\nBPM:${bpm}\nOFFSET:${offset}\nCOURSE:Oni\nLEVEL:1\n#START\n${body}\n#END\n`;
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-8, `${actual} != ${expected}`);
+
+test('viewport gutters keep the first note fully visible and selectable before the chart start at every zoom', () => {
+  for (const bpm of [60, 240]) for (const offset of [-1.25, 0, .825]) {
+    const parsed = parseChart(chart(`3${'0'.repeat(126)}7,`, bpm, offset), TJAParser), scale = createBeatTimeline(parsed), bar = parsed.bars[0];
+    for (const width of [192, 528, 932]) for (const beats of [2, width / 72, 32]) {
+      const viewport = createTimelineViewport(scale, { bars: [bar], startBeat: scale.beatAt(bar.start) }, beats, width);
+      near(viewport.x(bar.start), 24);
+      near(viewport.timeAt(viewport.x(bar.start)), bar.start);
+      const hit = viewport.hitTest(viewport.x(bar.start) - 14);
+      assert.equal(hit.item, bar);
+      assert.ok(hit.time < bar.start);
+      assert.equal(viewport.hitTest(viewport.x(bar.start) - 14.01).item, undefined);
+    }
+  }
+});
+
+test('viewport end gutter keeps the last note selectable beyond the chart end', () => {
+  for (const bpm of [60, 240]) for (const offset of [-1.25, 0, .825]) {
+    const parsed = parseChart(chart(`3${'0'.repeat(126)}7,`, bpm, offset), TJAParser), scale = createBeatTimeline(parsed), bar = parsed.bars[0];
+    const lastNote = barTimeAt(bar, 127 / 128);
+    for (const width of [192, 528, 932]) for (const beats of [2, width / 72, 32]) {
+      const viewport = createTimelineViewport(scale, { bars: [bar], startBeat: scale.beatAt(bar.end) - beats }, beats, width);
+      near(viewport.x(bar.end), width + 24);
+      assert.ok(width + 48 - (viewport.x(lastNote) + 16) >= 8);
+      const hit = viewport.hitTest(viewport.x(lastNote) + 16);
+      assert.equal(hit.item, bar);
+      assert.ok(hit.time > bar.end);
+      near(viewport.timeAt(viewport.x(lastNote)), lastNote);
+      assert.equal(viewport.hitTest(viewport.x(bar.end) + 17).item, undefined);
+    }
+  }
+});
 
 test('100 and 200 BPM measures and note intervals have identical beat widths but different playback durations', () => {
   const parsed = parseChart(chart('1111,\n1111,\n#BPMCHANGE 200\n1111,\n1111,'), TJAParser);

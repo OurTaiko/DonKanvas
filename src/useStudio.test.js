@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { createRenderer, nextTick } from 'vue';
 import { useStudio } from './useStudio.js';
 import { locale, formatMessage } from './i18n.js';
-import { drawNote } from './note-render.js';
+import { drawNote, noteHitRadius } from './note-render.js';
+import { createTimelineViewport } from './timeline.js';
 import { COURSE_NAMES, courseLevel } from './courses.js';
 
 const chart = 'TITLE:Vue session\nBPM:120\nOFFSET:0\nCOURSE:Oni\nLEVEL:1\n#START\n1000,\n2000,\n#END\n';
@@ -2826,10 +2827,10 @@ test('timeline bounds include audio tails and negative timing segments and clamp
   try {
     await studio.openChart(file()); await studio.openAudio(audioFile());
     assert.equal(studio.timelineBounds.value.end, 8);
-    studio.panTimeline(1000); near(studio.visible.value.start, 4); near(studio.visible.value.end, 8);
-    studio.panTimeline(-1000); near(studio.visible.value.start, 0);
+    studio.panTimeline(1000); near(studio.visible.value.start, 4 + 1 / 6); near(studio.visible.value.end, 8 + 1 / 6);
+    studio.panTimeline(-1000); near(studio.visible.value.start, -1 / 6);
     studio.panTimeline(Infinity); assert.match(studio.state.notice, /有限数值/);
-    studio.controls.view = 8; near(studio.visible.value.start, 0); near(studio.viewSpan.value, 16);
+    studio.controls.view = 8; studio.panTimeline(0); near(studio.visible.value.start, 0); near(studio.viewSpan.value, 16);
     await studio.openChart(file('overlap.tja', chart.replace('1000,\n2000,', '10\n#DELAY -3\n20,')));
     assert.equal(studio.timelineBounds.value.start, -2); assert.equal(studio.timelineBounds.value.end, 1);
     studio.controls.view = 1; studio.panTimeline(-2);
@@ -2895,9 +2896,9 @@ test('arrows pan by one eighth of the beat viewport without moving selection or 
     assert.equal(studio.state.position, 0); assert.equal(studio.state.followPlayback, false);
     mock('matchMedia', () => ({ matches: true }));
     for (let index = 0; index < 20; index++) press('ArrowLeft', true);
-    near(studio.visible.value.startBeat, 0);
+    near(studio.visible.value.startBeat, studio.timelineScale.value.beatAt(studio.timelineScrollBounds.value.start));
     for (let index = 0; index < 50; index++) press('ArrowRight', true);
-    near(studio.visible.value.endBeat, studio.timelineScale.value.beatAt(studio.timelineBounds.value.end));
+    near(studio.visible.value.endBeat, studio.timelineScale.value.beatAt(studio.timelineScrollBounds.value.end));
     studio.panTimeline(0); studio.controls.view = .25;
     press('ArrowRight'); near(studio.visible.value.startBeat, studio.viewBeats.value / 8);
     await studio.play(0);
@@ -3087,6 +3088,67 @@ test('A/D prioritizes trailing notes across measures and at the final chart boun
     press('d'); assert.equal(studio.cell.value.numerator, 47);
     press('d'); assert.equal(studio.cell.value.numerator, 47); assert.equal(studio.cell.value.bar, 1);
     assert.equal(studio.state.undo.length, 0); assert.equal(studio.state.dirty, false);
+  } finally { cleanup(); }
+});
+
+test('gutter selections smoothly reveal the whole first and last note without changing playback bounds or history', async () => {
+  const { studio, mock, ticks, cleanup } = mountStudio();
+  let now = 0;
+  const frame = elapsed => { now += elapsed; ticks.frame(now); };
+  const assertInside = () => {
+    const viewport = createTimelineViewport(studio.timelineScale.value, studio.visible.value, studio.viewBeats.value, studio.timelineWidth.value);
+    const x = viewport.x(studio.cell.value.time), radius = noteHitRadius(studio.cell.value.note);
+    assert.ok(x - radius >= 26);
+    assert.ok(x + radius <= studio.timelineWidth.value + 22);
+  };
+  try {
+    mock('performance', { now: () => now });
+    await studio.openChart(file('edges.tja', chart.replace('1000,\n2000,', `3${'0'.repeat(126)}7,\n3${'0'.repeat(126)}7,`)));
+    studio.controls.view = .25;
+    studio.setLoop(1, 2);
+    const text = studio.state.text, duration = studio.duration.value, bounds = { ...studio.timelineBounds.value };
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 128, divisions: 16 }, true);
+    near(studio.visible.value.start, 0);
+    frame(90);
+    assert.ok(studio.visible.value.start < 0 && studio.visible.value.start > studio.timelineScrollBounds.value.start);
+    frame(90); assertInside();
+    studio.selectCell({ bar: 1, numerator: 127, denominator: 128, divisions: 16 });
+    studio.panTimeline(studio.timelineScale.value.timeAt(studio.timelineScale.value.beatAt(studio.cell.value.time) - studio.viewBeats.value));
+    const start = studio.visible.value.start;
+    studio.selectCell({ bar: 1, numerator: 127, denominator: 128, divisions: 16 }, true);
+    near(studio.visible.value.start, start);
+    frame(90); assert.ok(studio.visible.value.start > start);
+    frame(90); assertInside();
+    assert.equal(studio.cell.value.bar, 1); assert.equal(studio.cell.value.numerator, 127);
+    assert.equal(studio.state.playing, false); near(studio.state.position, 2);
+    assert.deepEqual(studio.range.value, [1, 2]);
+    assert.equal(studio.state.text, text); assert.equal(studio.state.undo.length, 0);
+    assert.equal(studio.duration.value, duration); assert.deepEqual(studio.timelineBounds.value, bounds);
+  } finally { cleanup(); }
+});
+
+test('gutter reveal respects reduced motion, leaves body selections still and cancels on manual pan', async () => {
+  const { studio, mock, ticks, cleanup } = mountStudio();
+  let now = 0;
+  try {
+    mock('performance', { now: () => now });
+    await studio.openChart(file('long.tja', longChart));
+    studio.controls.view = .25;
+    mock('matchMedia', () => ({ matches: true }));
+    studio.panTimeline(.15);
+    studio.state.position = 3;
+    const blank = { bar: 0, numerator: 1, denominator: 16, divisions: 16 };
+    studio.selectCell(blank, true);
+    assert.ok(studio.visible.value.start < .15);
+    assert.equal(studio.cell.value.note, '0'); near(studio.state.position, 3);
+    studio.panTimeline(0);
+    const body = { bar: 0, numerator: 2, denominator: 16, divisions: 16 };
+    studio.selectCell(body); ticks.frame(now + 200); near(studio.visible.value.start, 0);
+    mock('matchMedia', () => ({ matches: false }));
+    studio.panTimeline(.15); studio.selectCell(blank, true);
+    now += 45; ticks.frame(now);
+    studio.panTimeline(.7); now += 200; ticks.frame(now); near(studio.visible.value.start, .7);
+    assert.deepEqual(studio.state.selectedCell, blank); assert.equal(studio.state.undo.length, 0);
   } finally { cleanup(); }
 });
 
