@@ -1,7 +1,7 @@
 <script setup>
 import { t, message, formatMessage, LocalizedError, languages, localePreference, initializeLocale, setLocale } from './i18n.js';
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, shallowRef, watch } from 'vue';
-import { Plus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste } from '@lucide/vue';
+import { Plus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser } from '@lucide/vue';
 import { useStudio, formatTime } from './useStudio.js';
 import productIcon from './assets/icon.png';
 import TimelineEditor from './TimelineEditor.vue';
@@ -84,10 +84,10 @@ watch(fileError, async error => {
   if (!appDisposed && !fileErrorDialog.value.open) fileErrorDialog.value.showModal();
 }, { flush: 'post' });
 const measureActions = computed(() => [
-  { label: '前插小节', action: () => studio.insertBar('before'), disabled: !studio.bar.value || state.invalid },
-  { label: '后插小节', action: () => studio.insertBar('after'), disabled: !studio.bar.value || state.invalid },
-  { label: '删除小节', action: studio.deleteBar, disabled: !studio.bar.value || state.invalid || state.chart.bars.length < 2 },
-  { label: '清空本小节', action: studio.clearBar, disabled: !studio.bar.value || state.invalid }
+  { label: '前插小节', icon: BetweenHorizontalStart, action: () => studio.insertBar('before'), disabled: !studio.bar.value || state.invalid },
+  { label: '后插小节', icon: BetweenHorizontalEnd, action: () => studio.insertBar('after'), disabled: !studio.bar.value || state.invalid },
+  { label: '删除小节', icon: Trash2, action: studio.deleteBar, disabled: !studio.bar.value || state.invalid || state.chart.bars.length < 2 },
+  { label: '清空本小节', icon: Eraser, action: studio.clearBar, disabled: !studio.bar.value || state.invalid }
 ]);
 const shortcutGroups = [
   { title: '文件', items: [['Ctrl+Alt+N', '新建谱面'], ['Ctrl+O', '打开谱面'], ['Ctrl+S', '保存'], ['Ctrl+Shift+S', '另存为'], ['Ctrl+Alt+W', '关闭谱面']] },
@@ -391,7 +391,7 @@ async function dropFiles(event) {
           <hr><h3>{{ t('音符编辑') }}</h3>
           <button v-for="type in NOTE_TYPES" :key="type.value" type="button" :data-menu-note="type.value" :disabled="!studio.cell.value || state.invalid" @click="runEditAction(() => studio.chooseNote(type.value))"><span class="choice-icon" aria-hidden="true"><span class="choice-symbol" :class="type.shape"></span></span><span>{{ type.value === '0' ? t('清空音符') : t(type.name) }}</span><kbd aria-hidden="true">{{ type.value === '0' ? '0 / Delete' : type.shortcut ?? type.value }}</kbd></button>
           <hr><h3>{{ t('小节操作') }}</h3>
-          <button v-for="item in measureActions" :key="item.label" type="button" :disabled="item.disabled" @click="runEditAction(item.action)"><Trash2 v-if="item.label === '删除小节'" aria-hidden="true" /><Plus v-else aria-hidden="true" /><span>{{ t(item.label) }}</span></button>
+          <button v-for="item in measureActions" :key="item.label" type="button" :disabled="item.disabled" @click="runEditAction(item.action)"><component :is="item.icon" aria-hidden="true" /><span>{{ t(item.label) }}</span></button>
         </div>
       </details>
       <details ref="selectionMenu" class="file-popover" @toggle="positionPopover($event.target)" @keydown="popoverKeydown($event, selectionMenu)">
@@ -501,11 +501,9 @@ async function dropFiles(event) {
     <div class="editor-core" :inert="state.editorBlocked">
     <section v-if="studio.bar.value" class="document-toolbar">
       <div class="document-title"><span class="document-difficulty" role="img" :title="courseLabel(state.chart.variant.course)" :aria-label="courseLabel(state.chart.variant.course)"><DifficultyIcon :course="state.chart.variant.course" /></span><h1 id="song-title" :title="state.chart.title">{{ state.chart.title }}</h1><span id="document-mode" :title="variantLabel(state.chart.variant)">{{ variantLabel(state.chart.variant) }}</span><span v-if="state.encoding" id="encoding">{{ state.encoding }}</span></div>
-      <div class="document-history"><button id="undo" class="icon" :aria-label="t('撤销')" :title="t('撤销（Ctrl+Z）')" :disabled="!state.undo.length" @click="studio.history()"><Undo2 /></button><button id="redo" class="icon" :aria-label="t('重做')" :title="t('重做（Ctrl+Shift+Z）')" :disabled="!state.redo.length" @click="studio.history(true)"><Redo2 /></button></div>
     </section>
     <div class="editor-scroll">
     <BranchControls v-if="state.chart?.branches.length" />
-    <div v-if="studio.bar.value || state.error" id="notice" role="status" aria-live="polite" :class="{ error: state.error }">{{ state.notice }}</div>
     <TimelineEditor v-if="studio.bar.value" />
     <section v-else class="empty-editor" @keydown.space.stop>
       <FileMusic />
@@ -518,7 +516,7 @@ async function dropFiles(event) {
     <Teleport to="body" :disabled="!mobileWorkspace"><div ref="transportHost" class="transport-host">
     <section v-if="studio.bar.value" class="transport"><div class="transport-left">
       <button id="previous" class="icon" :title="t('播放位置后退 / 前进一小节')" :aria-label="t('上一小节')" :disabled="!state.chart || state.invalid" @click="studio.seekMeasure(-1)"><SkipBack /></button>
-      <button id="play" class="play icon" :title="t('播放 / 暂停（空格）')" aria-keyshortcuts="Space" :aria-label="state.playing ? t('暂停') : t('播放')" :disabled="!state.chart" @click="state.playing ? studio.pause() : studio.play()"><Pause v-if="state.playing" /><Play v-else /></button>
+      <button id="play" class="play icon primary" :class="{ playing: state.playing }" :title="t('播放 / 暂停（空格）')" aria-keyshortcuts="Space" :aria-label="state.playing ? t('暂停') : t('播放')" :disabled="!state.chart" @click="state.playing ? studio.pause() : studio.play()"><Pause v-if="state.playing" /><Play v-else /></button>
       <button id="stop" class="icon" :title="t('停止')" :aria-label="t('停止')" :disabled="!state.chart" @click="studio.stop"><Square /></button>
       <button id="next" class="icon" :title="t('播放位置后退 / 前进一小节')" :aria-label="t('下一小节')" :disabled="!state.chart || state.invalid" @click="studio.seekMeasure(1)"><SkipForward /></button>
       <div class="time"><b id="time">{{ formatTime(state.position) }}</b><span id="duration">/ {{ formatTime(duration) }}</span></div>
@@ -535,6 +533,7 @@ async function dropFiles(event) {
       </details>
       <button id="open-audio" class="primary" :title="t('载入音频')" :aria-label="t('载入音频')" :disabled="!state.chart" @click="audioFile.click()"><AudioLines /><span>{{ t('载入音频') }}</span></button>
     </div></section>
+    <div v-if="state.notice && (studio.bar.value || state.error)" id="notice" role="status" aria-live="polite" :class="{ error: state.error }">{{ state.notice }}</div>
     </div></Teleport>
     </div>
     <MeasureEditor v-if="studio.bar.value" :inert="state.editorBlocked" />
@@ -573,14 +572,16 @@ main{display:flex;flex:1;min-height:0;max-width:none;margin:0;padding:0}
 .document-toolbar{display:flex;align-items:center;gap:8px 12px;flex-wrap:nowrap;flex-shrink:0;padding:8px 12px;border-bottom:1px solid var(--line);font-size:11px;color:var(--muted)}
 .document-toolbar h1{font-size:16px;line-height:1.4;margin:0;min-width:80px;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
 .document-title{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;flex:1}.document-title h1{min-width:0}.document-difficulty{display:flex;flex-shrink:0}#document-mode{flex-shrink:0;max-width:35%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.document-toolbar button{min-height:30px;padding:4px 8px;font-size:12px}.document-history{display:flex;gap:4px;margin-left:auto}
 .document-toolbar #encoding{margin-left:0;font-size:10px;white-space:nowrap;flex-shrink:0}
-#notice{min-height:22px;padding:3px 12px 5px;font-size:11px;overflow-wrap:anywhere}
+#notice{min-height:0;max-height:20dvh;overflow:auto;padding:4px 12px;border-top:1px solid var(--line);background:var(--paper);color:var(--muted);font-size:11px;line-height:16px;overflow-wrap:anywhere}
+#notice.error{color:#bd352b}
+.transport-host:has(>#notice) .transport{box-shadow:none}
+@media(max-width:900px){.transport:has(+#notice){padding-bottom:7px}.transport-host>#notice{padding-bottom:calc(4px + env(safe-area-inset-bottom,0px))}}
 .transport{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;z-index:5;flex-shrink:0;padding:7px 12px;gap:6px 12px;background:#fff;border-bottom:0;box-shadow:0 -4px 12px #202a2808}.transport-left{min-width:0;gap:4px;flex-wrap:nowrap}.transport-right{width:auto;margin-left:0;gap:8px;flex-wrap:nowrap;justify-content:flex-end}.transport button{min-height:30px;padding:4px 8px}.transport-left>.icon{width:30px;min-width:30px}.transport .play{width:36px;height:34px}.time{margin-left:4px;gap:4px;white-space:nowrap}.time b{font-size:16px}
 .transport-host{flex-shrink:0;min-width:0;container-type:inline-size}
 .volume-popover{position:relative;font-size:12px}.volume-popover summary{display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--line);border-radius:4px;cursor:pointer;list-style:none;background:#fff}.volume-popover summary::-webkit-details-marker{display:none}.volume-popover summary:focus-visible{outline:2px solid var(--green);outline-offset:3px}
 .volume-panel{position:absolute;right:0;bottom:calc(100% + 6px);z-index:20;width:310px;max-width:85vw;padding:15px;border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 6px 24px #202a2820;display:grid;gap:14px}.volume-panel>label:not(.check){display:grid;grid-template-columns:minmax(58px,max-content) minmax(0,1fr) 36px;gap:8px}.volume-panel input[type=range]{width:100%;margin:0}.volume-panel output{text-align:right;font-size:11px;color:var(--muted)}.volume-panel p{overflow-wrap:anywhere;line-height:1.5}
-.overview{padding:10px 12px}.overview canvas{height:40px;margin-top:5px;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(10% - 1px),#c5d3c9 10%) #e5ece7;outline:1px solid #a6b8ad;outline-offset:-1px;border-radius:4px}.measure-section{padding-inline:12px}
+.overview{position:relative;padding:0;border-top:1px solid var(--line)}.overview>#overview-range,.overview>#overview-hover{position:absolute;z-index:1;pointer-events:none;padding:1px 4px;background:#e5ece7e6;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.overview>#overview-range{top:4px;right:6px}.overview>#overview-hover{z-index:2;max-width:100%;padding:6px 9px;border:1px solid var(--line);border-radius:5px;background:#fff;color:var(--ink);box-shadow:0 3px 12px #202a2826;overflow-wrap:anywhere}.overview canvas{height:40px;margin-top:0;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(10% - 1px),#c5d3c9 10%) #e5ece7;border-radius:0;touch-action:none;cursor:grab}.overview canvas:active{cursor:grabbing}.measure-section{padding-inline:12px}
 .studio-panel{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;background:#fff;overflow:hidden}
 .studio-panel-body{flex:1;min-height:0;padding:0;display:grid;grid-template-columns:260px minmax(0,1fr);align-items:stretch}.studio-panel-body:has(.measure-editor){grid-template-columns:260px minmax(0,1fr) 300px}.studio-panel-body:not(:has(.song-workspace)){grid-template-columns:minmax(0,1fr)}.editor-core{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;container-type:inline-size}.editor-scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}.editor-core .workspace{grid-template-columns:minmax(0,1fr)}
 .studio-panel-body.workspace-collapsed:has(>.song-workspace){grid-template-columns:44px minmax(0,1fr)}.studio-panel-body.workspace-collapsed:has(.measure-editor){grid-template-columns:44px minmax(0,1fr) 300px}
@@ -612,4 +613,24 @@ main{display:flex;flex:1;min-height:0;max-width:none;margin:0;padding:0}
 @container(max-width:640px){.transport{grid-template-columns:minmax(0,1fr)}.transport-left .time{margin-left:auto}.transport-right{justify-content:flex-start}.transport #open-audio{margin-left:auto}.volume-popover{position:static}.volume-panel{left:8px;right:8px;width:auto;max-width:none;max-height:calc(100dvh - 140px);overflow:auto;overscroll-behavior:contain}}
 @container(max-width:400px){.document-toolbar #encoding{display:none}.document-title{gap:6px}.transport #open-audio>span,.volume-popover>summary>span{display:none}.transport #open-audio{width:34px;min-width:34px;padding:7px}}
 @media(max-width:720px){header{padding:3px 8px;gap:6px}.document-toolbar{gap:7px}.document-toolbar h1{max-width:180px}.filename-control{margin-left:0}.filename-control input{width:150px}}
+
+:is(.studio-panel,.transport-host) :is(.document-toolbar,.editor-bar,.transport,.inspector-heading,.aside-actions) button:not(.primary),
+.studio-panel .branch-context>.manage-branches,
+:is(.file-actions>.file-popover,.settings-popover,.volume-popover)>summary{
+  border-color:transparent;background:transparent;color:var(--ink);box-shadow:none;border-radius:4px;
+}
+:is(.studio-panel,.transport-host) :is(.document-toolbar,.editor-bar,.transport,.inspector-heading,.aside-actions) button:not(.primary):not(:disabled):hover,
+.studio-panel .branch-context>.manage-branches:not(:disabled):hover,
+:is(.file-actions>.file-popover,.settings-popover,.volume-popover)>summary:hover{background:#202a280d}
+:is(.studio-panel,.transport-host) :is(.document-toolbar,.editor-bar,.transport,.inspector-heading,.aside-actions) button:not(.primary):not(:disabled):active,
+.studio-panel .branch-context>.manage-branches:not(:disabled):active,
+:is(.file-actions>.file-popover,.settings-popover,.volume-popover)>summary:active{background:#202a281a}
+:is(.studio-panel,.transport-host) :is(.document-toolbar,.editor-bar,.transport,.inspector-heading,.aside-actions) button:not(.primary):focus-visible,
+.studio-panel .branch-context>.manage-branches:focus-visible,
+:is(.file-actions>.file-popover,.settings-popover,.volume-popover)>summary:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
+:is(.studio-panel,.transport-host) .transport .play{width:30px;height:30px}
+:is(.studio-panel,.transport-host) .transport #open-audio,.studio-panel .branch-context>.manage-branches{min-height:30px;padding:4px 8px;font-size:12px}
+.volume-popover>summary{min-height:30px;padding:4px 8px}
+.studio-panel .editor-bar .delete-measure:not(:disabled):hover,.studio-panel .aside-actions #clear:not(:disabled):hover{color:#bd352b;background:#bd352b12}
+:is(.file-actions>.file-popover,.settings-popover,.volume-popover)[open]>summary{background:#16745b18;color:var(--green)}
 </style>

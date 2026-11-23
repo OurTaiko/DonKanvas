@@ -1,7 +1,7 @@
 <script setup>
 import { t } from './i18n.js';
 import { computed, inject, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
-import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, ChevronLeft, ChevronRight } from '@lucide/vue';
+import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2 } from '@lucide/vue';
 import { barTimeAt, barFractionAt } from './chart.js';
 import { measureStart, measureEnd } from './loop.js';
 import { GRID_DIVISIONS, SNAP_DIVISIONS } from './grid.js';
@@ -30,6 +30,7 @@ const cellAttributes = computed(() => {
   ];
 });
 const timeline = ref(null), overview = ref(null), customSnap = ref(null), hover = ref(null);
+const overviewHover = ref(null);
 const measures = ref(null), measureDrag = ref(null);
 const measureSelection = computed(() => measureDrag.value?.dragged
   ? [Math.min(measureDrag.value.start, measureDrag.value.end) + 1, Math.max(measureDrag.value.start, measureDrag.value.end) + 1]
@@ -123,14 +124,16 @@ function draw() {
   const canvas = timeline.value;
   canvas.style.width = `${viewportWidth.value + TIMELINE_GUTTER * 2}px`;
   syncScroll();
-  const { bars, start, end, startBeat } = visible.value, { brush, height } = canvasContext(canvas);
+  const { bars, start, end } = visible.value, { brush, height } = canvasContext(canvas);
   const scale = timelineScale.value, beats = viewBeats.value, width = viewportWidth.value;
-  const { x } = createTimelineViewport(scale, visible.value, beats, width), noteY = height - 61;
+  const { x, timeAt } = createTimelineViewport(scale, visible.value, beats, width), noteY = height - 61;
   const noteLaneHeight = height - 25 - (noteY - 30);
   brush.fillStyle = '#f3f7f2'; brush.fillRect(TIMELINE_GUTTER, 23, width, 130);
   brush.fillStyle = '#f6f7f3'; brush.fillRect(TIMELINE_GUTTER, noteY - 30, width, noteLaneHeight);
-  brush.save(); brush.translate(TIMELINE_GUTTER, 0);
-  drawWave(brush, width, start, end, 88, 59, fraction => scale.timeAt(startBeat + fraction * beats));
+  const waveformWidth = width + TIMELINE_GUTTER * 2;
+  brush.save();
+  if (!state.buffer) brush.translate(TIMELINE_GUTTER, 0);
+  drawWave(brush, waveformWidth, timeAt(0), timeAt(waveformWidth), 88, 59, fraction => timeAt(fraction * waveformWidth));
   brush.restore();
   const eventLabelEnds = [];
   for (const item of bars) {
@@ -254,13 +257,55 @@ function pointerDown(event) {
     studio.selectCell({ bar: item.index, divisions: controls.snap, ...timelineCell(item, time, x) }, pixel < TIMELINE_GUTTER || pixel >= TIMELINE_GUTTER + viewportWidth.value);
   }
 }
-function overviewClick(event) {
-  if (!state.chart) return;
+let overviewDrag = null;
+function overviewTime(event) {
   const rect = overview.value.getBoundingClientRect(), bounds = timelineBounds.value;
-  const time = bounds.start + (event.clientX - rect.left) / rect.width * Math.max(.001, bounds.end - bounds.start);
+  const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
+  return bounds.start + fraction * Math.max(.001, bounds.end - bounds.start);
+}
+function hoverOverview(event) {
+  const canvas = overview.value;
+  if (!canvas || !state.chart || event.pointerType === 'touch') { overviewHover.value = null; return; }
+  const rect = canvas.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) { overviewHover.value = null; return; }
+  const time = overviewTime(event);
+  const index = state.chart.bars.findLastIndex(item => time >= measureStart(item) && time < measureEnd(item));
+  const x = event.clientX - rect.left, y = event.clientY - rect.top;
+  overviewHover.value = { time, measure: index >= 0 ? index + 1 : null, x, y, fraction: x / Math.max(1, rect.width) };
+}
+function overviewClick(event) {
+  if (!state.chart || state.invalid) return;
+  const time = overviewTime(event);
   const containing = state.chart.bars.findLastIndex(item => time >= measureStart(item) && time < measureEnd(item));
   studio.select(Math.max(0, containing >= 0 ? containing : state.chart.bars.findLastIndex(item => measureStart(item) <= time)));
   studio.seek(time);
+}
+function startOverviewDrag(event) {
+  if (!event.isPrimary || event.button !== 0 || overviewDrag || !state.chart || state.invalid) return;
+  event.preventDefault();
+  const time = overviewTime(event), view = visible.value, scale = timelineScale.value;
+  const start = time >= view.start && time <= view.end ? view.start : scale.timeAt(scale.beatAt(time) - viewBeats.value / 2);
+  overviewDrag = { pointerId: event.pointerId, x: event.clientX, time, start, dragged: false, capture: overview.value };
+  overview.value.setPointerCapture(event.pointerId);
+}
+function moveOverviewDrag(event) {
+  const drag = overviewDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  if (Math.abs(event.clientX - drag.x) >= 4) drag.dragged = true;
+  if (drag.dragged) studio.panTimeline(drag.start + overviewTime(event) - drag.time);
+}
+function cancelOverviewDrag(event) {
+  const drag = overviewDrag;
+  if (!drag || event && event.pointerId !== drag.pointerId) return;
+  overviewDrag = null;
+  if (drag.capture.hasPointerCapture(drag.pointerId)) drag.capture.releasePointerCapture(drag.pointerId);
+}
+function finishOverviewDrag(event) {
+  const drag = overviewDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  moveOverviewDrag(event);
+  cancelOverviewDrag();
+  if (!drag.dragged) overviewClick(event);
 }
 let suppressMeasureClick = false;
 function measureAt(event) {
@@ -305,7 +350,7 @@ function measureLoopClick(event) {
   if (suppressMeasureClick && event.detail !== 0) { event.preventDefault(); event.stopPropagation(); }
   suppressMeasureClick = false;
 }
-watch(() => [state.activeId, state.chart, state.invalid], () => cancelMeasureLoop(), { flush: 'sync' });
+watch(() => [state.activeId, state.chart, state.invalid], () => { cancelMeasureLoop(); cancelOverviewDrag(); overviewHover.value = null; }, { flush: 'sync' });
 function snapChange() {
   hover.value = null;
   if (controls.snapChoice !== 'custom') studio.setSnap(Number(controls.snapChoice));
@@ -320,32 +365,31 @@ onMounted(() => {
   const resize = () => { if (viewport.value) { viewportWidth.value = Math.max(1, viewport.value.clientWidth - TIMELINE_GUTTER * 2); draw(); } };
   observer = new ResizeObserver(resize); observer.observe(viewport.value); observer.observe(overview.value.parentElement); resize();
 });
-onUnmounted(() => { cancelMeasureLoop(); observer?.disconnect(); });
+onUnmounted(() => { cancelMeasureLoop(); cancelOverviewDrag(); observer?.disconnect(); });
 </script>
 
 <template>
-  <section class="overview"><div class="section-label"><span>{{ t('全曲总览') }}</span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div><canvas id="overview" ref="overview" :aria-label="t('全曲波形，点击跳转')" :aria-describedby="range || cell ? 'selection-summary' : undefined" role="img" @click="overviewClick"></canvas></section>
   <div class="workspace">
     <section class="editor">
-      <div class="editor-bar"><div class="measure-nav">
+      <div class="lane-head editor-tools editor-bar"><div class="measure-nav">
         <label for="bar-number">{{ t('查看小节') }}</label>
-        <button id="bar-prev" class="icon" :title="t('上一小节')" :aria-label="t('上一小节')" :disabled="!bar || state.invalid" @click="studio.select(state.selected - 1)"><ChevronLeft /></button>
-        <input id="bar-number" type="number" min="1" :max="state.chart?.bars.length" :value="state.selected + 1" :disabled="!bar || state.invalid" @change="studio.select(Number($event.target.value) - 1); $event.target.value = state.selected + 1">
-        <button id="bar-next" class="icon" :title="t('下一小节')" :aria-label="t('下一小节')" :disabled="!bar || state.invalid" @click="studio.select(state.selected + 1)"><ChevronRight /></button>
-      </div><div class="editor-actions">
+        <input id="bar-number" type="number" min="1" :max="state.chart?.bars.length" step="1" :value="state.selected + 1" :disabled="!bar || state.invalid" @change="studio.select(Number($event.target.value) - 1); $event.target.value = state.selected + 1">
+      </div>
+        <label>{{ t('吸附栅格') }}<select id="snap-division" v-model="controls.snapChoice" @change="snapChange"><option v-for="value in snaps" :key="value" :value="String(value)">{{ value }} {{ t('分') }}</option><option value="custom">{{ t('自定义') }}</option></select></label>
+        <label v-show="controls.snapChoice === 'custom'" id="custom-snap-label">{{ t('每小节等分') }}<input id="custom-snap" ref="customSnap" v-model.number="controls.customSnap" type="number" min="1" max="768" step="1" @change="studio.setSnap(Number(controls.customSnap))"></label>
+        <label :title="t('以 4/4 小节的拍数作为缩放参考')">{{ t('缩放') }}<select id="view" v-model.number="controls.view" :aria-label="t('时间轴缩放')"><option value="auto">{{ t('自动') }}</option><option v-for="[value, label] in zooms" :key="value" :value="value">{{ label }} {{ t('小节宽') }}</option></select></label>
+      <div class="editor-actions">
+        <div class="editor-history"><button id="undo" class="icon" :aria-label="t('撤销')" :title="t('撤销（Ctrl+Z）')" :disabled="!state.undo.length" @click="studio.history()"><Undo2 /></button><button id="redo" class="icon" :aria-label="t('重做')" :title="t('重做（Ctrl+Shift+Z）')" :disabled="!state.redo.length" @click="studio.history(true)"><Redo2 /></button></div>
         <div class="measure-actions" role="group" :aria-label="t('插入小节')">
           <button id="insert-bar-before" :title="t('在当前小节前插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('before')"><BetweenHorizontalStart aria-hidden="true" />{{ t('前插小节') }}</button>
           <button id="insert-bar-after" :title="t('在当前小节后插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('after')"><BetweenHorizontalEnd aria-hidden="true" />{{ t('后插小节') }}</button>
         </div>
         <button id="delete-bar" class="delete-measure" :title="state.chart.bars.length <= 1 ? t('不能删除最后一个小节。') : t('删除当前小节及其音符和指令')" :disabled="!bar || state.invalid || state.chart.bars.length <= 1" @click="studio.deleteBar"><Trash2 aria-hidden="true" />{{ t('删除小节') }}</button>
-      </div></div>
-      <div class="lane-head editor-tools">
-        <label>{{ t('吸附细分') }}<select id="snap-division" v-model="controls.snapChoice" @change="snapChange"><option v-for="value in snaps" :key="value" :value="String(value)">{{ value }} {{ t('分') }}</option><option value="custom">{{ t('自定义') }}</option></select></label>
-        <label v-show="controls.snapChoice === 'custom'" id="custom-snap-label">{{ t('每小节等分') }}<input id="custom-snap" ref="customSnap" v-model.number="controls.customSnap" type="number" min="1" max="768" step="1" @change="studio.setSnap(Number(controls.customSnap))"></label>
-        <label :title="t('以 4/4 小节的拍数作为缩放参考')">{{ t('缩放') }}<select id="view" v-model.number="controls.view" :aria-label="t('时间轴缩放')"><option value="auto">{{ t('自动') }}</option><option v-for="[value, label] in zooms" :key="value" :value="value">{{ label }} {{ t('小节宽') }}</option></select></label>
-        <label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox">{{ t('跟随播放') }}</label>
+      </div>
+        <label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span>{{ t('跟随播放') }}</label>
       </div>
       <div class="timeline-frame"><div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @contextmenu.prevent></canvas></div></div></div>
+      <section class="overview"><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span><span v-if="overviewHover" id="overview-hover" role="tooltip" :style="{ left: `${overviewHover.x}px`, top: `${overviewHover.y}px`, transform: `translate(${-overviewHover.fraction * 100}%, calc(-100% - 12px))` }">{{ formatTime(overviewHover.time) }} · {{ t('小节 {p0}', { p0: overviewHover.measure ?? '—' }) }}</span><canvas id="overview" ref="overview" :aria-label="t('全曲波形，点击跳转，拖动浏览')" :aria-describedby="range || cell ? 'selection-summary' : undefined" role="img" @pointerenter="hoverOverview" @pointerleave="overviewHover = null" @pointerdown="startOverviewDrag" @pointermove="hoverOverview($event); moveOverviewDrag($event)" @pointerup="finishOverviewDrag" @pointercancel="cancelOverviewDrag($event); overviewHover = null" @lostpointercapture="cancelOverviewDrag"></canvas></section>
       <section class="cell-inspector" :aria-label="t('音符编辑')">
         <dl>
           <div v-for="attribute in cellAttributes" :key="attribute.id"><dt>{{ t(attribute.label) }}</dt><dd :id="attribute.id" :title="attribute.value">{{ attribute.value }}</dd></div>
@@ -354,7 +398,7 @@ onUnmounted(() => { cancelMeasureLoop(); observer?.disconnect(); });
           <span v-if="state.playing && currentTiming.bar.index !== state.selected">{{ t('播放小节 {p0}', { p0: String(currentTiming.bar.index + 1).padStart(3, '0') }) }}</span>
           <span id="note-count">{{ t('音符数：{p0}', { p0: stats.total }) }}</span>
           <span id="bar-grid">{{ t('主网格') }} {{ GRID_DIVISIONS }} {{ t('格') }}</span>
-          <span id="bar-snap">{{ t('吸附细分') }} {{ t('{p0} 等分', { p0: controls.snap }) }}</span>
+          <span id="bar-snap">{{ t('吸附栅格') }} {{ t('{p0} 等分', { p0: controls.snap }) }}</span>
           <span id="bar-slots">{{ t('源码格数') }} {{ bar?.notes.length || 0 }} {{ t('格') }}</span>
         </div>
       </section>
@@ -383,20 +427,30 @@ onUnmounted(() => { cancelMeasureLoop(); observer?.disconnect(); });
 #measure-loop-anchor{font-size:11px;color:var(--green);font-variant-numeric:tabular-nums}#measures button.loop-anchor{outline:2px dashed var(--green);outline-offset:-2px}
 #measures button.in-selection{box-shadow:inset 0 3px 0 var(--green)}#measures button.note-selected{position:relative}#measures button.note-selected::after{content:'';position:absolute;right:4px;bottom:4px;width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 2px #fff}
 #selection-summary{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:8px;font-size:11px;color:var(--green)}#selection-summary .selected-note-label{color:var(--cyan)}
-.measure-nav{display:flex;align-items:center;gap:6px;min-width:0}.measure-nav label{display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}.measure-nav input{width:64px;min-width:0;min-height:30px;padding:4px 6px}.measure-nav>.icon{width:30px;min-width:30px;min-height:30px;padding:5px}
+.measure-nav{display:flex;align-items:center;gap:6px;min-width:0}.measure-nav label{display:flex;align-items:center;gap:6px;font-size:11px;white-space:nowrap}.measure-nav input{width:64px;min-width:0;height:28px;min-height:28px;padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:#fff;text-align:center;font-size:11px}
 .chart-statistics{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;min-width:0;margin-top:10px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}.chart-statistics>span{white-space:nowrap}.chart-statistics b{font-weight:500;color:var(--ink)}
 .measure-info{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;min-height:24px;margin-bottom:4px;color:var(--muted);font-size:11px}.measure-info>span{white-space:nowrap}
-.measure-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.measure-heading>.section-label{display:flex;gap:12px;min-width:0}.measure-actions{display:inline-flex;max-width:100%;margin-right:6px;border:1px solid var(--line);border-radius:5px;background:#fff}.measure-actions button{min-width:0;min-height:28px;padding:4px 8px;gap:4px;border:0;border-radius:0;font-size:11px}.measure-actions button:first-child{border-radius:4px 0 0 4px}.measure-actions button:last-child{border-left:1px solid var(--line);border-radius:0 4px 4px 0}.measure-actions button svg{width:14px;height:14px}
+.measure-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.measure-heading>.section-label{display:flex;gap:12px;min-width:0}.measure-actions{display:inline-flex;max-width:100%;margin-right:6px;border:0;border-radius:5px;background:transparent}.measure-actions button{min-width:0;padding:4px 8px;gap:4px;border:0;border-radius:4px;font-size:11px}.measure-actions button svg{width:14px;height:14px}
 .timeline-content{min-width:100%}
 #timeline{position:sticky;left:0}
-.editor-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-left:auto}
+.editor-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.editor-history{display:flex;align-items:center;gap:4px}.editor-history>.icon{width:28px;min-width:28px;padding:4px}.editor-history svg{width:14px;height:14px}
 .editor-bar,.lane-head.editor-tools{background:var(--paper)}
-.lane-head.editor-tools{justify-content:flex-start;padding:8px 20px;border-bottom:1px solid var(--line)}
-.editor-actions .delete-measure{min-height:30px;padding:4px 8px;gap:4px;font-size:11px}.delete-measure svg{width:14px;height:14px}.delete-measure:hover:not(:disabled){color:#bd352b;border-color:#bd352b;background:#fff2ef}
-.editor-tools .follow-control{margin-left:auto;white-space:nowrap;gap:4px}
-.editor-tools .follow-control input{margin:0;accent-color:var(--green)}
-.editor-tools label{white-space:nowrap}
-.editor-tools #custom-snap{width:64px;min-width:0;padding:5px;font-size:11px}
+.editor .editor-bar{padding:4px 12px}
+.lane-head.editor-tools{justify-content:flex-start;gap:6px;padding:4px 12px;border-bottom:1px solid var(--line);font:400 11px/normal system-ui,sans-serif;color:var(--muted)}
+.editor-tools input[type=number],.editor-tools select{background:#fff}
+.editor-tools :is(input[type=number],select,button){box-sizing:border-box;height:28px;min-height:28px;padding-block:0;line-height:normal;font-size:11px}
+.editor-actions .delete-measure{padding:4px 8px;gap:4px;font-size:11px}.delete-measure svg{width:14px;height:14px}.delete-measure:hover:not(:disabled){color:#bd352b;border-color:#bd352b;background:#fff2ef}
+.editor-tools .follow-control{position:relative;margin-left:auto;white-space:nowrap;gap:6px;cursor:pointer}
+.editor-tools .follow-control input{position:absolute;width:1px;height:1px;margin:0;opacity:0;clip-path:inset(50%)}
+.switch-track{position:relative;display:inline-block;flex-shrink:0;width:30px;height:18px;border-radius:9px;background:#929c94}
+.switch-track::before{content:'';position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:#fff}
+.follow-control input:checked+.switch-track{background:var(--green)}
+.follow-control input:checked+.switch-track::before{transform:translateX(12px)}
+.follow-control input:focus-visible+.switch-track{outline:2px solid var(--green);outline-offset:3px}
+.editor-tools label{min-height:28px;line-height:normal;white-space:nowrap}
+.editor-tools #custom-snap{width:64px;min-width:0;padding-inline:6px;font-size:11px}
+.editor-tools :is(label,input,select,button,option){font:inherit}
 .choice-symbol.duet{position:relative}.choice-symbol.duet::after{content:'2P';position:absolute;inset:0;display:grid;place-items:center;color:#fff;font:bold 8px sans-serif}
 .editor-bar,.editor-tools{flex-wrap:wrap}
 </style>

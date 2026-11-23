@@ -515,7 +515,7 @@ export function useStudio() {
     if (state.chart) { panTimeline(state.position, false); state.followPlayback = true; }
   }
   function setSnap(value) {
-    if (!Number.isInteger(value) || value < 1 || value > MAX_SNAP_DIVISIONS) { controls.customSnap = controls.snap; notice(message('吸附细分须为 1–768 之间的整数。'), true); return; }
+    if (!Number.isInteger(value) || value < 1 || value > MAX_SNAP_DIVISIONS) { controls.customSnap = controls.snap; notice(message('吸附栅格须为 1–768 之间的整数。'), true); return; }
     controls.snap = value; controls.customSnap = value;
   }
   function changeCourse(value) {

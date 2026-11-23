@@ -7,6 +7,8 @@ import { parse, compileScript } from 'vue/compiler-sfc';
 import { translations } from './locales.js';
 import { SONG_FIELDS, setSongMetadata } from './metadata.js';
 import { NOTE_TYPES } from './note-model.js';
+import { createTimelineViewport, TIMELINE_GUTTER } from './timeline.js';
+import { measureStart, measureEnd } from './loop.js';
 import { languages, locale, localePreference, matchLocale, detectLocale, initializeLocale, setLocale, LOCALE_KEY, t, message, formatMessage, LocalizedError } from './i18n.js';
 
 const reset = () => { locale.value = 'zh-CN'; localePreference.value = 'auto'; };
@@ -30,6 +32,178 @@ test('queued timeline scroll events after switching files cannot access an unmou
   assert.doesNotThrow(() => handle());
 });
 
+test('timeline waveforms extend beneath both gutter masks using the beat projection and leave audio boundaries blank', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const script = descriptor.scriptSetup.content;
+  const source = script.slice(script.indexOf('function drawWave('), script.indexOf('function timelineCell('));
+  function brush() {
+    const rectangles = [], labels = [], offsets = [];
+    let offset = 0;
+    return {
+      rectangles, labels,
+      fillRect(x, y, width, height) { rectangles.push({ x: x + offset, y, width, height, color: this.fillStyle }); },
+      fillText(text, x) { labels.push({ text, x: x + offset }); },
+      save() { offsets.push(offset); }, restore() { offset = offsets.pop(); }, translate(x) { offset += x; },
+      beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, strokeRect() {}
+    };
+  }
+  const scale = {
+    beatAt: time => time <= 50 ? time : 50 + (time - 50) * 2,
+    timeAt: beat => beat <= 50 ? beat : 50 + (beat - 50) / 2
+  };
+  for (const width of [80, 192]) for (const startBeat of [0, 45, 145]) {
+    const timelineBrush = brush(), overviewBrush = brush(), beats = 20;
+    const view = { bars: [], startBeat, start: scale.timeAt(startBeat), end: scale.timeAt(startBeat + beats) };
+    const timeline = { value: { style: {} } }, overview = { value: {} };
+    const state = { chart: { bars: [] }, buffer: { duration: 100 }, peaks: [...Array(500).fill(.25), ...Array(500).fill(.75)], position: -100 };
+    const draw = runInNewContext(`${source}; draw`, {
+      state, timeline, overview, visible: { value: view }, viewportWidth: { value: width }, viewBeats: { value: beats },
+      timelineScale: { value: scale }, timelineBounds: { value: { start: 0, end: 100 } },
+      spans: { value: [] }, hover: { value: null }, TIMELINE_GUTTER, createTimelineViewport, syncScroll() {}, t: text => text,
+      canvasContext: canvas => ({ brush: canvas === timeline.value ? timelineBrush : overviewBrush, width: width + TIMELINE_GUTTER * 2, height: 278 })
+    });
+    draw();
+    const waveform = timelineBrush.rectangles.filter(rect => rect.color === '#438875');
+    const projection = createTimelineViewport(scale, view, beats, width), fullWidth = width + TIMELINE_GUTTER * 2;
+    const audiblePixels = Array.from({ length: fullWidth }, (_, x) => x).filter(x => projection.timeAt(x + 1) > 0 && projection.timeAt(x) < 100);
+    assert.deepEqual(waveform.map(rect => rect.x), audiblePixels);
+    if (startBeat === 45) {
+      assert.equal(waveform[0].x, 0); assert.equal(waveform.at(-1).x, fullWidth - 1);
+      assert.equal(waveform[0].height, .25 * 59 * 2);
+      assert.equal(waveform.at(-1).height, .75 * 59 * 2);
+    }
+    const masks = timelineBrush.rectangles.filter(rect => rect.color === '#b8b8b880');
+    assert.deepEqual(masks.map(rect => [rect.x, rect.width]), [[0, 24], [width + 24, 24]]);
+    assert.ok(timelineBrush.rectangles.indexOf(masks[0]) > timelineBrush.rectangles.indexOf(waveform.at(-1)));
+    state.buffer = null; draw();
+    assert.deepEqual(timelineBrush.labels.at(-1), { text: '无伴奏 · 可播放谱面音符音', x: TIMELINE_GUTTER + 14 });
+  }
+});
+
+test('overview hover reports music time and one-based measures including delays without modifying studio state', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const script = descriptor.scriptSetup.content;
+  const source = script.slice(script.indexOf('function overviewTime('), script.indexOf('function overviewClick('));
+  const state = {
+    chart: { bars: [{ start: 0, end: 2, delay: 1 }, { start: 2, end: 8 }, { start: 8, end: 12 }] },
+    position: 4, playing: true, selected: 1, selectedCell: { bar: 0 }, customLoop: [1, 2]
+  };
+  const before = JSON.stringify(state), overviewHover = { value: null };
+  const overview = { value: { getBoundingClientRect: () => ({ left: 10, right: 210, top: 10, bottom: 50, width: 200 }) } };
+  const hoverOverview = runInNewContext(`${source}; hoverOverview`, {
+    state, overview, overviewHover, timelineBounds: { value: { start: -2, end: 18 } }, measureStart, measureEnd
+  });
+  const event = extra => ({ clientX: 40, clientY: 30, pointerType: 'mouse', ...extra });
+  for (const [time, measure] of [[-1.5, null], [-.5, 1], [0, 1], [2, 2], [7.5, 2], [8, 3], [12, null], [17, null]]) {
+    hoverOverview(event({ clientX: 10 + (time + 2) * 10 }));
+    assert.ok(Math.abs(overviewHover.value.time - time) < 1e-8);
+    assert.equal(overviewHover.value.measure, measure);
+    const { x, y, fraction } = overviewHover.value;
+    assert.ok(Math.abs(x - (time + 2) * 10) < 1e-8);
+    assert.equal(y, 20);
+    for (const tooltipWidth of [60, 150, 200]) {
+      const left = x - fraction * tooltipWidth;
+      assert.ok(left >= -1e-8 && left + tooltipWidth <= 200 + 1e-8);
+    }
+  }
+  hoverOverview(event({ clientX: 110, clientY: 45 }));
+  assert.equal(overviewHover.value.x, 100); assert.equal(overviewHover.value.y, 35);
+  for (const extra of [{ clientX: 9 }, { clientX: 211 }, { clientY: 9 }, { clientY: 51 }, { pointerType: 'touch' }]) {
+    hoverOverview(event()); assert.notEqual(overviewHover.value, null);
+    hoverOverview(event(extra)); assert.equal(overviewHover.value, null);
+  }
+  assert.equal(JSON.stringify(state), before);
+  state.chart = null; hoverOverview(event()); assert.equal(overviewHover.value, null);
+  overview.value = null; assert.doesNotThrow(() => hoverOverview(event()));
+  const template = descriptor.template.content;
+  assert.match(template, /v-if="overviewHover" id="overview-hover"/);
+  assert.match(template, /role="tooltip" :style="\{ left: `\$\{overviewHover.x\}px`, top: `\$\{overviewHover.y\}px`, transform: `translate\(\$\{-overviewHover.fraction \* 100\}%, calc\(-100% - 12px\)\)` \}"/);
+  assert.match(template, /formatTime\(overviewHover.time\)/);
+  assert.match(template, /t\('小节 \{p0\}', \{ p0: overviewHover.measure \?\? '—' \}\)/);
+  assert.match(template, /@pointerenter="hoverOverview" @pointerleave="overviewHover = null"/);
+});
+
+test('overview dragging pans continuously without seeking or changing selections, while a tap still navigates', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'overview-drag' });
+  const script = descriptor.scriptSetup.content;
+  const source = script.slice(script.indexOf('let overviewDrag ='), script.indexOf('let suppressMeasureClick ='));
+  const calls = [], captured = new Set();
+  const state = { chart: { bars: [{ start: 0, end: 50 }, { start: 50, end: 100 }] }, invalid: false };
+  const overview = { value: {
+    getBoundingClientRect: () => ({ left: 10, width: 100 }),
+    setPointerCapture: id => captured.add(id),
+    hasPointerCapture: id => captured.has(id),
+    releasePointerCapture: id => captured.delete(id)
+  } };
+  const handlers = runInNewContext(`${source}; ({ startOverviewDrag, moveOverviewDrag, finishOverviewDrag, cancelOverviewDrag })`, {
+    state, overview, timelineBounds: { value: { start: 0, end: 100 } },
+    visible: { value: { start: 20, end: 40 } }, viewBeats: { value: 20 },
+    timelineScale: { value: { beatAt: time => time * 2, timeAt: beat => beat / 2 } },
+    measureStart: item => item.start, measureEnd: item => item.end,
+    studio: {
+      panTimeline: time => calls.push(['pan', time]),
+      select: index => calls.push(['select', index]),
+      seek: time => calls.push(['seek', time])
+    }
+  });
+  const event = extra => ({ pointerId: 1, isPrimary: true, button: 0, clientX: 40, preventDefault() {}, ...extra });
+  handlers.startOverviewDrag(event());
+  assert.ok(captured.has(1)); assert.deepEqual(calls, []);
+  handlers.moveOverviewDrag(event({ clientX: 42 }));
+  handlers.moveOverviewDrag(event({ clientX: 45, pointerId: 2 }));
+  assert.deepEqual(calls, []);
+  handlers.moveOverviewDrag(event({ clientX: 45 }));
+  handlers.moveOverviewDrag(event({ clientX: 46.25 }));
+  handlers.finishOverviewDrag(event({ clientX: 47 }));
+  assert.deepEqual(calls, [['pan', 25], ['pan', 26.25], ['pan', 27]]);
+  assert.equal(captured.size, 0);
+
+  calls.length = 0;
+  handlers.startOverviewDrag(event({ clientX: 90 }));
+  handlers.moveOverviewDrag(event({ clientX: 95 }));
+  handlers.moveOverviewDrag(event({ clientX: 200 }));
+  handlers.moveOverviewDrag(event({ clientX: -100 }));
+  assert.deepEqual(calls, [['pan', 80], ['pan', 95], ['pan', -5]]);
+  handlers.cancelOverviewDrag(event());
+  handlers.finishOverviewDrag(event());
+  assert.equal(calls.length, 3); assert.equal(captured.size, 0);
+
+  calls.length = 0;
+  handlers.startOverviewDrag(event({ clientX: 80 }));
+  handlers.finishOverviewDrag(event({ clientX: 81 }));
+  assert.deepEqual(calls, [['select', 1], ['seek', 71]]);
+  calls.length = 0;
+  handlers.startOverviewDrag(event({ button: 2 }));
+  handlers.startOverviewDrag(event({ isPrimary: false }));
+  state.invalid = true; handlers.startOverviewDrag(event()); state.invalid = false;
+  state.chart = null; handlers.startOverviewDrag(event());
+  handlers.finishOverviewDrag(event());
+  assert.deepEqual(calls, []); assert.equal(captured.size, 0);
+  const canvas = descriptor.template.content.match(/<canvas id="overview"[^>]*>/)[0];
+  for (const [eventName, handler] of [
+    ['pointerdown', 'startOverviewDrag'], ['pointermove', 'hoverOverview($event); moveOverviewDrag($event)'], ['pointerup', 'finishOverviewDrag'],
+    ['pointercancel', 'cancelOverviewDrag($event); overviewHover = null'], ['lostpointercapture', 'cancelOverviewDrag']
+  ]) assert.ok(canvas.includes(`@${eventName}="${handler}"`));
+  assert.doesNotMatch(canvas, /@click=/);
+  assert.match(descriptor.template.content, /^\s*<div class="workspace">\s*<section class="editor">/);
+  assert.match(descriptor.template.content, /<\/canvas><\/div><\/div><\/div>\s*<section class="overview">[\s\S]*?<\/section>\s*<section class="cell-inspector"/);
+  const styles = readFileSync(new URL('sound.css', import.meta.url), 'utf8');
+  assert.match(styles, /\.timeline-wrap\{[^}]*overflow-x:auto;[^}]*scrollbar-width:none/);
+  assert.match(styles, /\.timeline-wrap::-webkit-scrollbar\{display:none\}/);
+  assert.match(descriptor.template.content, /class="timeline-wrap"[^>]*tabindex="0"[^>]*@scroll="scrollTimeline"[^>]*@wheel="wheelTimeline"[^>]*@keydown="keydownTimeline"/);
+  const { descriptor: app } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  const appStyles = app.styles[0].content;
+  assert.match(appStyles, /\.overview\{[^}]*position:relative;[^}]*padding:0;/);
+  assert.match(appStyles, /\.overview>#overview-range,\.overview>#overview-hover\{[^}]*position:absolute;[^}]*pointer-events:none/);
+  assert.match(appStyles, /\.overview>#overview-range\{top:4px;right:6px\}/);
+  assert.match(appStyles, /\.overview canvas\{[^}]*margin-top:0;[^}]*border-radius:0/);
+  const overviewTemplate = descriptor.template.content.match(/<section class="overview">[\s\S]*?<\/section>/)[0];
+  assert.doesNotMatch(overviewTemplate, /全曲总览|section-label/);
+  assert.match(overviewTemplate, /<span id="overview-range">/);
+  assert.match(canvas, /:aria-label="t\('全曲波形，点击跳转，拖动浏览'\)"/);
+});
+
 test('the new-document tab follows the last file inside the left-aligned scrolling tab content', () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'new-document-tab' });
@@ -42,7 +216,7 @@ test('the new-document tab follows the last file inside the left-aligned scrolli
   assert.match(descriptor.styles[0].content, /\.chart-tabs \.new-chart-tab\{[^}]*flex-shrink:0/);
   assert.match(descriptor.styles[0].content, /\.chart-tabs-content\{[^}]*min-height:43px/);
   assert.match(descriptor.template.content, /<section v-if="studio.bar.value" class="document-toolbar">/);
-  assert.match(descriptor.template.content, /<div v-if="studio.bar.value \|\| state.error" id="notice"/);
+  assert.match(descriptor.template.content, /<div v-if="state.notice && \(studio.bar.value \|\| state.error\)" id="notice"/);
 });
 
 test('the header file menu groups file actions and shortcuts without occupying the tab row', () => {
@@ -382,6 +556,11 @@ test('dropping TJA files anywhere opens them sequentially, preserves native text
     assert.match(menu, /:disabled="!studio.cell.value \|\| state.invalid"[\s\S]*studio.chooseNote\(type.value\)/);
     assert.doesNotMatch(menu, /studio.markLoop|studio.clearLoop/);
     assert.match(menu, /Ctrl\+Z/); assert.match(menu, /Ctrl\+Shift\+Z/);
+    const actions = descriptor.scriptSetup.content.match(/const measureActions = computed\(\(\) => \[[\s\S]*?\n\]\);/)[0];
+    for (const [label, icon] of [['前插小节', 'BetweenHorizontalStart'], ['后插小节', 'BetweenHorizontalEnd'], ['删除小节', 'Trash2'], ['清空本小节', 'Eraser']]) {
+      assert.ok(actions.includes(`label: '${label}', icon: ${icon},`));
+    }
+    assert.match(menu, /@click="runEditAction\(item.action\)"><component :is="item.icon" aria-hidden="true" \/>/);
   });
 
   test('the central title identifies difficulty before the song and mode after it, without a duplicate inspector header', () => {
@@ -490,7 +669,7 @@ test('global navigation previews and commits pointer-drag loop ranges without co
   handlers.cancelMeasureLoop(event()); assert.equal(measureDrag.value, null); assert.equal(writes.length, count);
   drag(0, 2); hit = null;
   handlers.finishMeasureLoop(event({ clientX: 100 })); assert.deepEqual(writes.at(-1), [1, 3]);
-  assert.match(script, /watch\(\(\) => \[state.activeId, state.chart, state.invalid\], \(\) => cancelMeasureLoop\(\), \{ flush: 'sync' \}\)/);
+  assert.match(script, /watch\(\(\) => \[state.activeId, state.chart, state.invalid\], \(\) => \{ cancelMeasureLoop\(\); cancelOverviewDrag\(\); overviewHover.value = null; \}, \{ flush: 'sync' \}\)/);
   assert.match(descriptor.template.content, /@pointercancel="cancelMeasureLoop" @lostpointercapture="cancelMeasureLoop"/);
   assert.match(descriptor.template.content, /@click.capture="measureLoopClick"/);
   assert.match(descriptor.template.content, /:data-measure-index="item.index"/);
@@ -529,7 +708,7 @@ test('the header keeps title and history while global navigation contains full-c
     assert.equal(timeline.split(`id="${id}"`).length - 1, 1);
     assert.ok(!toolbar.includes(`id="${id}"`), id);
   }
-  for (const id of ['undo', 'redo']) assert.ok(toolbar.includes(`id="${id}"`), id);
+  for (const id of ['undo', 'redo']) assert.ok(!toolbar.includes(`id="${id}"`), id);
   const measure = readFileSync(new URL('MeasureEditor.vue', import.meta.url), 'utf8');
   for (const id of ids) assert.ok(!measure.includes(`id="${id}"`), `Duplicate measure ID: ${id}`);
   assert.match(navigation, /chartStats.rollSeconds.toFixed\(3\)/);
@@ -539,9 +718,13 @@ test('the header keeps title and history while global navigation contains full-c
   assert.match(timeline, /balloon === null \|\| special === null \? null : balloon \+ special/);
   assert.match(template, /<\/section>\s*<div class="editor-scroll">/);
   assert.doesNotMatch(template, /id="chart-name"|document-status|command-warning|未关联文件|撤销 \{p0\}\/50/);
-  assert.doesNotMatch(timeline, /id="undo"|id="redo"|Undo2|Redo2/);
-  assert.equal([...template.matchAll(/id="undo"/g)].length, 1);
-  assert.equal([...template.matchAll(/id="redo"/g)].length, 1);
+  assert.doesNotMatch(template, /id="undo"|id="redo"|document-history/);
+  for (const [id, action] of [['undo', 'studio.history()'], ['redo', 'studio.history(true)']]) {
+    assert.equal(timeline.split(`id="${id}"`).length - 1, 1);
+    const button = timeline.match(new RegExp(`<button id="${id}"[^>]*>`))[0];
+    assert.ok(button.includes(`:disabled="!state.${id}.length"`));
+    assert.ok(button.includes(`@click="${action}"`));
+  }
 });
 
 test('note choices fill responsive equal-width columns with consistent height, rounded large rolls and cartoon balloons', () => {
@@ -549,7 +732,9 @@ test('note choices fill responsive equal-width columns with consistent height, r
   compileScript(descriptor, { id: 'note-palette' });
   const styles = readFileSync(new URL('sound.css', import.meta.url), 'utf8');
   assert.match(styles, /\.measure-editor \.palette\{[^}]*display:grid;grid-template-columns:repeat\(auto-fit,minmax\(60px,1fr\)\)/);
-  assert.match(styles, /\.measure-editor \.palette button\{[^}]*width:100%;height:60px;min-width:0/);
+  assert.match(styles, /\.measure-editor \.palette button\{[^}]*width:100%;height:72px;min-width:0/);
+  assert.match(styles, /\.measure-editor \.palette button\{[^}]*padding:16px 3px 3px/);
+  assert.match(styles, /\.measure-editor \.palette small\{[^}]*font-size:12px;line-height:16px;font-weight:600;color:var\(--ink\)/);
   assert.doesNotMatch(styles, /\.measure-editor \.palette button\{[^}]*(?:width:60px|flex:0 0 60px)/);
   assert.match(styles, /\.choice-icon\{display:grid;place-items:center;width:34px;height:28px;flex-shrink:0/);
   assert.match(styles, /\.choice-name\{[^}]*height:22px;flex-shrink:0/);
@@ -607,18 +792,50 @@ test('current position timing lives in note attributes and measure selection liv
   for (const field of ['bpm', 'scroll', 'numerator', 'denominator', 'gogo', 'delay']) assert.ok(descriptor.scriptSetup.content.includes(`timing.${field}`), field);
   for (const id of ['cell-bpm', 'cell-scroll', 'cell-meter']) assert.ok(descriptor.scriptSetup.content.includes(`id: '${id}'`), id);
   const nav = descriptor.template.content.match(/<div class="measure-nav">[\s\S]*?<\/div>/)[0];
-  assert.match(nav, /<label for="bar-number">{{ t\('查看小节'\) }}<\/label>\s*<button id="bar-prev"[\s\S]*<input id="bar-number"[\s\S]*<button id="bar-next"/);
+  assert.match(nav, /<label for="bar-number">{{ t\('查看小节'\) }}<\/label>\s*<input id="bar-number" type="number" min="1" :max="state.chart\?\.bars.length" step="1"/);
+  assert.doesNotMatch(descriptor.template.content, /id="bar-prev"|id="bar-next"|measure-stepper/);
+  const styles = descriptor.styles[0].content;
+  assert.match(styles, /\.measure-nav input\{[^}]*height:28px;min-height:28px;[^}]*background:#fff/);
+  assert.match(styles, /\.editor \.editor-bar\{padding:4px 12px\}/);
+  assert.match(styles, /\.lane-head\.editor-tools\{[^}]*padding:4px 12px/);
+  assert.match(styles, /\.editor-tools input\[type=number\],\.editor-tools select\{background:#fff\}/);
+  assert.match(styles, /\.editor-tools :is\(input\[type=number\],select,button\)\{box-sizing:border-box;height:28px;min-height:28px;/);
+  assert.match(styles, /\.editor-tools :is\(input\[type=number\],select,button\)\{[^}]*padding-block:0;line-height:normal;/);
+  assert.match(styles, /\.editor-tools label\{min-height:28px;line-height:normal;/);
+  assert.match(styles, /\.lane-head\.editor-tools\{[^}]*font:400 11px\/normal system-ui,sans-serif;/);
+  assert.match(styles, /\.editor-tools :is\(label,input,select,button,option\)\{font:inherit\}/);
+  assert.match(styles, /\.measure-actions\{[^}]*border:0;/);
   const measure = readFileSync(new URL('MeasureEditor.vue', import.meta.url), 'utf8');
-  for (const id of ['bar-prev', 'bar-number', 'bar-next']) {
+  for (const id of ['bar-number']) {
     assert.ok(nav.includes(`id="${id}"`), id);
     assert.ok(!measure.includes(`id="${id}"`), id);
     assert.equal(descriptor.template.content.split(`id="${id}"`).length - 1, 1);
   }
-  assert.match(nav, /@click="studio.select\(state.selected - 1\)"/);
-  assert.match(nav, /@click="studio.select\(state.selected \+ 1\)"/);
   assert.match(nav, /@change="studio.select\(Number\(\$event.target.value\) - 1\)/);
   assert.doesNotMatch(descriptor.template.content, /id="meter"|id="selection"/);
   assert.match(descriptor.template.content, /state.playing && currentTiming.bar.index !== state.selected/);
+});
+
+test('toolbar commands use scoped transparent surfaces with hover, pressed, focus and playback states', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'compact-toolbar-commands' });
+  const styles = descriptor.styles[0].content;
+  const rules = styles.slice(styles.indexOf(':is(.studio-panel,.transport-host) :is(.document-toolbar'));
+  for (const surface of ['document-toolbar', 'editor-bar', 'transport', 'inspector-heading', 'aside-actions']) {
+    assert.ok(rules.includes(`.${surface}`));
+  }
+  assert.match(rules, /border-color:transparent;background:transparent;color:var\(--ink\);box-shadow:none;border-radius:4px/);
+  assert.match(rules, /button:not\(\.primary\),/);
+  assert.match(rules, /button:not\(\.primary\):not\(:disabled\):hover/);
+  assert.match(rules, /button:not\(\.primary\):not\(:disabled\):active/);
+  assert.match(rules, /button:not\(\.primary\):focus-visible/);
+  assert.match(rules, /outline:2px solid var\(--green\);outline-offset:-2px/);
+  assert.doesNotMatch(rules, /\.play\.playing\{/);
+  assert.match(descriptor.template.content, /id="play" class="play icon primary"/);
+  assert.match(descriptor.template.content, /id="open-audio" class="primary"/);
+  assert.match(rules, /\[open\]>summary\{background:#16745b18;color:var\(--green\)\}/);
+  assert.doesNotMatch(rules, /\.file-panel|\.selection-dialog|\.palette|\.course-dialog/);
+  assert.match(descriptor.template.content, /id="play"[^>]*:class="\{ playing: state.playing \}"/);
 });
 
 test('measure toolbars have a separate tinted surface and a bottom border above the timeline', () => {
@@ -801,7 +1018,7 @@ test('command changes auto-apply only their own field at the correct scope and v
 test('the timeline toolbar groups explicit before and after measure insertion actions with availability guards', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'insert-measures' });
-  const toolbar = descriptor.template.content.match(/<div class="editor-actions">[\s\S]*?<\/div><\/div>/)[0];
+  const toolbar = descriptor.template.content.match(/<div class="editor-actions">[\s\S]*?<\/button>\s*<\/div>(?=\s*<label class="follow-control">)/)[0];
   assert.match(toolbar, /class="measure-actions" role="group" :aria-label="t\('插入小节'\)"/);
   for (const [id, side] of [['insert-bar-before', 'before'], ['insert-bar-after', 'after']]) {
     const button = toolbar.match(new RegExp(`<button id="${id}"[^>]*>[\\s\\S]*?<\\/button>`))[0];
@@ -814,9 +1031,8 @@ test('the timeline toolbar groups explicit before and after measure insertion ac
   assert.doesNotMatch(toolbar, /id="snap-division"|id="view"|id="follow-playback"/);
   assert.doesNotMatch(descriptor.template.content.match(/<section class="measure-section">[\s\S]*?<\/section>/)[0], /insert-bar|measure-actions/);
   assert.match(descriptor.styles[0].content, /\.measure-heading\{[^}]*flex-wrap:wrap/);
-  assert.match(descriptor.styles[0].content, /\.measure-actions\{display:inline-flex;[^}]*border:1px solid var\(--line\);border-radius:5px/);
-  assert.match(descriptor.styles[0].content, /\.measure-actions button\{[^}]*border:0;border-radius:0/);
-  assert.match(descriptor.styles[0].content, /\.measure-actions button:last-child\{border-left:1px solid var\(--line\)/);
+  assert.match(descriptor.styles[0].content, /\.measure-actions\{display:inline-flex;[^}]*border:0;border-radius:5px/);
+  assert.match(descriptor.styles[0].content, /\.measure-actions button\{[^}]*border:0;border-radius:4px/);
 });
 
 test('the timeline toolbar offers direct measure deletion with an icon and last-measure and invalid-source guards', () => {
@@ -855,21 +1071,29 @@ test('branch information occupies the caption subtitle without instructional cop
   assert.doesNotMatch(descriptor.template.content, /统一切换全部分歧，或按需单独调整。|仅影响显示与试听，不修改谱面。|branch-context-foot/);
 });
 
-test('snap, zoom and follow controls replace the waveform caption row above the timeline', () => {
+test('one wrapping toolbar combines measure actions, snap, zoom and follow controls above the timeline', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'inline-snap-controls' });
-  const tools = descriptor.template.content.match(/<div class="lane-head editor-tools">[\s\S]*?<\/div>/)[0];
-  assert.match(descriptor.template.content, /<\/div><\/div>\s*<div class="lane-head editor-tools">[\s\S]*?<\/div>\s*<div ref="viewport"/);
-  assert.doesNotMatch(tools, /音乐波形|振幅|insert-bar|delete-bar/);
-  for (const id of ['snap-division', 'custom-snap', 'follow-playback', 'view']) assert.ok(tools.includes(`id="${id}"`), id);
+  const tools = descriptor.template.content.match(/<div class="lane-head editor-tools editor-bar">[\s\S]*?(?=\s*<div class="timeline-frame">)/)[0];
+  assert.equal(descriptor.template.content.split('class="lane-head editor-tools editor-bar"').length - 1, 1);
+  assert.doesNotMatch(tools, /音乐波形|振幅/);
+  for (const id of ['bar-number', 'undo', 'redo', 'insert-bar-before', 'insert-bar-after', 'delete-bar', 'snap-division', 'custom-snap', 'follow-playback', 'view']) {
+    assert.ok(tools.includes(`id="${id}"`), id);
+    assert.equal(descriptor.template.content.split(`id="${id}"`).length - 1, 1);
+  }
   assert.match(tools, /@change="snapChange"/);
+  assert.match(tools, /id="bar-number"[\s\S]*id="snap-division"[\s\S]*id="custom-snap"[\s\S]*id="view"[\s\S]*id="undo"[\s\S]*id="redo"[\s\S]*id="insert-bar-before"[\s\S]*id="insert-bar-after"[\s\S]*id="delete-bar"[\s\S]*id="follow-playback"/);
   assert.match(tools, /v-show="controls.snapChoice === 'custom'"/);
   assert.match(tools, /min="1" max="768"/);
   assert.match(tools, /@change="studio.setSnap\(Number\(controls.customSnap\)\)"/);
-  assert.match(tools, /id="view"[\s\S]*<label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox">[\s\S]*<\/label>\s*<\/div>$/);
-  assert.match(descriptor.styles[0].content, /\.editor-actions\{[^}]*margin-left:auto\}/);
+  assert.match(tools, /id="view"[\s\S]*<label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"><\/span>[\s\S]*<\/label>\s*<\/div>$/);
+  assert.match(descriptor.styles[0].content, /\.follow-control input:checked\+\.switch-track\{background:var\(--green\)\}/);
+  assert.match(descriptor.styles[0].content, /\.follow-control input:checked\+\.switch-track::before\{transform:translateX\(12px\)\}/);
+  assert.match(descriptor.styles[0].content, /\.follow-control input:focus-visible\+\.switch-track\{outline:2px solid var\(--green\)/);
+  assert.doesNotMatch(descriptor.styles[0].content, /\.editor-actions\{[^}]*margin-left:auto/);
   assert.match(descriptor.styles[0].content, /\.lane-head.editor-tools\{justify-content:flex-start;/);
-  assert.match(descriptor.styles[0].content, /\.editor-tools \.follow-control\{margin-left:auto;/);
+  assert.match(descriptor.styles[0].content, /\.editor-tools \.follow-control\{[^}]*margin-left:auto;/);
+  assert.match(descriptor.styles[0].content, /\.editor-bar,\.editor-tools\{flex-wrap:wrap\}/);
   assert.doesNotMatch(descriptor.template.content, /snap-controls|snap-position/);
   assert.doesNotMatch(readFileSync(new URL('sound.css', import.meta.url), 'utf8'), /\.snap-controls/);
 });
@@ -881,7 +1105,7 @@ test('editor columns are siblings and mobile transport can leave the scrolling c
   assert.match(template, /<div class="editor-core" :inert="state.editorBlocked">\s*<section v-if="studio.bar.value" class="document-toolbar">[\s\S]*?<\/section>\s*<div class="editor-scroll">/);
   assert.match(template, /<TimelineEditor v-if="studio.bar.value" \/>/);
   assert.match(template, /<\/div>\s*<Teleport to="body" :disabled="!mobileWorkspace"><div ref="transportHost" class="transport-host">\s*<section v-if="studio.bar.value" class="transport">/);
-  assert.match(template, /<\/div><\/section>\s*<\/div><\/Teleport>\s*<\/div>\s*<MeasureEditor v-if="studio.bar.value" :inert="state.editorBlocked" \/>/);
+  assert.match(template, /<\/div><\/section>\s*<div v-if="state.notice && \(studio.bar.value \|\| state.error\)" id="notice"[^>]*>{{ state.notice }}<\/div>\s*<\/div><\/Teleport>\s*<\/div>\s*<MeasureEditor v-if="studio.bar.value" :inert="state.editorBlocked" \/>/);
   assert.doesNotMatch(template, /id="preview-range"|id="loop-summary"|id="apply-loop"|id="loop-current"/);
   assert.match(template, /ref="selectionDialog"[\s\S]*@submit.prevent="applySelection"/);
   assert.match(template, /id="selection-first"/); assert.match(template, /id="selection-last"/);
@@ -890,6 +1114,23 @@ test('editor columns are siblings and mobile transport can leave the scrolling c
   assert.match(styles, /\.editor-scroll\{[^}]*overflow:auto/);
   assert.match(styles, /\.transport\{[^}]*flex-shrink:0/);
   assert.match(styles, /\.volume-panel\{[^}]*bottom:calc\(100% \+ 6px\)/);
+});
+
+test('status messages sit below playback outside scrolling content and share mobile height tracking and safe-area space', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'bottom-status' });
+  const template = descriptor.template.content;
+  assert.equal(template.split('id="notice"').length - 1, 1);
+  const scrolling = template.slice(template.indexOf('<div class="editor-scroll">'), template.indexOf('<Teleport to="body"'));
+  assert.doesNotMatch(scrolling, /id="notice"/);
+  const host = template.match(/<div ref="transportHost" class="transport-host">[\s\S]*?<\/Teleport>/)[0];
+  assert.match(host, /<\/section>\s*<div v-if="state.notice && \(studio.bar.value \|\| state.error\)" id="notice" role="status" aria-live="polite" :class="\{ error: state.error \}"/);
+  assert.match(descriptor.scriptSetup.content, /transportObserver.observe\(transportHost.value\)/);
+  const styles = descriptor.styles[0].content;
+  assert.match(styles, /#notice\{[^}]*min-height:0;max-height:20dvh;overflow:auto;/);
+  assert.match(styles, /#notice.error\{color:#bd352b\}/);
+  assert.match(styles, /\.transport:has\(\+#notice\)\{padding-bottom:7px\}/);
+  assert.match(styles, /\.transport-host>#notice\{padding-bottom:calc\(4px \+ env\(safe-area-inset-bottom,0px\)\)\}/);
 });
 
 test('branch controls use native route radios and a separate searchable individual-route dialog', () => {
@@ -1005,7 +1246,8 @@ test('the independent song sidebar edits metadata while empty songs expose creat
   assert.match(app.template.content, /studio.createCourse\(\{ course, player: 'single', style: 'Single', level: 1 \}\)/);
   assert.match(app.template.content, /v-else id="empty-new-chart"[^>]*@click="studio.newChart"/);
   assert.doesNotMatch(app.template.content, /workspace.focusTree\(\)|选择难度与模式/);
-  assert.match(app.template.content, /class="document-history"/);
+  assert.match(app.template.content, /id="menu-undo"[^>]*:disabled="!state.undo.length"/);
+  assert.match(app.template.content, /id="menu-redo"[^>]*:disabled="!state.redo.length"/);
   assert.doesNotMatch(app.template.content, /class="metadata-dialog"|id="song-metadata"/);
 });
 test('position editors expose preserved commands and graphical branch controls without a source dialog', () => {

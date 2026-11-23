@@ -7,7 +7,7 @@ export const MAX_SNAP_DIVISIONS = 768;
 export const MAX_SOURCE_SLOTS = 65536;
 
 export function editGridNote(notes, fraction, note, tolerance = 0, divisions = GRID_DIVISIONS) {
-  if (!Number.isInteger(divisions) || divisions < 1 || divisions > MAX_SNAP_DIVISIONS) throw new LocalizedError(message('吸附细分须为 1–768 之间的整数。'));
+  if (!Number.isInteger(divisions) || divisions < 1 || divisions > MAX_SNAP_DIVISIONS) throw new LocalizedError(message('吸附栅格须为 1–768 之间的整数。'));
   if (!Number.isFinite(fraction) || !/^[0-9AB]$/.test(note)) throw new LocalizedError(message('无效的音符或落点。'));
   let closest = -1, distance = Infinity;
   for (let index = 0; index < notes.length; index++) {
