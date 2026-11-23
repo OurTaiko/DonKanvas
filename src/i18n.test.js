@@ -842,6 +842,11 @@ test('measure toolbars have a separate tinted surface and a bottom border above 
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   assert.match(descriptor.styles[0].content, /\.editor-bar,\.lane-head\.editor-tools\{background:var\(--paper\)\}/);
   assert.match(descriptor.styles[0].content, /\.lane-head\.editor-tools\{[^}]*border-bottom:1px solid var\(--line\)/);
+  const { descriptor: app } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  assert.match(app.styles[0].content, /\.document-toolbar\{[^}]*border-bottom:1px solid var\(--line\)/);
+  assert.match(app.styles[0].content, /\.editor-core \.workspace\{[^}]*border-top:0\}/);
+  const { descriptor: branch } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
+  assert.match(branch.styles[0].content, /\.branch-context\{[^}]*border-bottom:1px solid var\(--line\)/);
 });
 
 test('the sidebar uses peer sections rather than nesting all editing under a measure heading', () => {
