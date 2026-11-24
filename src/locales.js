@@ -494,6 +494,8 @@ export const translations = {
   '清除当前落点指令': ['Clear commands at this position', '現在位置の命令をクリア', '清除目前落點指令', '현재 위치의 명령 지우기'],
   '小节内位置': ['Position in measure', '小節内の位置', '小節內位置', '마디 내 위치'],
   '当前选择的位置': ['Current selection position', '現在の選択位置', '目前選取的位置', '현재 선택 위치'],
+  '播放位置': ['Playback position', '再生位置', '播放位置', '재생 위치'],
+  '所选落点': ['Selected position', '選択位置', '所選落點', '선택한 위치'],
   '选中位置分子': ['Selection position numerator', '選択位置の分子', '選取位置分子', '선택 위치 분자'],
   '选中位置分母': ['Selection position denominator', '選択位置の分母', '選取位置分母', '선택 위치 분모'],
   '指令位置分子': ['Command position numerator', '命令位置の分子', '指令位置分子', '명령 위치 분자'],

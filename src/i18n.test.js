@@ -952,7 +952,7 @@ test('note choices fill responsive equal-width columns with consistent height, r
   assert.match(descriptor.template.content, /:aria-label="`\$\{t\(type.name\)\}/);
 });
 
-test('the note editor uses compact wrapping attributes and stable value slots', () => {
+test('position information separates its summary from aligned parameter columns', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   const { bindings } = compileScript(descriptor, { id: 'stable-note-inspector' });
   assert.ok(bindings.cellAttributes);
@@ -961,31 +961,71 @@ test('the note editor uses compact wrapping attributes and stable value slots', 
   assert.doesNotMatch(template, /cell-heading|cell-current/);
   assert.doesNotMatch(descriptor.scriptSetup.content, /cell-bar/);
   assert.match(descriptor.scriptSetup.content, /\.\.\.\(selected\?\.span \? \[\{ id: 'cell-long'/);
-  assert.match(descriptor.scriptSetup.content, /id: 'cell-fraction', label: '位置'/);
+  assert.match(template, /class="position-summary">[\s\S]*id="cell-fraction"[\s\S]*id="cell-time"/);
+  assert.doesNotMatch(descriptor.scriptSetup.content, /id: 'cell-(fraction|time)'/);
   assert.doesNotMatch(descriptor.scriptSetup.content, /cell-location|小节内位置|小节 \/ 格位/);
   assert.match(template, /v-for="attribute in cellAttributes"/);
   assert.match(template, /<dd :id="attribute.id" :title="attribute.value">/);
+  assert.doesNotMatch(template, /gogo-active/);
   assert.doesNotMatch(template, /balloon-count|balloon-control/);
   const styles = readFileSync(new URL('sound.css', import.meta.url), 'utf8');
-  assert.match(styles, /\.cell-inspector dl\{display:flex;flex-wrap:wrap;/);
-  assert.match(styles, /\.cell-inspector dl>div\{[^}]*max-width:100%;height:24px/);
-  assert.match(styles, /\.cell-inspector dd\{[^}]*line-height:24px;[^}]*text-overflow:ellipsis;white-space:nowrap/);
-  for (const id of ['cell-time', 'cell-fraction', 'cell-long']) assert.match(styles, new RegExp(`#${id}\\{width:\\d+ch\\}`));
+  assert.match(styles, /\.cell-inspector dl\{display:flex;flex-wrap:wrap;gap:8px 20px/);
+  assert.match(styles, /\.cell-inspector dl>div\{[^}]*flex-direction:column/);
+  assert.match(styles, /\.cell-inspector dd\{[^}]*text-overflow:ellipsis;white-space:nowrap/);
+  assert.doesNotMatch(template + styles, /long-attribute/);
+  assert.match(styles, /\.attribute-warning\{[^}]*padding:0 4px;[^}]*font:inherit;/);
+  assert.match(styles, /\.attribute-warning svg\{width:1em;height:1em\}/);
   assert.doesNotMatch(readFileSync(new URL('SongWorkspace.vue', import.meta.url), 'utf8'), /离开输入框时自动应用/);
+});
+
+test('position summary follows the selected point or live playback, never the browsed measure', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const script = descriptor.scriptSetup.content;
+  const source = script.slice(script.indexOf('const positionSummary ='), script.indexOf('const cellAttributes ='));
+  const state = reactive({ playing: false, selected: 8, position: 0 });
+  const cell = ref({ bar: 2, numerator: 3, denominator: 8, time: 4.75 });
+  const command = ref({ bar: 8, numerator: 1, denominator: 4, time: 16.5 });
+  const currentTiming = ref({ bar: { index: 2 } });
+  const summary = runInNewContext(`${source}; positionSummary`, { computed, state, cell, command, currentTiming });
+  assert.equal(summary.value.measure, 3);
+  assert.equal(summary.value.fraction, '3/8');
+  assert.equal(summary.value.time, 4.75);
+  state.selected = 10;
+  assert.equal(summary.value.measure, 3);
+  assert.equal(summary.value.time, 4.75);
+  state.playing = true; state.position = 12.125; currentTiming.value = { bar: { index: 6 } };
+  assert.equal(summary.value.measure, 7);
+  assert.equal(summary.value.fraction, null);
+  assert.equal(summary.value.time, 12.125);
+  state.position = 12.25;
+  assert.equal(summary.value.time, 12.25);
+  state.playing = false; currentTiming.value = { bar: { index: 2 } };
+  assert.equal(summary.value.fraction, '3/8');
+  assert.equal(summary.value.time, 4.75);
+  cell.value = null; currentTiming.value = { bar: { index: 8 } };
+  assert.equal(summary.value.measure, 9);
+  assert.equal(summary.value.fraction, '1/4');
+  assert.equal(summary.value.time, 16.5);
+  currentTiming.value = null;
+  assert.equal(summary.value, null);
 });
 
 test('position attributes omit branch information while preserving timing details', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   const script = descriptor.scriptSetup.content;
   const source = script.slice(script.indexOf('const cellAttributes ='), script.indexOf('const timeline ='));
-  const currentTiming = ref({ bpm: 120, scroll: 1, numerator: 4, denominator: 4 });
+  const currentTiming = ref({ bpm: 120, scroll: 1, numerator: 4, denominator: 4, delay: 0 });
+  const cell = ref(null);
   const attributes = runInNewContext(`${source}; cellAttributes`, {
-    computed, cell: ref(null), currentTiming, t
+    computed, cell, currentTiming, t, NOTE_TYPES
   });
   assert.ok(!attributes.value.some(attribute => attribute.id === 'cell-branch' || attribute.label === '分歧路线'));
   assert.equal(attributes.value.find(attribute => attribute.id === 'cell-bpm').value, '120');
   currentTiming.value.bpm = 180;
   assert.equal(attributes.value.find(attribute => attribute.id === 'cell-bpm').value, '180');
+  assert.equal(attributes.value.find(attribute => attribute.id === 'cell-delay').value, '0');
+  currentTiming.value.delay = .125;
+  assert.equal(attributes.value.find(attribute => attribute.id === 'cell-delay').value, '0.125');
   reset();
   try {
     for (const [language, yes, no] of [['zh-CN', '是', '否'], ['en', 'Yes', 'No']]) {
@@ -998,6 +1038,16 @@ test('position attributes omit branch information while preserving timing detail
       }
     }
   } finally { reset(); }
+  cell.value = { span: { note: '5', start: 1, end: 3.5, complete: true } };
+  const longValue = () => attributes.value.find(attribute => attribute.id === 'cell-long')?.value;
+  assert.equal(longValue(), `${t(NOTE_TYPES[5].name)} · 2.500 s`);
+  assert.equal(attributes.value.find(attribute => attribute.id === 'cell-long').warning, null);
+  cell.value.span.complete = false;
+  assert.equal(longValue(), `${t(NOTE_TYPES[5].name)} · 2.500 s`);
+  assert.equal(attributes.value.find(attribute => attribute.id === 'cell-long').warning, t('缺少结束标记'));
+  assert.match(descriptor.template.content, /<span v-if="attribute.warning" class="attribute-warning"><TriangleAlert aria-hidden="true" \/>\{\{ attribute.warning \}\}<\/span>/);
+  cell.value = null;
+  assert.equal(longValue(), undefined);
 });
 
 test('balloon and special roll counts are edited in the right note panel', () => {
@@ -1040,7 +1090,7 @@ test('current position timing lives in note attributes and measure selection liv
   }
   assert.match(nav, /@change="studio.select\(Number\(\$event.target.value\) - 1\)/);
   assert.doesNotMatch(descriptor.template.content, /id="meter"|id="selection"/);
-  assert.match(descriptor.template.content, /state.playing && currentTiming.bar.index !== state.selected/);
+  assert.match(descriptor.template.content, /t\(state.playing \? '播放位置' : '所选落点'\)/);
 });
 
 test('toolbar commands use scoped transparent surfaces with hover, pressed, focus and playback states', () => {
@@ -1393,19 +1443,17 @@ test('the timeline toolbar offers direct measure deletion with an icon and last-
   assert.equal(descriptor.template.content.split('id="delete-bar"').length - 1, 1);
 });
 
-test('measure information occupies the position subtitle above selected-note attributes, not the sidebar', () => {
+test('measure statistics live in measure properties while snap remains in the toolbar', () => {
   const { descriptor: measure } = parse(readFileSync(new URL('MeasureEditor.vue', import.meta.url), 'utf8'));
   compileScript(measure, { id: 'measure-properties' });
   const { descriptor: timeline } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   assert.doesNotMatch(timeline.template.content, /editor-footer|position-info/);
-  assert.doesNotMatch(measure.template.content, /id="note-count"|id="bar-grid"|id="bar-snap"/);
-  assert.match(timeline.scriptSetup.content, /import \{[^}]*\bGRID_DIVISIONS\b[^}]*\} from '\.\/grid.js'/);
-  assert.match(timeline.template.content, /class="position-caption"[\s\S]*<template #description>\s*<div class="measure-info">[\s\S]*?<\/template>\s*<\/SectionHeading>\s*<dl>/);
-  const info = timeline.template.content.match(/<div class="measure-info">[\s\S]*?<\/div>/)[0];
+  assert.doesNotMatch(timeline.template.content, /id="note-count"|id="bar-grid"|id="bar-snap"|id="bar-slots"/);
+  assert.match(measure.scriptSetup.content, /import \{[^}]*\bGRID_DIVISIONS\b[^}]*\} from '\.\/grid.js'/);
+  const info = measure.template.content.match(/<section class="inspector-section" aria-labelledby="measure-properties-title">[\s\S]*?<\/section>/)[0];
   assert.match(info, /id="note-count">.*stats.total/);
   assert.match(info, /id="bar-grid">.*GRID_DIVISIONS/);
-  assert.match(info, /id="bar-snap">.*controls.snap/);
-  assert.match(info, /id="bar-slots">.*bar\?\.notes.length/);
+  assert.match(timeline.template.content, /id="snap-division" v-model="controls.snapChoice"/);
   assert.match(measure.template.content, /id="division" :value="bar\?\.notes.length"/);
 });
 
@@ -1423,7 +1471,7 @@ test('navigation, position information and branches share an icon heading with i
   assert.match(timeline, /\.clear-measure-selection\{align-self:center;min-height:20px;padding:0 6px;/);
   assert.match(timeline, /<SectionHeading :icon="Map" :title="t\('全局导航'\)">[\s\S]*id="selection-summary"[\s\S]*@click="studio.clearLoop"[\s\S]*<\/SectionHeading>/);
   assert.match(timeline, /:title="t\('全局导航'\)">[\s\S]*<template #description>\s*<div class="chart-statistics"[\s\S]*id="total-notes"[\s\S]*<\/template>\s*<\/SectionHeading>/);
-  assert.match(timeline, /<SectionHeading class="position-caption" :icon="Grid2X2" :title="t\('落点信息'\)">[\s\S]*class="position-measure"/);
+  assert.match(timeline, /<SectionHeading class="position-caption" :icon="Grid2X2" :title="t\('落点信息'\)">[\s\S]*class="position-source"/);
   const branches = readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8');
   assert.match(branches, /<SectionHeading class="branch-caption" :icon="GitBranch" :title="t\('谱面分歧'\)">[\s\S]*class="branch-count"[\s\S]*<template #description>/);
   assert.match(branches, /\.branch-context\{[^}]*padding:8px 12px/);

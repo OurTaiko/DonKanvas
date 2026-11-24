@@ -6,9 +6,10 @@ import { formatTime } from './useStudio.js';
 import { measureStart, measureEnd } from './loop.js';
 import { EDITABLE_COMMANDS } from './chart.js';
 import { NOTE_TYPES } from './note-model.js';
+import { GRID_DIVISIONS } from './grid.js';
 
 const studio = inject('studio');
-const { state, controls, bar, cell, command, measureCommand } = studio;
+const { state, controls, bar, cell, command, measureCommand, stats } = studio;
 const position = reactive({ numerator: 0, denominator: 1 });
 const fields = reactive({ bpm: 120, scroll: 1, numerator: 4, denominator: 4, delay: 0, gogo: 'off', barline: 'on', lyric: '', senote: 1 });
 const enabled = reactive({ bpm: false, scroll: false, meter: false, delay: false, gogo: false, barline: false, lyric: false, section: false, levelhold: false, senote: false });
@@ -80,6 +81,8 @@ function locate(item) { studio.setCommandPosition(item.slot, bar.value.notes.len
     <section class="inspector-section" aria-labelledby="measure-properties-title">
       <div class="inspector-heading"><h2 id="measure-properties-title">{{ t('小节属性') }}</h2><span id="bar-badge">{{ String(state.selected + 1).padStart(3, '0') }}</span></div>
       <div class="detail-row"><span>{{ t('时间范围') }}</span><b id="bar-time">{{ bar ? `${measureStart(bar).toFixed(3)} – ${measureEnd(bar).toFixed(3)} s` : '—' }}</b></div>
+      <div class="detail-row"><span>{{ t('音符数') }}</span><b id="note-count">{{ stats.total }}</b></div>
+      <div class="detail-row"><span>{{ t('主网格') }}</span><b id="bar-grid">{{ GRID_DIVISIONS }} {{ t('格') }}</b></div>
       <div class="detail-row"><label for="division">{{ t('源码格数') }}</label><select id="division" :value="bar?.notes.length" :disabled="!bar || state.invalid" @change="studio.setDivision(Number($event.target.value)); $event.target.value = bar.notes.length"><option v-for="length in divisions" :key="length" :value="length">{{ length }}</option></select></div>
     </section>
     <form class="bar-settings inspector-section" aria-labelledby="command-editor-title" @submit.prevent @focusin="state.playing && studio.pause()">

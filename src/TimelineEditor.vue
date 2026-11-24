@@ -1,35 +1,43 @@
 <script setup>
 import { t } from './i18n.js';
 import { computed, inject, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
-import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map } from '@lucide/vue';
+import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map, TriangleAlert } from '@lucide/vue';
 import SectionHeading from './SectionHeading.vue';
 import BranchControls from './BranchControls.vue';
 import MeasureGrid from './MeasureGrid.vue';
 import { barTimeAt, barFractionAt, BRANCH_ROUTES, BRANCH_ROUTE_NAMES } from './chart.js';
 import { measureStart, measureEnd } from './loop.js';
-import { GRID_DIVISIONS, SNAP_DIVISIONS } from './grid.js';
+import { SNAP_DIVISIONS } from './grid.js';
 import { NOTE_TYPES, selectCell, cellValue } from './note-model.js';
 import { drawLongSpan, drawNote, drawNoteSelection, noteHitRadius } from './note-render.js';
 import { createTimelineViewport, TIMELINE_GUTTER } from './timeline.js';
 import { formatTime } from './useStudio.js';
 
 const studio = inject('studio');
-const { state, controls, bar, spans, visible, viewBeats, timelineScale, timelineBounds, timelineScrollBounds, cell, stats, chartStats, currentTiming, range } = studio;
+const { state, controls, bar, spans, visible, viewBeats, timelineScale, timelineBounds, timelineScrollBounds, cell, command, stats, chartStats, currentTiming, range } = studio;
 const balloonHits = computed(() => {
   const { balloon, special } = chartStats.value;
   return balloon === null || special === null ? null : balloon + special;
 });
+const positionSummary = computed(() => {
+  const timing = currentTiming.value;
+  if (!timing) return null;
+  const position = cell.value ?? command.value;
+  return {
+    measure: timing.bar.index + 1,
+    fraction: !state.playing && position ? `${position.numerator}/${position.denominator}` : null,
+    time: state.playing ? state.position : position.time
+  };
+});
 const cellAttributes = computed(() => {
   const selected = cell.value, timing = currentTiming.value;
   return [
-    { id: 'cell-fraction', label: '位置', value: selected ? `${selected.numerator}/${selected.denominator}` : '—' },
-    { id: 'cell-time', label: '音乐时间', value: selected ? `${formatTime(selected.time)} · ${selected.time.toFixed(4)} s` : '—' },
     { id: 'cell-bpm', label: 'BPM', value: String(timing.bpm) },
     { id: 'cell-scroll', label: '卷轴倍率', value: `${timing.scroll}×` },
     { id: 'cell-meter', label: '拍号', value: `${timing.numerator}/${timing.denominator}` },
     { id: 'cell-gogo', label: 'GOGOTIME', value: t(timing.gogo ? '是' : '否') },
-    ...(timing.delay ? [{ id: 'cell-delay', label: '延迟 / s', value: String(timing.delay) }] : []),
-    ...(selected?.span ? [{ id: 'cell-long', label: '长音状态', value: `${t(NOTE_TYPES[Number(selected.span.note)].name)} · ${(selected.span.end - selected.span.start).toFixed(3)} s · ${selected.span.complete ? t('已结束') : t('缺少结束标记')}` }] : [])
+    { id: 'cell-delay', label: '延迟 / s', value: String(timing.delay) },
+    ...(selected?.span ? [{ id: 'cell-long', label: '长音状态', value: `${t(NOTE_TYPES[Number(selected.span.note)].name)} · ${(selected.span.end - selected.span.start).toFixed(3)} s`, warning: selected.span.complete ? null : t('缺少结束标记') }] : [])
   ];
 });
 const timeline = ref(null), overview = ref(null), customSnap = ref(null), hover = ref(null);
@@ -382,19 +390,17 @@ onUnmounted(() => { cancelOverviewDrag(); observer?.disconnect(); });
       <div class="editor-information">
       <section class="cell-inspector" :aria-label="t('落点信息')">
         <SectionHeading class="position-caption" :icon="Grid2X2" :title="t('落点信息')">
-          <span class="position-measure">{{ t('小节 {p0}', { p0: (cell?.bar ?? state.selected) + 1 }) }}</span>
+          <span class="position-source">{{ t(state.playing ? '播放位置' : '所选落点') }}</span>
           <template #description>
-            <div class="measure-info">
-              <span v-if="state.playing && currentTiming.bar.index !== state.selected">{{ t('播放小节 {p0}', { p0: String(currentTiming.bar.index + 1).padStart(3, '0') }) }}</span>
-              <span id="note-count">{{ t('音符数：{p0}', { p0: stats.total }) }}</span>
-              <span id="bar-grid">{{ t('主网格') }} {{ GRID_DIVISIONS }} {{ t('格') }}</span>
-              <span id="bar-snap">{{ t('吸附栅格') }} {{ t('{p0} 等分', { p0: controls.snap }) }}</span>
-              <span id="bar-slots">{{ t('源码格数') }} {{ bar?.notes.length || 0 }} {{ t('格') }}</span>
+            <div v-if="positionSummary" class="position-summary">
+              <span>{{ t('小节 {p0}', { p0: positionSummary.measure }) }}</span>
+              <span v-if="positionSummary.fraction" id="cell-fraction">{{ t('位置') }} {{ positionSummary.fraction }}</span>
+              <span id="cell-time" :title="`${positionSummary.time.toFixed(4)} s`">{{ formatTime(positionSummary.time) }}</span>
             </div>
           </template>
         </SectionHeading>
         <dl>
-          <div v-for="attribute in cellAttributes" :key="attribute.id"><dt>{{ t(attribute.label) }}</dt><dd :id="attribute.id" :title="attribute.value">{{ attribute.value }}</dd></div>
+          <div v-for="attribute in cellAttributes" :key="attribute.id"><dt>{{ t(attribute.label) }}</dt><dd :id="attribute.id" :title="attribute.value">{{ attribute.value }}<span v-if="attribute.warning" class="attribute-warning"><TriangleAlert aria-hidden="true" />{{ attribute.warning }}</span></dd></div>
         </dl>
       </section>
       <BranchControls />
@@ -440,10 +446,10 @@ onUnmounted(() => { cancelOverviewDrag(); observer?.disconnect(); });
 #measure-loop-anchor{font-size:11px;color:var(--green);font-variant-numeric:tabular-nums}
 #selection-summary{font-size:11px;color:var(--green)}
 .clear-measure-selection{align-self:center;min-height:20px;padding:0 6px;gap:4px;border:0;background:transparent;font-size:11px}.clear-measure-selection svg{width:14px;height:14px}
-.position-caption{margin-bottom:8px}.position-measure{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.position-caption{margin-bottom:8px}.position-source{font-size:11px;color:var(--muted)}
+.position-summary{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--ink);font-variant-numeric:tabular-nums}.position-summary>span{white-space:nowrap}
 .measure-nav{display:flex;align-items:center;gap:6px;min-width:0}.measure-nav label{display:flex;align-items:center;gap:6px;font-size:11px;white-space:nowrap}.measure-nav input{width:64px;min-width:0;height:28px;min-height:28px;padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:#fff;text-align:center;font-size:11px}
 .chart-statistics{display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;min-width:0;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.chart-statistics>span{white-space:nowrap}.chart-statistics b{font-weight:500;color:var(--ink)}
-.measure-info{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;color:var(--muted);font-size:11px}.measure-info>span{white-space:nowrap}
 .measure-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.measure-actions{display:inline-flex;max-width:100%;margin-right:6px;border:0;border-radius:5px;background:transparent}.measure-actions button{min-width:0;padding:4px 8px;gap:4px;border:0;border-radius:4px;font-size:11px}.measure-actions button svg{width:14px;height:14px}
 .timeline-content{min-width:100%}
 .timeline-frame #timeline{height:250px;position:sticky;left:0}
