@@ -1,8 +1,10 @@
 <script setup>
 import { t } from './i18n.js';
 import { computed, inject, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
-import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2 } from '@lucide/vue';
-import { barTimeAt, barFractionAt } from './chart.js';
+import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map } from '@lucide/vue';
+import SectionHeading from './SectionHeading.vue';
+import BranchControls from './BranchControls.vue';
+import { barTimeAt, barFractionAt, BRANCH_ROUTE_NAMES } from './chart.js';
 import { measureStart, measureEnd } from './loop.js';
 import { GRID_DIVISIONS, SNAP_DIVISIONS } from './grid.js';
 import { NOTE_TYPES, selectCell, cellValue } from './note-model.js';
@@ -24,6 +26,7 @@ const cellAttributes = computed(() => {
     { id: 'cell-bpm', label: 'BPM', value: String(timing.bpm) },
     { id: 'cell-scroll', label: '卷轴倍率', value: `${timing.scroll}×` },
     { id: 'cell-meter', label: '拍号', value: `${timing.numerator}/${timing.denominator}` },
+    { id: 'cell-branch', label: '分歧路线', value: timing.bar.branchIndex !== null ? `${t('分歧 {p0}', { p0: timing.bar.branchIndex + 1 })} · ${t(BRANCH_ROUTE_NAMES[timing.bar.route])}` : t('当前位于共用段') },
     ...(timing.gogo ? [{ id: 'cell-gogo', label: 'Go-Go 状态', value: t('开始') }] : []),
     ...(timing.delay ? [{ id: 'cell-delay', label: '延迟 / s', value: String(timing.delay) }] : []),
     ...(selected?.span ? [{ id: 'cell-long', label: '长音状态', value: `${t(NOTE_TYPES[Number(selected.span.note)].name)} · ${(selected.span.end - selected.span.start).toFixed(3)} s · ${selected.span.complete ? t('已结束') : t('缺少结束标记')}` }] : [])
@@ -410,32 +413,46 @@ onUnmounted(() => { cancelMeasureLoop(); cancelOverviewDrag(); observer?.disconn
         <div class="overview-caption"><span class="overview-legend"><i class="gogo"></i>GOGOTIME <i class="branch"></i>{{ t('分歧段') }}</span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div>
         <div class="overview-wave">
           <span v-if="overviewHover" id="overview-hover" role="tooltip" :style="{ left: `${overviewHover.x}px`, top: `${overviewHover.y}px`, transform: `translate(${-overviewHover.fraction * 100}%, calc(-100% - 12px))` }">{{ formatTime(overviewHover.time) }} · {{ t('小节 {p0}', { p0: overviewHover.measure ?? '—' }) }}</span>
-          <canvas id="overview" ref="overview" :aria-label="t('全曲波形，点击跳转，拖动浏览')" :aria-describedby="range || cell ? 'selection-summary' : undefined" role="img" @pointerenter="hoverOverview" @pointerleave="overviewHover = null" @pointerdown="startOverviewDrag" @pointermove="hoverOverview($event); moveOverviewDrag($event)" @pointerup="finishOverviewDrag" @pointercancel="cancelOverviewDrag($event); overviewHover = null" @lostpointercapture="cancelOverviewDrag"></canvas>
+          <canvas id="overview" ref="overview" :aria-label="t('全曲波形，点击跳转，拖动浏览')" :aria-describedby="range ? 'selection-summary' : undefined" role="img" @pointerenter="hoverOverview" @pointerleave="overviewHover = null" @pointerdown="startOverviewDrag" @pointermove="hoverOverview($event); moveOverviewDrag($event)" @pointerup="finishOverviewDrag" @pointercancel="cancelOverviewDrag($event); overviewHover = null" @lostpointercapture="cancelOverviewDrag"></canvas>
         </div>
       </section>
-      <section class="cell-inspector" :aria-label="t('音符编辑')">
+      <section class="cell-inspector" :aria-label="t('落点信息')">
+        <SectionHeading class="position-caption" :icon="Grid2X2" :title="t('落点信息')">
+          <span class="position-measure">{{ t('小节 {p0}', { p0: (cell?.bar ?? state.selected) + 1 }) }}</span>
+          <template #description>
+            <div class="measure-info">
+              <span v-if="state.playing && currentTiming.bar.index !== state.selected">{{ t('播放小节 {p0}', { p0: String(currentTiming.bar.index + 1).padStart(3, '0') }) }}</span>
+              <span id="note-count">{{ t('音符数：{p0}', { p0: stats.total }) }}</span>
+              <span id="bar-grid">{{ t('主网格') }} {{ GRID_DIVISIONS }} {{ t('格') }}</span>
+              <span id="bar-snap">{{ t('吸附栅格') }} {{ t('{p0} 等分', { p0: controls.snap }) }}</span>
+              <span id="bar-slots">{{ t('源码格数') }} {{ bar?.notes.length || 0 }} {{ t('格') }}</span>
+            </div>
+          </template>
+        </SectionHeading>
         <dl>
           <div v-for="attribute in cellAttributes" :key="attribute.id"><dt>{{ t(attribute.label) }}</dt><dd :id="attribute.id" :title="attribute.value">{{ attribute.value }}</dd></div>
         </dl>
-        <div class="measure-info">
-          <span v-if="state.playing && currentTiming.bar.index !== state.selected">{{ t('播放小节 {p0}', { p0: String(currentTiming.bar.index + 1).padStart(3, '0') }) }}</span>
-          <span id="note-count">{{ t('音符数：{p0}', { p0: stats.total }) }}</span>
-          <span id="bar-grid">{{ t('主网格') }} {{ GRID_DIVISIONS }} {{ t('格') }}</span>
-          <span id="bar-snap">{{ t('吸附栅格') }} {{ t('{p0} 等分', { p0: controls.snap }) }}</span>
-          <span id="bar-slots">{{ t('源码格数') }} {{ bar?.notes.length || 0 }} {{ t('格') }}</span>
-        </div>
       </section>
     </section>
   </div>
+  <BranchControls />
   <section class="measure-section">
-    <div class="measure-heading"><div class="section-label"><span>{{ t('全局导航') }}</span><span id="total-notes">{{ t('音符数：{p0}', { p0: stats.all }) }}</span></div><output v-if="state.loopAnchor !== null" id="measure-loop-anchor">{{ t('已标记第 {p0} 小节，再按 F 完成区间选择，Esc 取消。', { p0: state.loopAnchor + 1 }) }}</output></div>
-    <output v-if="range || cell" id="selection-summary"><span v-if="range">{{ t('已选小节：{p0}–{p1}', { p0: range[0], p1: range[1] }) }}</span><span v-if="cell" class="selected-note-label">{{ t('音符所在小节：{p0}', { p0: cell.bar + 1 }) }}</span></output>
-    <div class="chart-statistics" :aria-label="t('谱面统计')">
-      <span class="bar-count"><b id="bar-count">{{ state.chart.bars.length }}</b> {{ t('小节') }}</span>
-      <span>{{ t('咚') }} <b id="chart-don-count">{{ chartStats.don }}</b></span>
-      <span>{{ t('咔') }} <b id="chart-ka-count">{{ chartStats.ka }}</b></span>
-      <span>{{ t('连打') }} <b id="chart-roll-seconds">{{ chartStats.rollSeconds.toFixed(3) }}</b> s</span>
-      <span>{{ t('气球 / 特殊连打') }} <b id="chart-balloon-hits">{{ balloonHits ?? t('未完整设置') }}</b></span>
+    <div class="measure-heading">
+      <SectionHeading :icon="Map" :title="t('全局导航')">
+        <output v-if="range" id="selection-summary">{{ t('已选小节：{p0}–{p1}', { p0: range[0], p1: range[1] }) }}</output>
+        <button v-if="range || state.loopAnchor !== null" type="button" class="clear-measure-selection" @click="studio.clearLoop"><X aria-hidden="true" />{{ t('取消选择') }}</button>
+        <template #description>
+          <div class="chart-statistics" :aria-label="t('谱面统计')">
+            <span class="bar-count"><b id="bar-count">{{ state.chart.bars.length }}</b> {{ t('小节') }}</span>
+            <span id="total-notes">{{ t('音符数：{p0}', { p0: stats.all }) }}</span>
+            <span>{{ t('咚') }} <b id="chart-don-count">{{ chartStats.don }}</b></span>
+            <span>{{ t('咔') }} <b id="chart-ka-count">{{ chartStats.ka }}</b></span>
+            <span>{{ t('连打') }} <b id="chart-roll-seconds">{{ chartStats.rollSeconds.toFixed(3) }}</b> s</span>
+            <span>{{ t('气球 / 特殊连打') }} <b id="chart-balloon-hits">{{ balloonHits ?? t('未完整设置') }}</b></span>
+          </div>
+        </template>
+      </SectionHeading>
+      <output v-if="state.loopAnchor !== null" id="measure-loop-anchor">{{ t('已标记第 {p0} 小节，再按 F 完成区间选择，Esc 取消。', { p0: state.loopAnchor + 1 }) }}</output>
     </div>
     <div id="measures" ref="measures" :class="{ dragging: measureDrag?.dragged }" @pointerdown="startMeasureLoop" @pointermove="moveMeasureLoop" @pointerup="finishMeasureLoop" @pointercancel="cancelMeasureLoop" @lostpointercapture="cancelMeasureLoop" @keydown="measureLoopKeydown" @click.capture="measureLoopClick"><button v-for="item in state.chart?.bars || []" :key="item.index" :data-measure-index="item.index" :class="{ active: item.index === state.selected, gogo: item.gogo, 'loop-anchor': item.index === state.loopAnchor, 'in-selection': measureSelected(item.index), 'note-selected': item.index === state.selectedCell?.bar, 'loop-preview': measureDrag?.dragged && measureSelected(item.index) }" :aria-label="t('小节 {p0}', { p0: item.index + 1 }) + (item.index === state.selectedCell?.bar ? ` · ${t('已选音符所在小节')}` : '')" :aria-current="item.index === state.selected ? 'location' : undefined" :aria-pressed="measureSelected(item.index)" @click="viewMeasure($event, item.index)" @dblclick="measureSelected(item.index) ? studio.clearLoop() : studio.setLoop(item.index + 1, item.index + 1)"><span>{{ String(item.index + 1).padStart(3, '0') }}</span><span class="mini-notes"><i v-for="(note, index) in [...item.notes].filter(note => note !== '0').slice(0, 10)" :key="index" :class="{ blue: '24B'.includes(note) }"></i></span></button></div>
   </section>
@@ -454,13 +471,15 @@ onUnmounted(() => { cancelMeasureLoop(); cancelOverviewDrag(); observer?.disconn
 #measures{user-select:none;touch-action:pan-y}#measures.dragging,#measures.dragging button{cursor:crosshair}#measures button.loop-preview{outline:1px solid var(--green);outline-offset:-1px}
 #measure-loop-anchor{font-size:11px;color:var(--green);font-variant-numeric:tabular-nums}#measures button.loop-anchor{outline:2px dashed var(--green);outline-offset:-2px}
 #measures button.in-selection{box-shadow:inset 0 3px 0 var(--green)}#measures button.note-selected{position:relative}#measures button.note-selected::after{content:'';position:absolute;right:4px;bottom:4px;width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 2px #fff}
-#selection-summary{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:8px;font-size:11px;color:var(--green)}#selection-summary .selected-note-label{color:var(--cyan)}
+#selection-summary{font-size:11px;color:var(--green)}
+.clear-measure-selection{align-self:center;min-height:20px;padding:0 6px;gap:4px;border:0;background:transparent;font-size:11px}.clear-measure-selection svg{width:14px;height:14px}
+.position-caption{margin-bottom:8px}.position-measure{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
 .measure-nav{display:flex;align-items:center;gap:6px;min-width:0}.measure-nav label{display:flex;align-items:center;gap:6px;font-size:11px;white-space:nowrap}.measure-nav input{width:64px;min-width:0;height:28px;min-height:28px;padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:#fff;text-align:center;font-size:11px}
-.chart-statistics{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;min-width:0;margin-top:10px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}.chart-statistics>span{white-space:nowrap}.chart-statistics b{font-weight:500;color:var(--ink)}
-.measure-info{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;min-height:24px;margin-bottom:4px;color:var(--muted);font-size:11px}.measure-info>span{white-space:nowrap}
-.measure-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.measure-heading>.section-label{display:flex;gap:12px;min-width:0}.measure-actions{display:inline-flex;max-width:100%;margin-right:6px;border:0;border-radius:5px;background:transparent}.measure-actions button{min-width:0;padding:4px 8px;gap:4px;border:0;border-radius:4px;font-size:11px}.measure-actions button svg{width:14px;height:14px}
+.chart-statistics{display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;min-width:0;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.chart-statistics>span{white-space:nowrap}.chart-statistics b{font-weight:500;color:var(--ink)}
+.measure-info{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;color:var(--muted);font-size:11px}.measure-info>span{white-space:nowrap}
+.measure-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.measure-actions{display:inline-flex;max-width:100%;margin-right:6px;border:0;border-radius:5px;background:transparent}.measure-actions button{min-width:0;padding:4px 8px;gap:4px;border:0;border-radius:4px;font-size:11px}.measure-actions button svg{width:14px;height:14px}
 .timeline-content{min-width:100%}
-#timeline{position:sticky;left:0}
+.timeline-frame #timeline{height:250px;position:sticky;left:0}
 .editor-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .editor-history{display:flex;align-items:center;gap:4px}.editor-history>.icon{width:28px;min-width:28px;padding:4px}.editor-history svg{width:14px;height:14px}
 .editor-bar,.lane-head.editor-tools{background:var(--paper)}

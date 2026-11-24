@@ -1,18 +1,8 @@
 import { message, LocalizedError } from './i18n.js';
-import { BRANCH_ROUTES, parseChart } from './chart.js';
+import { BRANCH_ROUTES, parseChart, branchSections } from './chart.js';
 
 export function measureBranch(chart, bar) {
   return chart?.branches.find(branch => branch.index === bar?.branchIndex) ?? null;
-}
-
-function routeSections(text, branch) {
-  const markers = [...text.slice(branch.start, branch.end).matchAll(/^[\t ]*#(N|E|M|BRANCHEND)\b[^\r\n]*(?:\r?\n|$)/gmi)];
-  return markers.map((match, index) => ({
-    route: match[1].toUpperCase(),
-    start: branch.start + match.index,
-    bodyStart: branch.start + match.index + match[0].length,
-    end: branch.start + (markers[index + 1]?.index ?? branch.end - branch.start)
-  }));
 }
 
 export function setMeasureBranch(text, chart, bar, operation, parser) {
@@ -21,6 +11,17 @@ export function setMeasureBranch(text, chart, bar, operation, parser) {
   const newline = text.includes('\r\n') ? '\r\n' : '\n';
   const boundary = bar.commands[0]?.start ?? bar.ranges[0]?.start ?? bar.comma;
   const index = branch?.index ?? chart.branches.filter(item => item.start < boundary).length;
+  function sourceChunks(start, end, empty = false) {
+    if (!empty) return [[start, end]];
+    const chunks = [];
+    let cursor = start;
+    for (const range of chart.allBars.flatMap(item => item.ranges).filter(range => range.start >= start && range.end <= end)) {
+      chunks.push([cursor, range.start], '0'.repeat(range.end - range.start));
+      cursor = range.end;
+    }
+    chunks.push([cursor, end]);
+    return chunks;
+  }
   function replace(start, end, chunks, selected = bar.index, preserveSelection = false) {
     let replacement = '';
     const retained = [{ before: 0, after: 0, length: start }];
@@ -36,6 +37,23 @@ export function setMeasureBranch(text, chart, bar, operation, parser) {
     parseChart(edited, parser, chart.courseIndex, routes);
     return { text: edited, branchRoutes: routes, index, selected, preserveSelection, retained };
   }
+  if (operation.type === 'create') {
+    const last = operation.last, route = operation.route;
+    if (!Number.isInteger(last) || last < bar.index || last >= chart.bars.length) throw new LocalizedError(message('小节区间无效。'));
+    if (!BRANCH_ROUTES.includes(route)) throw new LocalizedError(message('分歧路线选择无效。'));
+    const end = chart.bars[last].comma + 1;
+    if (chart.bars.slice(bar.index, last + 1).some(item => item.branchIndex !== null) ||
+      /^[\t ]*#(?:BRANCHSTART|BRANCHEND|N|E|M)\b/mi.test(text.slice(boundary, end))) {
+      throw new LocalizedError(message('所选小节已被分歧覆盖，请选择连续的共用小节。'));
+    }
+    const { condition, lower, upper } = operation;
+    if (!['p', 'r', 's'].includes(condition) || !Number.isFinite(lower) || !Number.isFinite(upper)) throw new LocalizedError(message('分歧条件须为 p、r 或 s 及两个有限数值。'));
+    routes.splice(index, 0, route);
+    return replace(boundary, end, [
+      `${newline}#BRANCHSTART ${condition},${lower},${upper}${newline}#${route}${newline}`,
+      ...sourceChunks(boundary, end, operation.empty === true), `${newline}#BRANCHEND${newline}`
+    ]);
+  }
   if (operation.type === 'condition') {
     const { condition, lower, upper } = operation;
     if (!['p', 'r', 's'].includes(condition) || !Number.isFinite(lower) || !Number.isFinite(upper)) throw new LocalizedError(message('分歧条件须为 p、r 或 s 及两个有限数值。'));
@@ -49,33 +67,41 @@ export function setMeasureBranch(text, chart, bar, operation, parser) {
     return replace(boundary, boundary, [`${prefix}${command}${newline}#N${newline}`]);
   }
   if (!branch) throw new LocalizedError(message('请先在前面的小节插入分歧开始。'));
-  const sections = routeSections(text, branch);
-  function disable() {
-    const selected = sections.find(item => item.route === branch.route);
+  const sections = branchSections(text, branch);
+  function disable(keep = branch.route) {
+    if (keep !== null && !branch.routes.includes(keep)) throw new LocalizedError(message('分歧路线选择无效。'));
+    const selected = sections.find(item => item.route === (keep ?? branch.route));
     const headerEnd = branch.start + text.slice(branch.start).match(/^[^\r\n]*/)[0].length;
     routes.splice(index, 1);
-    return replace(branch.start, branch.end, [[headerEnd, sections[0].start], [selected.bodyStart, selected.end]]);
+    return replace(branch.start, branch.end, [[headerEnd, sections[0].start], ...sourceChunks(selected.bodyStart, selected.end, keep === null)], branch.firstBarIndex);
   }
   if (operation.type === 'disable') return disable();
+  if (operation.type === 'remove') return disable(operation.keep);
   if (operation.type === 'route') {
     if (!BRANCH_ROUTES.includes(operation.route)) throw new LocalizedError(message('分歧路线选择无效。'));
     const section = sections.find(item => item.route === operation.route);
     if (section) {
-      if (branch.routes.length === 1) return disable();
+      if (branch.routes.length === 1) return disable(operation.clearLast ? null : branch.route);
       const selectedRouteRemoved = branch.route === operation.route;
       if (selectedRouteRemoved) routes[index] = BRANCH_ROUTES.find(route => route !== operation.route && branch.routes.includes(route));
       return replace(section.start, section.end, [], selectedRouteRemoved ? branch.firstBarIndex : bar.index);
     }
     const at = sections.find(item => item.route === 'BRANCHEND')?.start ?? branch.end;
-    return replace(at, at, [`${newline}#${operation.route}${newline},${newline}`]);
+    const source = operation.source === undefined || operation.source === null ? branch.route : operation.source;
+    const current = sections.find(item => item.route === source);
+    if (!current || !BRANCH_ROUTES.includes(source)) throw new LocalizedError(message('分歧路线选择无效。'));
+    return replace(at, at, [`${newline}#${operation.route}${newline}`, ...sourceChunks(current.bodyStart, current.end, operation.source === null), newline]);
   }
   if (operation.type === 'end') {
     if (bar.index <= branch.firstBarIndex) throw new LocalizedError(message('分歧结束只能插在分歧开始之后的小节起点。'));
     const selected = sections.find(item => item.route === bar.route);
     const routeSectionsOnly = sections.filter(item => item.route !== 'BRANCHEND');
     const chunks = [[branch.start, routeSectionsOnly[0].start]];
+    const offset = bar.index - branch.firstBarIndex;
     for (const section of routeSectionsOnly) {
-      chunks.push([section.start, section === selected ? boundary : section.end], newline);
+      const counterpart = chart.allBars.filter(item => item.branchIndex === branch.index && item.route === section.route)[offset];
+      const end = counterpart.commands[0]?.start ?? counterpart.ranges[0]?.start ?? counterpart.comma;
+      chunks.push([section.start, end], newline);
     }
     chunks.push(`#BRANCHEND${newline}`, [boundary, selected.end]);
     return replace(branch.start, branch.end, chunks);

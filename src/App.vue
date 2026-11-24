@@ -7,7 +7,6 @@ import productIcon from './assets/icon.png';
 import TimelineEditor from './TimelineEditor.vue';
 import MeasureEditor from './MeasureEditor.vue';
 import SongWorkspace from './SongWorkspace.vue';
-import BranchControls from './BranchControls.vue';
 import DifficultyIcon from './DifficultyIcon.vue';
 import { COURSE_NAMES, COURSE_LABELS, courseLabel, variantLabel } from './courses.js';
 import { NOTE_TYPES } from './note-model.js';
@@ -503,7 +502,6 @@ async function dropFiles(event) {
       <div class="document-title"><span class="document-difficulty" role="img" :title="courseLabel(state.chart.variant.course)" :aria-label="courseLabel(state.chart.variant.course)"><DifficultyIcon :course="state.chart.variant.course" /></span><h1 id="song-title" :title="state.chart.title">{{ state.chart.title }}</h1><span id="document-mode" :title="variantLabel(state.chart.variant)">{{ variantLabel(state.chart.variant) }}</span><span v-if="state.encoding" id="encoding">{{ state.encoding }}</span></div>
     </section>
     <div class="editor-scroll">
-    <BranchControls v-if="state.chart?.branches.length" />
     <TimelineEditor v-if="studio.bar.value" />
     <section v-else class="empty-editor" @keydown.space.stop>
       <FileMusic />

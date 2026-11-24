@@ -4,13 +4,14 @@ export const EDITABLE_COMMANDS = ['BPMCHANGE', 'MEASURE', 'DELAY', 'SCROLL', 'GO
 export const PRESERVED_COMMANDS = ['LYRIC', 'SECTION', 'LEVELHOLD', 'SENOTECHANGE'];
 export const BRANCH_ROUTES = ['N', 'E', 'M'];
 export const BRANCH_ROUTE_NAMES = { N: '普通', E: '玄人', M: '达人' };
+const TIMING_COMMANDS = ['BPMCHANGE', 'MEASURE', 'DELAY'];
 
 export function decodeChart(bytes) {
   try { return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), encoding: 'UTF-8' }; }
   catch { return { text: new TextDecoder('shift-jis').decode(bytes), encoding: 'Shift-JIS' }; }
 }
 
-export function parseChart(text, parser, courseIndex = 0, branchRoutes = []) {
+export function parseChart(text, parser, courseIndex = 0, branchRoutes = [], { allowUnequalBranches = false } = {}) {
   if (!Array.isArray(branchRoutes) || branchRoutes.some(route => route !== null && !BRANCH_ROUTES.includes(route))) throw new LocalizedError(message('分歧路线选择无效。'));
   const field = name => text.match(new RegExp(`^${name}:(.*)$`, 'mi'))?.[1].trim();
   const blocks = [...text.matchAll(/^#START[^\r\n]*\r?\n([\s\S]*?)^#END/gmi)];
@@ -49,13 +50,20 @@ export function parseChart(text, parser, courseIndex = 0, branchRoutes = []) {
     finishPath();
     if (!branch.current) { fence(); branch.entry = capture(); }
     const current = branch, routes = BRANCH_ROUTES.filter(route => current.paths[route]);
+    if (!allowUnequalBranches && new Set(routes.map(route => current.paths[route].bars.length)).size > 1) {
+      throw new LocalizedError(message('第 {p0} 处分歧的各路线小节数量必须一致。', { p0: current.index + 1 }));
+    }
+    const routeEndTimes = Object.fromEntries(routes.map(route => [route, current.paths[route].time]));
+    if (!allowUnequalBranches && routes.some(route => Math.abs(routeEndTimes[route] - routeEndTimes[routes[0]]) > 1e-7)) {
+      throw new LocalizedError(message('第 {p0} 处分歧的各路线时长必须一致。', { p0: current.index + 1 }));
+    }
     const requested = branchRoutes[current.index];
     const route = requested ?? (routes.includes('N') ? 'N' : routes[0] ?? null);
     if (route !== null && !routes.includes(route)) throw new LocalizedError(message('第 {p0} 处分歧没有路线 {p1}。', { p0: current.index + 1, p1: route }));
     const selected = route === null ? current.entry : current.paths[route];
     restore(selected);
     bars = route === null ? [...current.entry.bars] : [...current.entry.bars, ...selected.bars];
-    Object.assign(current, { end, route, routes, firstBarIndex: current.entry.bars.length, barCount: route === null ? 0 : selected.bars.length });
+    Object.assign(current, { end, route, routes, routeEndTimes, firstBarIndex: current.entry.bars.length, barCount: route === null ? 0 : selected.bars.length });
     branch = null;
     fence(marker);
   };
@@ -155,9 +163,9 @@ export function parseChart(text, parser, courseIndex = 0, branchRoutes = []) {
   if (branch) finishBranch(bodyStart + body.length);
   if (branchRoutes.length > branches.length) throw new LocalizedError(message('分歧路线选择无效。'));
   if (digits.length) throw new LocalizedError(message('最后一个小节缺少逗号。'));
-  if (!bars.length) throw new LocalizedError(message('没有可编辑的小节。'));
+  if (!bars.length && (!allowUnequalBranches || !allBars.length)) throw new LocalizedError(message('没有可编辑的小节。'));
   bars.forEach((bar, index) => { bar.index = index; });
-  return { title: field('TITLE') || 'Untitled', wave: field('WAVE'), offset, baseBpm, courses, variants, variant: variants[courseIndex], courseIndex, bars, allBars, branches: branches.map(({ index, start, end, value, route, routes, firstBarIndex, barCount }) => ({ index, start, end, value, route, routes, firstBarIndex, barCount })), branchRoutes: branches.map(branch => branch.route), unsimulatedCommands: [...unsimulatedCommands] };
+  return { title: field('TITLE') || 'Untitled', wave: field('WAVE'), offset, baseBpm, courses, variants, variant: variants[courseIndex], courseIndex, bars, allBars, branches: branches.map(({ index, start, end, value, route, routes, routeEndTimes, firstBarIndex, barCount }) => ({ index, start, end, value, route, routes, routeEndTimes, firstBarIndex, barCount })), branchRoutes: branches.map(branch => branch.route), unsimulatedCommands: [...unsimulatedCommands] };
 }
 
 export function setBaseBpm(text, bpm) {
@@ -165,9 +173,133 @@ export function setBaseBpm(text, bpm) {
   return text.replace(/^(BPM:)[^\r\n]*/mi, (line, prefix) => `${prefix}${bpm}${line.match(/[\t ]*\/\/.*$/)?.[0] || ''}`);
 }
 
-export function insertEmptyBar(text, bar, side) {
+export function branchSections(text, branch) {
+  const markers = [...text.slice(branch.start, branch.end).matchAll(/^[\t ]*#(N|E|M|BRANCHEND)\b[^\r\n]*(?:\r?\n|$)/gmi)];
+  return markers.map((match, index) => ({
+    route: match[1].toUpperCase(),
+    start: branch.start + match.index,
+    bodyStart: branch.start + match.index + match[0].length,
+    end: branch.start + (markers[index + 1]?.index ?? branch.end - branch.start)
+  }));
+}
+
+export function alignBranchRoutes(text, parser) {
+  const edits = [], templates = [], newline = text.includes('\r\n') ? '\r\n' : '\n';
+  const first = parseChart(text, parser, 0, [], { allowUnequalBranches: true });
+  for (let course = 0; course < first.variants.length; course++) {
+    const chart = course === 0 ? first : parseChart(text, parser, course, [], { allowUnequalBranches: true });
+    templates.push({ course, routes: chart.branches.map(branch => branch.routes.length ? branch.routes.reduce((longest, route) => branch.routeEndTimes[route] > branch.routeEndTimes[longest] ? route : longest) : null) });
+    for (const branch of chart.branches) {
+      const sections = branchSections(text, branch).filter(section => BRANCH_ROUTES.includes(section.route));
+      const counts = sections.map(section => chart.allBars.filter(bar => bar.branchIndex === branch.index && bar.route === section.route).length);
+      const maximum = Math.max(0, ...counts);
+      sections.forEach((section, index) => {
+        if (counts[index] < maximum) edits.push({ at: section.end, content: newline + `,${newline}`.repeat(maximum - counts[index]) });
+      });
+    }
+  }
+  for (const edit of edits.sort((a, b) => b.at - a.at)) text = text.slice(0, edit.at) + edit.content + text.slice(edit.at);
+  for (const { course, routes } of templates) text = synchronizeBranchTiming(text, parser, course, routes);
+  return text;
+}
+
+export function synchronizeBranchTiming(text, parser, courseIndex = null, branchRoutes = []) {
+  const first = parseChart(text, parser, courseIndex ?? 0, branchRoutes, { allowUnequalBranches: true });
+  const courses = courseIndex === null ? first.variants.map((_, index) => index) : [courseIndex];
+  const edits = [], newline = text.includes('\r\n') ? '\r\n' : '\n';
+  const timing = bar => bar.instructions.filter(command => !command.shared && TIMING_COMMANDS.includes(command.name));
+  const signature = commands => JSON.stringify(commands.map(({ name, value, fraction }) => [name, value, fraction]));
+  const commandText = commands => commands.length ? newline + commands.map(command => `#${command.name}${command.value ? ` ${command.value}` : ''}`).join(newline) + newline : '';
+  for (const course of courses) {
+    const chart = course === first.courseIndex ? first : parseChart(text, parser, course, [], { allowUnequalBranches: true });
+    for (const branch of chart.branches) {
+      if (!branch.routes.length) continue;
+      const route = courseIndex === null ? branch.routes.reduce((longest, candidate) => branch.routeEndTimes[candidate] > branch.routeEndTimes[longest] ? candidate : longest) : branch.route;
+      const template = chart.allBars.filter(bar => bar.branchIndex === branch.index && bar.route === route);
+      for (const candidate of branch.routes.filter(candidate => candidate !== route)) {
+        const bars = chart.allBars.filter(bar => bar.branchIndex === branch.index && bar.route === candidate);
+        if (bars.length !== template.length) throw new LocalizedError(message('第 {p0} 处分歧的各路线小节数量必须一致。', { p0: branch.index + 1 }));
+        bars.forEach((bar, index) => {
+          const commands = timing(template[index]), previous = timing(bar);
+          if (signature(commands) === signature(previous)) return;
+          let length = bar.notes.length;
+          for (const command of commands) {
+            let a = command.slot, b = template[index].notes.length;
+            while (b) [a, b] = [b, a % b];
+            const denominator = template[index].notes.length / a;
+            a = length; b = denominator;
+            while (b) [a, b] = [b, a % b];
+            length = length / a * denominator;
+            if (length > 65536) throw new LocalizedError(message('指令位置超出 65536 个源码格，无法无损插入。'));
+          }
+          const notes = resizeNotes(bar.notes, length), groups = new Map();
+          for (const command of commands) {
+            const slot = command.slot * length / template[index].notes.length;
+            if (!groups.has(slot)) groups.set(slot, []);
+            groups.get(slot).push(command);
+          }
+          const insertCommands = (content, from, to) => {
+            for (const [slot, group] of [...groups].sort((a, b) => b[0] - a[0])) {
+              if (slot > 0 && slot >= from && slot < to) content = content.slice(0, slot - from) + commandText(group) + content.slice(slot - from);
+            }
+            return content;
+          };
+          const changes = previous.map(command => ({ start: command.start, end: command.end, text: '' }));
+          let consumed = 0;
+          for (const range of bar.ranges) {
+            const from = consumed * length / bar.notes.length;
+            consumed += range.end - range.start;
+            const to = consumed * length / bar.notes.length;
+            changes.push({ ...range, text: insertCommands(notes.slice(from, to), from, to) });
+          }
+          changes.push({ start: bar.comma, end: bar.comma, text: (bar.ranges.length ? '' : insertCommands(notes, 0, length)) + commandText(groups.get(length) ?? []) });
+          const start = bar.commands[0]?.start ?? bar.ranges[0]?.start ?? bar.comma;
+          changes.push({ start, end: start, text: commandText(groups.get(0) ?? []) });
+          let source = text.slice(start, bar.comma + 1);
+          for (const change of changes.sort((a, b) => b.start - a.start || b.end - a.end)) source = source.slice(0, change.start - start) + change.text + source.slice(change.end - start);
+          edits.push({ start, end: bar.comma + 1, text: source });
+        });
+      }
+      const sections = branchSections(text, branch).filter(section => BRANCH_ROUTES.includes(section.route));
+      const tails = sections.map(section => {
+        const bars = chart.allBars.filter(bar => bar.branchIndex === branch.index && bar.route === section.route);
+        const start = bars.length ? bars.at(-1).comma + 1 : section.bodyStart;
+        const commands = [...text.slice(start, section.end).matchAll(/^[\t ]*#(BPMCHANGE|MEASURE|DELAY)\b([^\r\n]*)/gmi)].map(match => ({
+          name: match[1].toUpperCase(), value: match[2].split('//')[0].trim(), start: start + match.index, end: start + match.index + match[0].split('//')[0].trimEnd().length
+        }));
+        return { section, commands };
+      });
+      const source = tails.find(tail => tail.section.route === route);
+      for (const tail of tails) {
+        if (signature(tail.commands) === signature(source.commands)) continue;
+        for (const command of tail.commands) edits.push({ start: command.start, end: command.end, text: '' });
+        edits.push({ start: tail.section.end, end: tail.section.end, text: commandText(source.commands) });
+      }
+    }
+  }
+  for (const edit of edits.sort((a, b) => b.start - a.start || b.end - a.end)) text = text.slice(0, edit.start) + edit.text + text.slice(edit.end);
+  return text;
+}
+
+export function correspondingBars(chart, bar) {
+  if (!bar) throw new LocalizedError(message('请先创建难度谱面。'));
+  if (bar.branchIndex === null) return [bar];
+  if (!chart) throw new LocalizedError(message('分歧路线选择无效。'));
+  const routes = chart.branches[bar.branchIndex].routes;
+  const paths = routes.map(route => chart.allBars.filter(item => item.branchIndex === bar.branchIndex && item.route === route));
+  const offset = paths.find(path => path.includes(bar))?.indexOf(bar);
+  if (offset === undefined || paths.some(path => !path[offset])) throw new LocalizedError(message('第 {p0} 处分歧的各路线小节数量必须一致。', { p0: bar.branchIndex + 1 }));
+  return paths.map(path => path[offset]);
+}
+
+export function insertEmptyBar(text, bar, side, chart) {
   if (!bar) throw new LocalizedError(message('请先创建难度谱面。'));
   if (!['before', 'after'].includes(side)) throw new LocalizedError(message('插入位置无效。'));
+  for (const item of correspondingBars(chart, bar).sort((a, b) => b.comma - a.comma)) text = insertSingleEmptyBar(text, item, side);
+  return text;
+}
+
+function insertSingleEmptyBar(text, bar, side) {
   const newline = text.includes('\r\n') ? '\r\n' : '\n';
   let position = bar.ranges[0]?.start ?? bar.comma;
   if (side === 'after') {
@@ -183,8 +315,11 @@ export function insertEmptyBar(text, bar, side) {
 export function deleteBar(text, chart, bar) {
   if (!bar) throw new LocalizedError(message('请先创建难度谱面。'));
   if (chart.bars.length <= 1) throw new LocalizedError(message('不能删除最后一个小节。'));
-  const start = bar.commands[0]?.start ?? bar.ranges[0]?.start ?? bar.comma;
-  return text.slice(0, start) + text.slice(bar.comma + 1);
+  for (const item of correspondingBars(chart, bar).sort((a, b) => b.comma - a.comma)) {
+    const start = item.commands[0]?.start ?? item.ranges[0]?.start ?? item.comma;
+    text = text.slice(0, start) + text.slice(item.comma + 1);
+  }
+  return text;
 }
 
 export function setBarSettings(text, bar, settings, slot = 0) {
@@ -318,7 +453,7 @@ export function replaceBarSource(text, chart, bar, source, parser) {
   if ((notes.match(/,/g) || []).length !== 1 || !content.trimEnd().endsWith(',') || /^\s*#(?:START|END)\b/mi.test(content)) throw new LocalizedError(message('小节源码须只包含一个以逗号结束的小节。'));
   const start = bar.commands[0]?.start ?? bar.ranges[0]?.start ?? bar.comma;
   const newline = text.includes('\r\n') ? '\r\n' : '\n';
-  const edited = text.slice(0, start) + source.replace(/\r?\n/g, newline).trimEnd() + text.slice(bar.comma + 1);
+  const edited = synchronizeBranchTiming(text.slice(0, start) + source.replace(/\r?\n/g, newline).trimEnd() + text.slice(bar.comma + 1), parser, chart.courseIndex, chart.branchRoutes);
   const parsed = parseChart(edited, parser, chart.courseIndex, chart.branchRoutes);
   if (parsed.bars.length !== chart.bars.length || parsed.courses.length !== chart.courses.length) throw new LocalizedError(message('小节源码不能增删小节或难度。'));
   if (parsed.bars[bar.index].notes.length > 65536) throw new LocalizedError(message('单小节最多支持 65536 个源码格。'));

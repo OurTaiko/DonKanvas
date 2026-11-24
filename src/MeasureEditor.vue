@@ -1,11 +1,10 @@
 <script setup>
 import { t } from './i18n.js';
-import { computed, inject, reactive, ref, watch } from 'vue';
+import { computed, inject, reactive, watch } from 'vue';
 import { RotateCcw, Trash2, Headphones, Eraser } from '@lucide/vue';
 import { formatTime } from './useStudio.js';
 import { measureStart, measureEnd } from './loop.js';
-import { EDITABLE_COMMANDS, BRANCH_ROUTES, BRANCH_ROUTE_NAMES } from './chart.js';
-import { measureBranch } from './branch-commands.js';
+import { EDITABLE_COMMANDS } from './chart.js';
 import { NOTE_TYPES } from './note-model.js';
 
 const studio = inject('studio');
@@ -16,13 +15,6 @@ const enabled = reactive({ bpm: false, scroll: false, meter: false, delay: false
 const types = { bpm: ['BPMCHANGE'], scroll: ['SCROLL'], meter: ['MEASURE'], delay: ['DELAY'], gogo: ['GOGOSTART', 'GOGOEND'], barline: ['BARLINEON', 'BARLINEOFF'] };
 const preserved = { lyric: 'LYRIC', section: 'SECTION', levelhold: 'LEVELHOLD', senote: 'SENOTECHANGE' };
 const measureKeys = ['meter', 'barline', 'section', 'levelhold'];
-const branchControls = ref(null), branchFields = reactive({ condition: '', lower: 50, upper: 80 });
-const activeBranch = computed(() => measureBranch(state.chart, bar.value));
-const canEndBranch = computed(() => activeBranch.value && state.selected > activeBranch.value.firstBarIndex);
-watch(activeBranch, value => {
-  const [condition, lower, upper] = (value?.value ?? ',50,80').split(',').map(part => part.trim());
-  Object.assign(branchFields, { condition, lower: Number(lower), upper: Number(upper) });
-}, { immediate: true });
 const divisions = computed(() => [...new Set([4, 8, 12, 16, 24, 32, 48, 64, 96, 192, bar.value?.notes.length].filter(Boolean))].sort((first, second) => first - second));
 watch([command, measureCommand], ([value, measure]) => {
   if (!value || !measure) return;
@@ -68,28 +60,6 @@ function finishSetting(event) {
   }
 }
 function locate(item) { studio.setCommandPosition(item.slot, bar.value.notes.length); }
-function applyBranchCondition() {
-  if (!branchFields.condition) {
-    if (!activeBranch.value) return true;
-    if (activeBranch.value.routes.length > 1 && !confirm(t('关闭分歧并保留当前路线？其他路线将移除，可撤销恢复。'))) {
-      branchFields.condition = activeBranch.value.value.split(',')[0].trim();
-      return false;
-    }
-    return studio.applyMeasureBranch({ type: 'disable' });
-  }
-  if ([...branchControls.value.querySelectorAll('input, select')].some(input => !input.reportValidity())) return false;
-  return studio.applyMeasureBranch({ type: 'condition', condition: branchFields.condition, lower: Number(branchFields.lower), upper: Number(branchFields.upper) });
-}
-function toggleBranchRoute(route) {
-  if (activeBranch.value.routes.length > 1 && activeBranch.value.routes.includes(route) && !confirm(t('删除路线 {p0} 及其内容？可撤销恢复。', { p0: t(BRANCH_ROUTE_NAMES[route]) }))) return;
-  studio.applyMeasureBranch({ type: 'route', route });
-}
-function finishBranchSetting(event) {
-  if (event.isComposing || event.keyCode === 229) return;
-  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
-    if (!applyBranchCondition()) { event.preventDefault(); event.stopPropagation(); }
-  } else if (event.key === 'Enter') { event.preventDefault(); event.target.blur(); }
-}
 </script>
 
 <template>
@@ -135,17 +105,6 @@ function finishBranchSetting(event) {
           <div class="command-field"><label class="command-enable" @change="apply('section', $event)"><input id="use-section" v-model="enabled.section" type="checkbox" :disabled="!bar || state.invalid">SECTION</label></div>
           <div class="command-field"><label class="command-enable" @change="apply('levelhold', $event)"><input id="use-levelhold" v-model="enabled.levelhold" type="checkbox" :disabled="!bar || state.invalid">LEVELHOLD</label></div>
         </div>
-        <div ref="branchControls" class="measure-branch-commands" @keydown="finishBranchSetting">
-          <div class="command-field"><label for="branch-condition">{{ t('分歧条件') }} · BRANCHSTART</label><select id="branch-condition" v-model="branchFields.condition" :disabled="!bar || state.invalid" @change="applyBranchCondition"><option value="">{{ t('不启用') }}</option><option value="p">{{ t('精度（p）') }}</option><option value="r">{{ t('连打数（r）') }}</option><option value="s">{{ t('分数（s）') }}</option></select></div>
-          <div class="settings-grid">
-            <div class="command-field"><label for="branch-lower">{{ t('第一阈值') }}</label><input id="branch-lower" v-model.number="branchFields.lower" type="number" step="any" :disabled="!activeBranch || state.invalid" required @change="applyBranchCondition"></div>
-            <div class="command-field"><label for="branch-upper">{{ t('第二阈值') }}</label><input id="branch-upper" v-model.number="branchFields.upper" type="number" step="any" :disabled="!activeBranch || state.invalid" required @change="applyBranchCondition"></div>
-          </div>
-          <div class="branch-route-buttons" role="group" :aria-label="t('分歧路线开关')"><button v-for="route in BRANCH_ROUTES" :id="`branch-route-${route}`" :key="route" type="button" :aria-pressed="activeBranch ? activeBranch.routes.includes(route) : false" :aria-label="t('启用或删除路线 {p0}', { p0: t(BRANCH_ROUTE_NAMES[route]) })" :disabled="!activeBranch || state.invalid" @click="toggleBranchRoute(route)">{{ t(BRANCH_ROUTE_NAMES[route]) }}</button></div>
-          <p class="command-help">{{ t('默认普通；取消最后一路或选择不启用时，移除分歧指令并将当前路线转为共用小节。') }}</p>
-          <div class="branch-edit-actions"><button id="branch-end" type="button" :disabled="!canEndBranch || state.invalid" @click="studio.applyMeasureBranch({ type: 'end' })">BRANCHEND · {{ t('结束分歧') }}</button></div>
-          <p class="command-help">{{ t('分歧结束写在后续小节开头；该小节及当前路线的后续内容恢复为共用区，其他路线不截断。') }}</p>
-        </div>
       </fieldset>
     </form>
     <section class="inspector-section" aria-labelledby="measure-command-list-title" @focusin="state.playing && studio.pause()">
@@ -173,7 +132,6 @@ function finishBranchSetting(event) {
 .inspector-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 12px}.inspector-heading h2{min-width:0;margin:0;font-size:13px;font-weight:600;line-height:1.5;overflow-wrap:anywhere}.inspector-heading>#bar-badge{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.inspector-heading>.icon{width:26px;min-width:26px;min-height:26px;padding:4px}.inspector-heading.source-label{align-items:flex-start;margin:0 0 12px}.source-label>#source-state{flex-shrink:0;white-space:nowrap}.inspector-section>.detail-row:last-child{margin-bottom:0}.inspector-section>.branch-edit-actions{margin-top:0}
 .command-group{min-width:0;margin:12px 0 0;padding:10px 0 0;border:0;border-top:1px dashed var(--line)}.command-group legend{padding:0 8px 0 0;font-size:11px;font-weight:500;color:var(--muted)}.selection-position .command-position{margin-top:0}.selection-position>output{display:block;margin-top:8px;font-size:12px;color:var(--muted)}
 .selection-position input,.command-group input:not([type=checkbox]),.command-group select{box-sizing:border-box;width:100%;min-width:0;max-width:none;height:32px;min-height:32px;margin:0;padding:6px 8px;border:1px solid var(--line);border-radius:4px;background:#fff;font-size:12px;line-height:18px}.selection-position .meter-inputs input,.command-group .meter-inputs input{width:0;flex:1 1 0}
-.measure-branch-commands{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}.branch-route-buttons{display:flex;gap:8px}.branch-route-buttons button{flex:1;min-width:0}.branch-route-buttons button[aria-pressed=true]{background:var(--green);border-color:var(--green);color:#fff}.branch-route-buttons button[aria-pressed=true]:disabled{opacity:.7}
 .balloon-control{margin-top:12px;font-size:11px;color:var(--muted)}.balloon-control label{line-height:1.5;overflow-wrap:anywhere}.balloon-control input{width:100%;min-width:0;height:32px;padding:6px 8px;font-size:12px}
 @media(max-width:900px){.measure-editor{overflow:visible;border-left:0;border-top:1px solid var(--line)}}
 .command-wide{grid-column:1/-1}.command-help{font-size:12px;line-height:1.6;color:var(--muted);margin:8px 0}.branch-edit-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TJAParser } from 'tja';
-import { parseChart, barTimeAt } from './chart.js';
+import { parseChart, alignBranchRoutes, barTimeAt } from './chart.js';
 import { createBeatTimeline, createTimelineViewport } from './timeline.js';
 
 const chart = (body, bpm = 100, offset = 0) => `TITLE:Beat timeline\nBPM:${bpm}\nOFFSET:${offset}\nCOURSE:Oni\nLEVEL:1\n#START\n${body}\n#END\n`;
@@ -80,13 +80,14 @@ test('changing base BPM preserves beat positions while offsets, delays and audio
   }
 });
 
-test('branch tempo maps use only the selected route and keep shared continuation at its real end', () => {
-  const text = chart('1111,\n#BRANCHSTART p,50,80\n#N\n#BPMCHANGE 100\n1111,\n#E\n#BPMCHANGE 200\n1111,\n#M\n#BPMCHANGE 300\n1111,\n#BRANCHEND\n1111,');
+test('branch tempo maps use synchronized timing and shared continuation starts at the aligned end', () => {
+  const text = alignBranchRoutes(chart('1111,\n#BRANCHSTART p,50,80\n#N\n#BPMCHANGE 100\n1111,\n#E\n#BPMCHANGE 200\n1111,\n#M\n#BPMCHANGE 300\n1111,\n#BRANCHEND\n1111,'), TJAParser);
   for (const route of ['N', 'E', 'M']) {
     const parsed = parseChart(text, TJAParser, 0, [route]), scale = createBeatTimeline(parsed);
     for (const bar of parsed.bars) near(scale.beatAt(bar.end) - scale.beatAt(bar.start), 4);
     near(scale.beatAt(parsed.bars[2].start), 8);
     near(parsed.bars[2].start, parsed.bars[1].end);
+    near(parsed.bars[2].start, 4.8);
   }
   const empty = createBeatTimeline(null);
   near(empty.timeAt(empty.beatAt(-2)), -2);

@@ -68,8 +68,8 @@ test('measure clipboard inserts or overwrites complete measures, preserves count
   assert.deepEqual(balloonCounts(overwritten, 0), [12, 12, 24]);
 });
 
-test('clipboard projects the displayed route and preserves other routes and their balloon pools', () => {
-  const text = 'TITLE:Branch\nBPM:120\nCOURSE:Oni\nBALLOONNOR:11,12\nBALLOONEXP:21\nBALLOONMAS:31\n#START\n1000,\n#BPMCHANGE 90\n#BRANCHSTART p,50,80\n#N\n7080,\n9080,\n#E\n#MEASURE 3/4\n7080,\n#M\n7080,\n#BRANCHEND\n2000,\n#END\n';
+test('clipboard projects the displayed route and inserts matching empty measures in other routes without changing their balloon pools', () => {
+  const text = 'TITLE:Branch\nBPM:120\nCOURSE:Oni\nBALLOONNOR:11,12\nBALLOONEXP:21\nBALLOONMAS:31\n#START\n1000,\n#BPMCHANGE 90\n#BRANCHSTART p,50,80\n#N\n7080,\n9080,\n#E\n#SCROLL 3\n7080,\n,\n#M\n7080,\n,\n#BRANCHEND\n2000,\n#END\n';
   const chart = parseChart(text, TJAParser);
   const copied = copyMeasures(text, chart, 1, 2);
   assert.doesNotMatch(copied[0].source, /#BRANCH|^#N$/m);
@@ -80,13 +80,30 @@ test('clipboard projects the displayed route and preserves other routes and thei
   assert.deepEqual(balloonCounts(inserted, 0, 'BALLOONNOR'), [11, 11, 12, 12]);
   assert.deepEqual(balloonCounts(inserted, 0, 'BALLOONEXP'), [21]);
   assert.deepEqual(balloonCounts(inserted, 0, 'BALLOONMAS'), [31]);
-  assert.deepEqual(parseChart(inserted, TJAParser, 0, ['E']).bars.map(bar => bar.notes), ['1000', '7080', '2000']);
+  for (const route of ['E', 'M']) assert.deepEqual(parseChart(inserted, TJAParser, 0, [route]).bars.map(bar => bar.notes), ['1000', '7080', '0', '0', '0', '2000']);
   assert.deepEqual(next.branches.map(branch => [branch.routes, branch.route]), chart.branches.map(branch => [branch.routes, branch.route]));
-  assert.ok(inserted.includes('#E\n#MEASURE 3/4\n7080,\n#M\n7080,\n#BRANCHEND\n2000,'));
+  assert.equal(parseChart(inserted, TJAParser, 0, ['E']).bars[1].scroll, 3);
+  assert.equal(parseChart(inserted, TJAParser, 0, ['M']).bars[1].scroll, 1);
   assert.throws(() => pasteMeasures(text, chart, 0, copied, 'overwrite', TJAParser), /分歧边界，无法粘贴/);
   assert.throws(() => pasteMeasures(text, chart, 2, copied, 'overwrite', TJAParser), /分歧边界，无法粘贴/);
   const overwritten = pasteMeasures(text, chart, 1, copied, 'overwrite', TJAParser);
   assert.deepEqual(balloonCounts(overwritten, 0, 'BALLOONNOR'), [11, 12]);
+});
+
+test('overwrite overflow at an implicit branch end appends matching empty measures to the other routes', () => {
+  const text = 'TITLE:Overflow\nBPM:120\nCOURSE:Oni\nBALLOON:11,22,33\n#START\n#BRANCHSTART p,50,80\n#N\n7080,\n#E\n9080,\n#M\n7080,\n#END\n';
+  for (const route of ['N', 'E', 'M']) {
+    const chart = parseChart(text, TJAParser, 0, [route]);
+    const copied = copyMeasures(text, chart, 0, 0);
+    const edited = pasteMeasures(text, chart, 0, [...copied, ...copied, ...copied], 'overwrite', TJAParser);
+    for (const candidate of ['N', 'E', 'M']) {
+      const next = parseChart(edited, TJAParser, 0, [candidate]);
+      assert.equal(next.branches[0].barCount, 3);
+      assert.deepEqual(next.bars.map(bar => bar.notes), candidate === route ? Array(3).fill(chart.bars[0].notes) : [parseChart(text, TJAParser, 0, [candidate]).bars[0].notes, '0', '0']);
+    }
+    const count = { N: 11, E: 22, M: 33 }[route];
+    assert.deepEqual(balloonCounts(edited, 0), [11, 22, 33].flatMap(value => value === count ? [value, value, value] : [value]));
+  }
 });
 
 test('clipboard keeps missing balloon counts invalid, retains unused counts and works across courses', () => {

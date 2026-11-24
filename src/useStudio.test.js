@@ -9,6 +9,53 @@ import { COURSE_NAMES, courseLevel } from './courses.js';
 
 const chart = 'TITLE:Vue session\nBPM:120\nOFFSET:0\nCOURSE:Oni\nLEVEL:1\n#START\n1000,\n2000,\n#END\n';
 
+test('global branch management targets explicit measures, synchronizes routes and persists undoable creation and deletion', async () => {
+  const { studio, saved, cleanup } = mountStudio();
+  try {
+    const disk = diskFile('managed.tja', chart);
+    await studio.openChart(await disk.handle.getFile(), disk.handle);
+    studio.select(1); studio.setLoop(2, 2);
+    assert.equal(studio.applyMeasureBranch({ type: 'create', last: 0, route: 'E', condition: 'p', lower: 50, upper: 80 }, 0), true);
+    assert.deepEqual(studio.state.branchRoutes, ['E']);
+    assert.equal(studio.state.chart.branches[0].barCount, 1);
+    assert.equal(studio.state.chart.bars[1].branchIndex, null);
+    assert.equal(studio.state.undo.length, 1); assert.equal(studio.range.value, null);
+    studio.history(); assert.equal(studio.state.text, chart); assert.equal(studio.state.selected, 1); assert.deepEqual(studio.range.value, [2, 2]);
+    studio.history(true); assert.deepEqual(studio.state.branchRoutes, ['E']);
+    studio.select(1);
+    assert.equal(studio.applyMeasureBranch({ type: 'route', route: 'M', source: 'E' }, 0), true);
+    assert.equal(studio.applyMeasureBranch({ type: 'route', route: 'N', source: null }, 0), true);
+    studio.changeBranch(0, 'N'); assert.equal(studio.bar.value.notes, '0000');
+    assert.equal(studio.applySettings({ bpm: 150 }, true), true);
+    for (const route of ['N', 'E', 'M']) {
+      studio.changeBranch(0, route);
+      assert.equal(studio.bar.value.bpm, 150);
+      assert.equal(studio.bar.value.end, 1.6);
+      assert.equal(studio.bar.value.notes, route === 'N' ? '0000' : '1000');
+    }
+    studio.changeBranch(0, 'N');
+    const before = studio.state.text, history = studio.state.undo.length;
+    assert.equal(studio.applyMeasureBranch({ type: 'create', last: 1, route: 'N', condition: 'p', lower: 50, upper: 80 }, 0), undefined);
+    assert.equal(studio.state.text, before); assert.equal(studio.state.undo.length, history);
+    assert.match(studio.state.notice, /分歧覆盖/);
+    studio.select(1);
+    assert.equal(studio.applyMeasureBranch({ type: 'remove', keep: 'M' }, 0), true);
+    assert.equal(studio.state.chart.branches.length, 0);
+    assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['1000', '2000']);
+    studio.history(); assert.equal(studio.state.text, before); assert.deepEqual(studio.state.branchRoutes, ['N']);
+    studio.history(true);
+    assert.equal(await studio.saveChart(), true);
+    assert.equal(disk.text, studio.state.text);
+    assert.equal(workspace(saved).documents[0].text, disk.text);
+    studio.restore();
+    assert.equal(studio.state.text, disk.text); assert.equal(studio.state.chart.branches.length, 0);
+    studio.history(); assert.deepEqual(studio.state.branchRoutes, ['N']);
+    assert.equal(studio.applyMeasureBranch({ type: 'remove', keep: null }, 0), true);
+    assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['0000', '2000']);
+    assert.equal(studio.state.chart.bars[0].end, 1.6);
+  } finally { cleanup(); }
+});
+
 test('chart pickers allow unknown Android MIME types while application validation rejects non-TJA files', async () => {
   const { studio, cleanup } = mountStudio();
   try {
@@ -45,6 +92,64 @@ test('file read and parse errors queue for dialogs without replacing the current
     assert.equal(studio.state.filename, 'valid.tja'); assert.equal(studio.state.documents.length, 2);
     assert.equal(studio.state.fileErrors.length, 2);
     assert.ok(!JSON.stringify(workspace(saved)).includes('fileErrors'));
+  } finally { cleanup(); }
+});
+
+test('unequal imports ask before padding every course, preserve the original disk file and reject declined repairs atomically', async () => {
+  const { studio, saved, mock, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file()); studio.select(1); studio.setLoop(1, 2);
+    const text = chart + 'COURSE:Easy\n#START P1\n#BRANCHSTART p,50,80\n#N\n1000,\n#E\n2000,2000,\n#M\n3000,\n#BRANCHEND\n#END\n#START P2\n#BRANCHSTART p,50,80\n#N\n1000,1000,1000,\n#E\n2000,\n#M\n3000,3000,\n#END\n';
+    const disk = diskFile('unequal.tja', text);
+    const before = studio.state.text, id = studio.state.activeId, undo = studio.state.undo;
+    let prompts = 0;
+    mock('confirm', prompt => { prompts++; assert.match(prompt, /unequal.tja.*补齐空小节/); return false; });
+    await studio.openChart(await disk.handle.getFile(), disk.handle);
+    assert.equal(prompts, 1); assert.equal(studio.state.documents.length, 1);
+    assert.equal(studio.state.activeId, id); assert.equal(studio.state.text, before);
+    assert.equal(studio.state.undo, undo); assert.equal(studio.state.selected, 1);
+    assert.deepEqual(studio.range.value, [1, 2]);
+    assert.match(formatMessage(studio.state.fileErrors[0].error), /已拒绝载入/);
+    mock('confirm', () => { prompts++; return true; });
+    await studio.openChart(await disk.handle.getFile(), disk.handle);
+    assert.equal(prompts, 2); assert.equal(studio.state.dirty, true);
+    assert.equal(studio.state.savedText, text); assert.equal(disk.text, text);
+    assert.equal(studio.state.undo.length, 0);
+    const repaired = studio.state.text;
+    for (const [course, count] of [[1, 2], [2, 3]]) {
+      studio.changeCourse(course);
+      for (const route of ['N', 'E', 'M']) {
+        studio.changeAllBranches(route);
+        assert.equal(studio.state.chart.branches[0].barCount, count);
+      }
+    }
+    assert.equal(await studio.saveChart(), true); assert.equal(disk.text, repaired);
+    assert.equal(studio.state.dirty, false);
+    assert.equal(workspace(saved).documents.at(-1).text, repaired);
+    mock('confirm', () => assert.fail('A repaired file must not ask again'));
+    await studio.openChart(file('repaired.tja', repaired));
+    assert.equal(studio.state.dirty, false);
+  } finally { cleanup(); }
+});
+
+test('restoring unequal legacy drafts requires repair consent, clears incompatible history and retains dirty state', async () => {
+  const { studio, saved, mock, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file());
+    const legacy = workspace(saved), entry = legacy.documents[0];
+    entry.text = entry.savedText = chart.replace('1000,\n2000,', '#BRANCHSTART p,50,80\n#N\n1000,\n#E\n2000,2000,');
+    entry.branchRoutes = ['N'];
+    saved.set('tja-wave-workspace', JSON.stringify(legacy));
+    const before = studio.state.text;
+    mock('confirm', prompt => { assert.match(prompt, /清空旧编辑历史/); return false; });
+    studio.restore();
+    assert.equal(studio.state.text, before); assert.equal(studio.state.error, true);
+    mock('confirm', () => true);
+    studio.restore();
+    assert.equal(studio.state.error, false); assert.equal(studio.state.dirty, true);
+    assert.equal(studio.state.chart.branches[0].barCount, 2);
+    assert.equal(studio.state.undo.length, 0); assert.equal(studio.state.redo.length, 0);
+    assert.equal(studio.state.savedText, entry.savedText);
   } finally { cleanup(); }
 });
 
@@ -389,6 +494,36 @@ test('measure branch commands ignore note position and integrate route toggles, 
     const text = studio.state.text;
     assert.equal(studio.applyMeasureBranch({ type: 'condition', condition: 'p', lower: 1, upper: 2 }), undefined);
     assert.equal(studio.state.text, text);
+  } finally { cleanup(); }
+});
+
+test('branch measure insertions and deletions keep all routes equal through undo, redo, draft restoration and saving', async () => {
+  const { studio, saved, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file());
+    studio.applyMeasureBranch({ type: 'condition', condition: 'p', lower: 50, upper: 80 });
+    studio.applyMeasureBranch({ type: 'route', route: 'E' });
+    studio.changeAllBranches('E');
+    studio.applySettings({ bpm: 60 }); studio.select(0);
+    studio.applyMeasureBranch({ type: 'route', route: 'M' });
+    const before = studio.state.text;
+    const counts = () => ['N', 'E', 'M'].map(route => studio.state.chart.allBars.filter(bar => bar.branchIndex === 0 && bar.route === route).length);
+    studio.select(1); studio.setLoop(1, 2);
+    assert.equal(studio.insertBar('before'), true);
+    assert.deepEqual(counts(), [3, 3, 3]); assert.deepEqual(studio.range.value, [1, 3]);
+    const inserted = studio.state.text;
+    studio.history(); assert.equal(studio.state.text, before); assert.deepEqual(counts(), [2, 2, 2]);
+    studio.history(true); assert.equal(studio.state.text, inserted);
+    assert.equal(studio.deleteBar(), true); assert.deepEqual(counts(), [2, 2, 2]);
+    studio.history(); assert.equal(studio.state.text, inserted);
+    studio.history(true);
+    const deleted = studio.state.text;
+    studio.restore(); assert.equal(studio.state.text, deleted); assert.deepEqual(counts(), [2, 2, 2]);
+    studio.history(); assert.equal(studio.state.text, inserted);
+    const disk = diskFile('synced.tja', '');
+    window.showSaveFilePicker = async () => disk.handle;
+    assert.equal(await studio.saveChart(), true); assert.equal(disk.text, inserted);
+    assert.equal(workspace(saved).documents[0].text, inserted);
   } finally { cleanup(); }
 });
 
@@ -1137,7 +1272,7 @@ test('bulk route selection rejects unavailable paths atomically but individual o
   } finally { cleanup(); }
 });
 
-test('bulk routes recalculate unequal durations and later branches without changing edit history', async () => {
+test('bulk route changes retain synchronized durations and later branches without changing edit history', async () => {
   const { studio, cleanup } = mountStudio();
   try {
     await studio.openChart(file('timed-branches.tja', multiBranchChart));
@@ -1147,8 +1282,8 @@ test('bulk routes recalculate unequal durations and later branches without chang
     assert.equal(studio.duration.value, 14);
     assert.equal(studio.state.chart.bars[2].start, 6);
     studio.changeAllBranches('M');
-    assert.equal(studio.duration.value, 8);
-    assert.equal(studio.state.chart.bars[2].start, 4);
+    assert.equal(studio.duration.value, 14);
+    assert.equal(studio.state.chart.bars[2].start, 6);
     assert.equal(studio.state.text, text);
     assert.equal(studio.state.undo, undo);
   } finally { cleanup(); }
@@ -1228,7 +1363,7 @@ test('invalid branch edits, source topology changes and shared-command deletion 
   } finally { cleanup(); }
 });
 
-test('unequal route timing edits update duration, survive switching and restore, and remain undoable', async () => {
+test('route timing edits synchronize duration, survive switching and restore, and remain undoable', async () => {
   const { studio, cleanup } = mountStudio();
   try {
     await studio.openChart(file('branches.tja', branchChart));
@@ -1241,8 +1376,8 @@ test('unequal route timing edits update duration, survive switching and restore,
     const text = studio.state.text;
     assert.ok(text.includes('#E\n#BPMCHANGE 60\n2222,'));
     studio.changeBranch(0, 'N');
-    assert.equal(studio.duration.value, 6);
-    assert.equal(studio.state.chart.bars[2].start, 4);
+    assert.equal(studio.duration.value, 10);
+    assert.equal(studio.state.chart.bars[2].start, 6);
     assert.equal(studio.state.text, text);
     studio.changeBranch(0, 'E');
     assert.equal(studio.duration.value, 10);
@@ -1252,6 +1387,60 @@ test('unequal route timing edits update duration, survive switching and restore,
     assert.deepEqual(studio.state.branchRoutes, ['E']);
     assert.equal(studio.duration.value, 10);
     assert.equal(studio.state.text, text);
+  } finally { cleanup(); }
+});
+
+test('intrabar and end-position timing edits, source replacement, reset and deletion synchronize every route without changing notes or visual commands', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    const text = 'TITLE:Timing sync\nBPM:120\nCOURSE:Oni\nBALLOON:11,22,33\n#START\n#BRANCHSTART p,50,80\n#N\n70\n#SCROLL -1 // keep visual\n80,\n#E\n9080,\n#M\n7080,\n#BRANCHEND\n1000,\n#END\n';
+    await studio.openChart(file('timing.tja', text)); studio.changeAllBranches('E');
+    const assertAligned = () => {
+      const branches = studio.state.chart.allBars.filter(bar => bar.branchIndex === 0);
+      assert.equal(branches.length, 3);
+      for (const bar of branches) {
+        assert.ok(Math.abs(bar.start - branches[0].start) < 1e-10);
+        assert.ok(Math.abs(bar.end - branches[0].end) < 1e-10);
+        assert.deepEqual(bar.instructions.filter(item => ['BPMCHANGE', 'MEASURE', 'DELAY'].includes(item.name)).map(({ name, value, fraction }) => [name, value, fraction]), branches[0].instructions.filter(item => ['BPMCHANGE', 'MEASURE', 'DELAY'].includes(item.name)).map(({ name, value, fraction }) => [name, value, fraction]));
+        assert.equal(bar.notes[0], bar.route === 'E' ? '9' : '7');
+        assert.equal(bar.notes[bar.notes.length / 2], '8');
+      }
+      const normal = branches.find(bar => bar.route === 'N');
+      assert.equal(normal.events.find(item => item.name === 'SCROLL').fraction, .5);
+      assert.equal(normal.events.find(item => item.name === 'SCROLL').value, '-1');
+      assert.match(studio.state.text, /#SCROLL -1 \/\/ keep visual/);
+      assert.match(studio.state.text, /^BALLOON:11,22,33$/m);
+    };
+    studio.setCommandPosition(1, 3);
+    assert.equal(studio.applySettings({ bpm: 60, numerator: 3, denominator: 4, delay: .125 }), true);
+    assertAligned();
+    assert.ok(Math.abs(studio.bar.value.duration - (2 / 3 + .125 + 2)) < 1e-10);
+    studio.setCommandPosition(1, 1);
+    assert.equal(studio.applySettings({ delay: .25 }), true); assertAligned();
+    studio.setCommandPosition(1, 3); studio.clearSettings(); assertAligned();
+    assert.equal(studio.bar.value.events.filter(item => ['BPMCHANGE', 'MEASURE', 'DELAY'].includes(item.name)).length, 1);
+    studio.removeCommand(studio.bar.value.events.find(item => item.name === 'DELAY')); assertAligned();
+    assert.equal(studio.bar.value.duration, 2);
+    studio.editSource('#BPMCHANGE 90\n9\n#DELAY .25\n080,');
+    assert.equal(studio.copyMeasures(), true); assertAligned();
+    assert.ok(Math.abs(studio.bar.value.duration - (240 / 90 + .25)) < 1e-10);
+    const edited = studio.state.text;
+    studio.history(); assertAligned(); assert.equal(studio.bar.value.duration, 2);
+    studio.history(true); assert.equal(studio.state.text, edited); assertAligned();
+  } finally { cleanup(); }
+});
+
+test('timing synchronization rejects a grid expansion above the source limit without changing any route or history', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    const text = `TITLE:Timing limit\nBPM:120\nCOURSE:Oni\n#START\n#BRANCHSTART p,50,80\n#N\n1${'0'.repeat(255)},\n#E\n2000,\n#M\n3000,\n#BRANCHEND\n#END\n`;
+    await studio.openChart(file('limit.tja', text)); studio.changeAllBranches('E');
+    const before = studio.state.text, undo = studio.state.undo;
+    studio.setCommandPosition(1, 257);
+    assert.equal(studio.applySettings({ delay: .25 }), undefined);
+    assert.equal(studio.state.error, true); assert.match(studio.state.notice, /65536/);
+    assert.equal(studio.state.text, before); assert.equal(studio.state.undo, undo);
+    assert.equal(studio.state.chart.branches[0].barCount, 1);
   } finally { cleanup(); }
 });
 

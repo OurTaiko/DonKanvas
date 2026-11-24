@@ -1,7 +1,7 @@
 import { t, message, LocalizedError, formatMessage } from './i18n.js';
 import { computed, onMounted, onUnmounted, reactive, ref, shallowReactive, watch } from 'vue';
 import { TJAParser as parser } from 'tja';
-import { BRANCH_ROUTES, decodeChart, parseChart, insertEmptyBar, resizeNotes, setBaseBpm, barTimeAt, barStateAt, barStateAtTime, setPositionSettings, clearPositionSettings, barSource } from './chart.js';
+import { BRANCH_ROUTES, decodeChart, parseChart, alignBranchRoutes, synchronizeBranchTiming, insertEmptyBar, resizeNotes, setBaseBpm, barTimeAt, barStateAt, barStateAtTime, setPositionSettings, clearPositionSettings, barSource } from './chart.js';
 import { createHitBuffer, MIX_DEFAULTS, duckMusic } from './hit-audio.js';
 import { resolveLoop, measureStart, measureEnd } from './loop.js';
 import { GRID_DIVISIONS, MAX_SNAP_DIVISIONS, SNAP_DIVISIONS } from './grid.js';
@@ -218,6 +218,7 @@ export function useStudio() {
     if (state.customLoop?.[1] > state.chart.bars.length) state.customLoop = null;
   }
   function commit(text, keepSource = false, structure = null) {
+    text = synchronizeBranchTiming(text, parser, structure?.course ?? state.course, structure?.routes ?? state.branchRoutes);
     const chart = parseChart(text, parser, structure?.course ?? state.course, structure?.routes ?? state.branchRoutes);
     if (text === state.text) { state.invalid = false; state.sourceState = '已同步'; if (persist()) notice(message('更改已同步。')); return; }
     const waveChanged = chart.wave !== state.chart.wave, startBeat = visible.value.startBeat;
@@ -277,7 +278,7 @@ export function useStudio() {
   function insertBar(side) {
     return guard(() => {
       flushSource(); requireValid();
-      const text = insertEmptyBar(state.text, bar.value, side);
+      const text = insertEmptyBar(state.text, bar.value, side, state.chart);
       const selected = state.selected + (side === 'after' ? 1 : 0);
       const loop = state.customLoop?.map(value => value > selected ? value + 1 : value) ?? null;
       commit(text, false, { selected, loop });
@@ -428,14 +429,14 @@ export function useStudio() {
       return true;
     });
   }
-  function applyMeasureBranch(operation) {
+  function applyMeasureBranch(operation, measure = state.selected) {
     return guard(() => {
       requireValid();
-      const result = setMeasureBranchWithBalloons(state.text, state.chart, bar.value, operation, parser);
+      const result = setMeasureBranchWithBalloons(state.text, state.chart, state.chart.bars[measure], operation, parser);
       const disabled = result.branchRoutes.length < state.branchRoutes.length;
       const structure = { routes: result.branchRoutes, index: result.index };
       commit(result.text, false, result.preserveSelection ? { ...structure, preserveSelection: true } : { ...structure, selected: result.selected, loop: null });
-      if (disabled && !state.error) notice(message('已关闭分歧，当前路线已转为共用小节。'));
+      if (disabled && !state.error) notice(message('分歧已删除，小节和指令已保留。'));
       else if (operation.type === 'route' && !state.error) notice(message('分歧结构已保存；若当前路线被移除，将切换到可用路线。'));
       return true;
     });
@@ -617,11 +618,22 @@ export function useStudio() {
   function newChart() {
     loadChart(new TextEncoder().encode('TITLE:Untitled\nBPM:120\nOFFSET:0\n'), 'untitled.tja');
   }
+  function prepareChartText(source, name, draft = false) {
+    const text = alignBranchRoutes(source, parser);
+    const prompt = draft
+      ? '{p0} 的分歧路线小节数量或计时不一致。是否补齐空小节、按最长路线同步计时并清空旧编辑历史？取消将拒绝恢复此工作区。'
+      : '{p0} 的分歧路线小节数量或计时不一致。是否补齐空小节，并按最长路线同步 BPM、拍号和延迟？取消将拒绝载入。';
+    if (text !== source && !confirm(t(prompt, { p0: name }))) {
+      throw new LocalizedError(message('分歧小节数量或时长不一致，已拒绝载入。'));
+    }
+    return text;
+  }
   function loadChart(bytes, name, fileHandle = null) {
-    const decoded = decodeChart(bytes), chart = parseChart(decoded.text, parser, 0);
+    const decoded = decodeChart(bytes), text = prepareChartText(decoded.text, name);
+    const chart = parseChart(text, parser, 0);
     leaveDocument();
     const start = chart.bars.length ? measureStart(chart.bars[0]) : 0;
-    const document = shallowReactive({ ...emptyDocument(), id: nextDocumentId++, text: decoded.text, savedText: decoded.text, fileHandle, chart, branchRoutes: chart.branchRoutes, filename: name, encoding: decoded.encoding, position: Math.max(0, start), viewStart: start });
+    const document = shallowReactive({ ...emptyDocument(), id: nextDocumentId++, text, savedText: decoded.text, dirty: text !== decoded.text, fileHandle, chart, branchRoutes: chart.branchRoutes, filename: name, encoding: decoded.encoding, position: Math.max(0, start), viewStart: start });
     state.documents = [...state.documents, document]; activate(document);
     syncSource(); if (persist()) notice(message(chart.variants.length ? '谱面已载入，可直接播放音符音或载入伴奏。' : '歌曲已载入，请从“难度与模式”创建谱面。'));
   }
@@ -688,7 +700,9 @@ export function useStudio() {
       const ids = new Set();
       const documents = entries.map((item, index) => {
         if (typeof item.text !== 'string' || typeof item.filename !== 'string' || !Number.isInteger(item.course) || item.course < 0 || !Number.isInteger(item.selected) || (item.invalid && typeof item.source !== 'string')) throw new LocalizedError(message('本地谱面草稿格式无效。'));
-        const chart = parseChart(item.text, parser, item.course, item.branchRoutes ?? []), undo = item.undo ?? [], redo = item.redo ?? [];
+        const source = prepareChartText(item.text, item.filename, true), repaired = source !== item.text;
+        const chart = parseChart(source, parser, item.course, item.branchRoutes ?? []);
+        let undo = item.undo ?? [], redo = item.redo ?? [];
         const savedText = item.savedText === undefined ? (item.dirty ? null : item.text) : item.savedText;
         if (savedText !== null && typeof savedText !== 'string') throw new LocalizedError(message('本地谱面保存状态无效。'));
         if (!Array.isArray(undo) || !Array.isArray(redo) || undo.length + redo.length > HISTORY_LIMIT) throw new LocalizedError(message('本地编辑历史格式无效。'));
@@ -696,12 +710,13 @@ export function useStudio() {
         for (const diff of [...undo].reverse()) text = applyDiff(text, diff, true);
         text = item.text;
         for (const diff of [...redo].reverse()) text = applyDiff(text, diff);
+        if (repaired) { undo = []; redo = []; }
         const id = workspace ? item.id : index + 1;
         if (!Number.isSafeInteger(id) || id < 1 || ids.has(id)) throw new LocalizedError(message('本地谱面编号无效。'));
         ids.add(id);
         const selected = Math.max(0, Math.min(item.selected, chart.bars.length - 1));
         const start = chart.bars[selected] ? measureStart(chart.bars[selected]) : 0;
-        return shallowReactive({ ...emptyDocument(), id, text: item.text, savedText, filename: item.filename, course: item.course, branchRoutes: chart.branchRoutes, chart, selected, undo, redo, dirty: item.text !== savedText, invalid: Boolean(item.invalid), encoding: item.encoding || '', source: item.invalid ? item.source : chart.bars[selected] ? barSource(item.text, chart.bars[selected]) : '', sourceState: item.invalid ? '格式错误' : '已同步', position: Math.max(0, start), viewStart: start });
+        return shallowReactive({ ...emptyDocument(), id, text: source, savedText, filename: item.filename, course: item.course, branchRoutes: chart.branchRoutes, chart, selected, undo, redo, dirty: source !== savedText, invalid: Boolean(item.invalid), encoding: item.encoding || '', source: item.invalid ? item.source : chart.bars[selected] ? barSource(source, chart.bars[selected]) : '', sourceState: item.invalid ? '格式错误' : '已同步', position: Math.max(0, start), viewStart: start });
       });
       if (state.documents.length && !confirm(t('恢复草稿会替换所有已打开谱面，是否继续？'))) return;
       viewAnimation = null; pause(); clearTimeout(sourceTimer); ++audioRequest;

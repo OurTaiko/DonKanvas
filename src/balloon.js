@@ -1,5 +1,5 @@
 import { message, LocalizedError } from './i18n.js';
-import { replaceBar, replaceBarSource, parseChart, setBranchSource, deleteBar, barSource, EDITABLE_COMMANDS, PRESERVED_COMMANDS } from './chart.js';
+import { replaceBar, replaceBarSource, parseChart, synchronizeBranchTiming, setBranchSource, deleteBar, barSource, correspondingBars, EDITABLE_COMMANDS, PRESERVED_COMMANDS } from './chart.js';
 import { courseHeaderRange as headerRange, courseHeaderValues, setCourseHeaderValues } from './courses.js';
 import { setMeasureBranch } from './branch-commands.js';
 
@@ -86,7 +86,9 @@ export function replaceBarWithBalloons(text, chart, bar, notes) {
 }
 
 export function deleteBarWithBalloons(text, chart, bar) {
-  return reconcileCounts(deleteBar(text, chart, bar), chart, bar, '');
+  let edited = deleteBar(text, chart, bar);
+  for (const item of correspondingBars(chart, bar).sort((a, b) => b.comma - a.comma)) edited = reconcileCounts(edited, chart, item, '');
+  return edited;
 }
 
 export function replaceBarSourceWithBalloons(text, chart, bar, source, parser) {
@@ -130,6 +132,14 @@ export function pasteMeasures(text, chart, index, clipboard, mode, parser) {
       edits.push({ start: end, end, pieces: pieces.slice(targets.length), prefix: newline });
     }
   }
+  const added = mode === 'insert' ? pieces.length : Math.max(0, pieces.length - targets.length);
+  if (added && target.branchIndex !== null) {
+    const anchor = mode === 'insert' ? target : targets.at(-1);
+    for (const bar of correspondingBars(chart, anchor).filter(bar => bar !== anchor)) {
+      const at = mode === 'insert' ? startOf(bar) : bar.comma + 1;
+      edits.push({ start: at, end: at, pieces: Array.from({ length: added }, () => ({ source: ',', balloons: [] })), prefix: mode === 'insert' ? '' : newline });
+    }
+  }
   edits.sort((first, second) => first.start - second.start);
   for (const edit of edits) edit.content = edit.prefix + edit.pieces.map(piece => piece.source).join(newline) + (/^\r?\n/.test(text.slice(edit.end)) ? '' : newline);
   const fields = countFields(text, chart), mapped = new Map();
@@ -149,8 +159,8 @@ export function pasteMeasures(text, chart, index, clipboard, mode, parser) {
   }
   let edited = text;
   for (const edit of [...edits].reverse()) edited = edited.slice(0, edit.start) + edit.content + edited.slice(edit.end);
-  const parsed = parseChart(edited, parser, chart.courseIndex, chart.branchRoutes);
-  return writeMappedCounts(text, chart, edited, parsed, mapped, fields);
+  const parsed = parseChart(edited, parser, chart.courseIndex, chart.branchRoutes, { allowUnequalBranches: true });
+  return synchronizeBranchTiming(writeMappedCounts(text, chart, edited, parsed, mapped, fields), parser, chart.courseIndex, chart.branchRoutes);
 }
 
 export function setMeasureBranchWithBalloons(text, chart, bar, operation, parser) {
@@ -158,8 +168,9 @@ export function setMeasureBranchWithBalloons(text, chart, bar, operation, parser
   const parsed = parseChart(result.text, parser, chart.courseIndex, result.branchRoutes), fields = countFields(text, chart);
   const countsByPosition = new Map();
   for (const item of countedBalloons(text, chart, fields)) {
-    const range = result.retained.find(range => item.bar.comma >= range.before && item.bar.comma < range.before + range.length);
-    if (range) countsByPosition.set(`${range.after + item.bar.comma - range.before}:${item.index}`, item.count);
+    for (const range of result.retained.filter(range => item.bar.comma >= range.before && item.bar.comma < range.before + range.length)) {
+      countsByPosition.set(`${range.after + item.bar.comma - range.before}:${item.index}`, item.count);
+    }
   }
   result.text = writeMappedCounts(text, chart, result.text, parsed, countsByPosition, fields);
   return result;
