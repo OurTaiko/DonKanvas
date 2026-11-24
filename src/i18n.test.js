@@ -750,6 +750,8 @@ test('branch route controls use localized names while raw N/E/M identifiers rema
   compileScript(branches, { id: 'route-display-names' });
   assert.match(branches.scriptSetup.content, /BRANCH_ROUTE_NAMES as names/);
   assert.match(branches.template.content, /\{\{ route \}\} · \{\{ t\(names\[route\]\) \}\}/);
+  assert.match(branches.styles[0].content, /\.route-segments label:hover input:not\(:disabled\):not\(:checked\)\+span\{background:#d0e2d7;color:#125d49\}/);
+  assert.match(branches.styles[0].content, /\.route-segments label:hover input:checked:not\(:disabled\)\+span\{background:#125d49\}/);
   const chart = readFileSync(new URL('chart.js', import.meta.url), 'utf8');
   assert.match(chart, /BRANCH_ROUTES = \['N', 'E', 'M'\]/);
   assert.match(chart, /BRANCH_ROUTE_NAMES = \{ N: '普通', E: '玄人', M: '达人' \}/);
@@ -984,6 +986,18 @@ test('position attributes omit branch information while preserving timing detail
   assert.equal(attributes.value.find(attribute => attribute.id === 'cell-bpm').value, '120');
   currentTiming.value.bpm = 180;
   assert.equal(attributes.value.find(attribute => attribute.id === 'cell-bpm').value, '180');
+  reset();
+  try {
+    for (const [language, yes, no] of [['zh-CN', '是', '否'], ['en', 'Yes', 'No']]) {
+      locale.value = language;
+      for (const enabled of [false, true, false]) {
+        currentTiming.value.gogo = enabled;
+        const attribute = attributes.value.find(attribute => attribute.id === 'cell-gogo');
+        assert.equal(attribute.label, 'GOGOTIME');
+        assert.equal(attribute.value, enabled ? yes : no);
+      }
+    }
+  } finally { reset(); }
 });
 
 test('balloon and special roll counts are edited in the right note panel', () => {
@@ -1424,13 +1438,14 @@ test('branch information occupies the caption subtitle without instructional cop
   assert.doesNotMatch(descriptor.template.content, /统一切换全部分歧，或按需单独调整。|仅影响显示与试听，不修改谱面。|branch-context-foot/);
 });
 
-test('branch context tags only the viewed route and hides the tag in shared measures', () => {
+test('branch context follows position timing rather than the viewed measure and hides its tag in shared measures', () => {
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'branch-context-route-color' });
   const source = descriptor.scriptSetup.content.replace(/^import .*;\n/gm, '');
-  const bar = ref(null), state = reactive({ chart: { branches: [{ index: 0, route: 'N' }, { index: 1, route: 'M' }] } });
+  const bar = ref({ branchIndex: 1 }), currentTiming = ref(null);
+  const state = reactive({ chart: { branches: [{ index: 0, route: 'N' }, { index: 1, route: 'M' }] } });
   const { current } = runInNewContext(`${source}; ({ current })`, {
-    ref, reactive, computed, inject: () => ({ state, bar }), t
+    ref, reactive, computed, inject: () => ({ state, bar, currentTiming }), t
   });
   assert.match(descriptor.template.content, /class="branch-count">\{\{ branches.length \}\}<\/span>\s*<template #description>/);
   assert.doesNotMatch(descriptor.template.content, /mixed-route|自定义路线/);
@@ -1439,14 +1454,22 @@ test('branch context tags only the viewed route and hides the tag in shared meas
   const binding = descriptor.template.content.match(/class="branch-route-tag" :data-route="([^"]+)"/)[1];
   const routeColor = () => current.value ? runInNewContext(binding, { current: current.value }) : undefined;
   assert.equal(routeColor(), undefined);
-  bar.value = { branchIndex: 0 };
+  currentTiming.value = { bar: { branchIndex: 0 } };
   for (const route of ['N', 'E', 'M']) {
     state.chart.branches[0].route = route;
     assert.equal(routeColor(), route);
   }
-  bar.value = { branchIndex: 1 };
-  assert.equal(routeColor(), 'M');
   bar.value = { branchIndex: null };
+  assert.equal(routeColor(), 'M');
+  state.chart.branches[0].route = 'E';
+  assert.equal(routeColor(), 'E');
+  bar.value = { branchIndex: 1 };
+  assert.equal(routeColor(), 'E');
+  currentTiming.value = { bar: { branchIndex: 1 } };
+  assert.equal(routeColor(), 'M');
+  currentTiming.value = { bar: { branchIndex: null } };
+  assert.equal(routeColor(), undefined);
+  currentTiming.value = null;
   assert.equal(routeColor(), undefined);
   state.chart = null;
   assert.equal(routeColor(), undefined);

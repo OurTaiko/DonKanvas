@@ -27,7 +27,7 @@ const cellAttributes = computed(() => {
     { id: 'cell-bpm', label: 'BPM', value: String(timing.bpm) },
     { id: 'cell-scroll', label: '卷轴倍率', value: `${timing.scroll}×` },
     { id: 'cell-meter', label: '拍号', value: `${timing.numerator}/${timing.denominator}` },
-    ...(timing.gogo ? [{ id: 'cell-gogo', label: 'Go-Go 状态', value: t('开始') }] : []),
+    { id: 'cell-gogo', label: 'GOGOTIME', value: t(timing.gogo ? '是' : '否') },
     ...(timing.delay ? [{ id: 'cell-delay', label: '延迟 / s', value: String(timing.delay) }] : []),
     ...(selected?.span ? [{ id: 'cell-long', label: '长音状态', value: `${t(NOTE_TYPES[Number(selected.span.note)].name)} · ${(selected.span.end - selected.span.start).toFixed(3)} s · ${selected.span.complete ? t('已结束') : t('缺少结束标记')}` }] : [])
   ];

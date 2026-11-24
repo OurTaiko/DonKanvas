@@ -6,7 +6,7 @@ import { BRANCH_ROUTES, BRANCH_ROUTE_NAMES as names } from './chart.js';
 import SectionHeading from './SectionHeading.vue';
 import MeasureGrid from './MeasureGrid.vue';
 
-const studio = inject('studio'), { state, bar } = studio;
+const studio = inject('studio'), { state, currentTiming } = studio;
 const dialog = ref(null), list = ref(null);
 const filterDialog = ref(null), filterList = ref(null);
 const mode = ref(''), target = ref(null), error = ref(''), first = ref(null), last = ref(null), anchor = ref(null);
@@ -15,7 +15,7 @@ const branches = computed(() => state.chart?.branches || []);
 const editedBranch = computed(() => branches.value.find(branch => branch.index === target.value));
 const selectedMeasures = computed(() => first.value === null ? [] : state.chart.bars.slice(first.value, last.value + 1));
 const selection = computed(() => first.value === null ? null : [first.value + 1, last.value + 1]);
-const current = computed(() => branches.value.find(branch => branch.index === bar.value?.branchIndex));
+const current = computed(() => branches.value.find(branch => branch.index === currentTiming.value?.bar.branchIndex));
 const uniform = computed(() => {
   const routes = state.branchRoutes.filter(Boolean);
   return routes.length && routes.every(route => route === routes[0]) ? routes[0] : null;
@@ -207,6 +207,8 @@ function keydown(event) {
 <style scoped>
 .branch-actions{display:flex;flex-basis:100%;flex-wrap:wrap;gap:8px}
 .branch-actions>.manage-branches{min-height:32px;padding:5px 10px}
+.route-segments label:hover input:not(:disabled):not(:checked)+span{background:#d0e2d7;color:#125d49}
+.route-segments label:hover input:checked:not(:disabled)+span{background:#125d49}
 .branch-caption .branch-current{margin:0}
 .branch-dialog-heading>.icon{border:0}
 .branch-source-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
