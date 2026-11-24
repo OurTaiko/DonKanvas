@@ -149,9 +149,9 @@ function drawOverviewRange(brush, x, height) {
   if (!selected.length) return;
   const left = x(Math.min(...selected.map(measureStart))), right = x(Math.max(...selected.map(measureEnd)));
   const width = right - left, edge = Math.min(2, width / 2);
-  brush.fillStyle = '#2457d640'; brush.fillRect(left, 3, width, height - 6);
+  brush.fillStyle = '#2457d640'; brush.fillRect(left, 0, width, height);
   brush.fillStyle = '#7b91bb';
-  brush.fillRect(left, 3, edge, height - 6); brush.fillRect(right - edge, 3, edge, height - 6);
+  brush.fillRect(left, 0, edge, height); brush.fillRect(right - edge, 0, edge, height);
 }
 function draw() {
   if (!timeline.value || !overview.value) return;

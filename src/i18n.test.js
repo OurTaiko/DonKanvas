@@ -154,25 +154,32 @@ test('overview centers a location icon on the exact selected time, including bot
   assert.doesNotMatch(descriptor.scriptSetup.content, /#239eae35|overviewContext\.height - 4/);
 });
 
-test('overview measure ranges have a continuous contrasting fill and two boundaries without covering section bands', () => {
+test('overview measure ranges fill the full height behind the Go-Go and branch bands', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
-  const source = descriptor.scriptSetup.content.match(/function drawOverviewRange\([\s\S]*?\n\}/)[0];
+  const script = descriptor.scriptSetup.content;
+  const source = script.slice(script.indexOf('function gogoIntervals('), script.indexOf('function draw()'));
   const state = { chart: { bars: [
-    { index: 0, start: -1, end: 1 },
-    { index: 1, start: 1, end: 3, delay: .5 },
-    { index: 2, start: 3, end: 5 }
+    { index: 0, start: -1, end: 1, events: [] },
+    { index: 1, start: 1, end: 3, delay: .5, gogo: true, route: 'N', events: [] },
+    { index: 2, start: 3, end: 5, events: [] }
   ] } };
   const selected = new Set([1, 2]), rectangles = [];
   const brush = { fillRect(x, y, width, height) { rectangles.push({ x, y, width, height, color: this.fillStyle }); } };
-  const draw = runInNewContext(`${source}; drawOverviewRange`, {
+  const { drawOverviewRange: draw, drawOverviewSections } = runInNewContext(`${source}; ({ drawOverviewRange, drawOverviewSections })`, {
     state, measureStart, measureEnd, measureSelected: index => selected.has(index)
   });
   draw(brush, time => (time + 1) * 20, 40);
   assert.deepEqual(rectangles, [
-    { x: 30, y: 3, width: 90, height: 34, color: '#2457d640' },
-    { x: 30, y: 3, width: 2, height: 34, color: '#7b91bb' },
-    { x: 118, y: 3, width: 2, height: 34, color: '#7b91bb' }
+    { x: 30, y: 0, width: 90, height: 40, color: '#2457d640' },
+    { x: 30, y: 0, width: 2, height: 40, color: '#7b91bb' },
+    { x: 118, y: 0, width: 2, height: 40, color: '#7b91bb' }
   ]);
+  drawOverviewSections(brush, time => (time + 1) * 20, 40);
+  assert.deepEqual(rectangles.slice(3), [
+    { x: 40, y: 0, width: 40, height: 3, color: '#d9a032' },
+    { x: 30, y: 37, width: 50, height: 3, color: '#9270b5' }
+  ]);
+  assert.match(script, /drawOverviewRange\(overviewContext\.brush, overviewX, overviewContext\.height\);\s*drawOverviewSections\(overviewContext\.brush, overviewX, overviewContext\.height\);/);
   rectangles.length = 0;
   draw(brush, time => (time + 1) / 10, 40);
   assert.ok(rectangles.every(rect => rect.x >= .15 - 1e-10 && rect.x + rect.width <= .6 + 1e-10));
