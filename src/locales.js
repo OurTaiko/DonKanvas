@@ -16,7 +16,7 @@ export const translations = {
   '创建分歧': ['Create branch', '分岐を作成', '建立分歧', '분기 만들기'],
   '创建路线 {p0}': ['Create route {p0}', 'ルート {p0} を作成', '建立路線 {p0}', '{p0} 경로 만들기'],
   '删除整个分歧': ['Delete entire branch', '分岐全体を削除', '刪除整個分歧', '전체 분기 삭제'],
-  '点击起始和结束小节选择区间；已被分歧覆盖的小节不可选。': ['Click the first and last measures to select a range. Measures already in a branch cannot be selected.', '開始小節と終了小節をクリックして範囲を選択します。既存の分岐内の小節は選択できません。', '點擊起始和結束小節選取區間；已被分歧覆蓋的小節不可選。', '시작과 끝 마디를 클릭해 구간을 선택하세요. 이미 분기에 속한 마디는 선택할 수 없습니다.'],
+  '点击首尾小节、拖动或 Shift+单击选择区间；已被分歧覆盖的小节不可选。': ['Click the first and last measures, drag, or Shift-click to select a range. Measures already in a branch cannot be selected.', '開始・終了小節のクリック、ドラッグ、または Shift+クリックで範囲を選択します。既存の分岐内の小節は選択できません。', '點擊首尾小節、拖動或 Shift+單擊選取區間；已被分歧覆蓋的小節不可選。', '시작과 끝 마디 클릭, 드래그 또는 Shift+클릭으로 구간을 선택하세요. 이미 분기에 속한 마디는 선택할 수 없습니다.'],
   '所选小节已被分歧覆盖，请选择连续的共用小节。': ['The selection overlaps a branch. Select consecutive shared measures.', '選択範囲が分岐と重なっています。連続する共通小節を選択してください。', '所選小節已被分歧覆蓋，請選取連續的共用小節。', '선택 구간이 분기와 겹칩니다. 연속된 공통 마디를 선택하세요.'],
   '删除最后一条路线将同时删除分歧，原小节保留为空白共用小节。是否继续？': ['Deleting the last route also deletes the branch and keeps its measures as empty shared measures. Continue?', '最後のルートを削除すると分岐も削除され、小節は空の共通小節として残ります。続行しますか？', '刪除最後一條路線將同時刪除分歧，原小節保留為空白共用小節。是否繼續？', '마지막 경로를 삭제하면 분기도 삭제되며 기존 마디는 빈 공통 마디로 남습니다. 계속할까요?'],
   '第 {p0} 小节': ['Measure {p0}', '第 {p0} 小節', '第 {p0} 小節', '{p0}번 마디'],

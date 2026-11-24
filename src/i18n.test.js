@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { parse, compileScript } from 'vue/compiler-sfc';
 import { TJAParser } from 'tja';
 import { parseChart } from './chart.js';
@@ -188,6 +188,32 @@ test('overview measure ranges fill the full height behind the Go-Go and branch b
   assert.deepEqual(rectangles, []);
 });
 
+test('timeline canvas selection uses its own live grid preview and restores the saved range after cancellation', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const script = descriptor.scriptSetup.content;
+  const selectionSource = script.slice(script.indexOf('const measurePreview ='), script.indexOf('const viewport ='));
+  const drawingSource = script.slice(script.indexOf('function gogoIntervals('), script.indexOf('function draw()'));
+  const range = ref(null), rectangles = [];
+  const state = { chart: { bars: Array.from({ length: 3 }, (_, index) => ({ index, start: index * 2, end: (index + 1) * 2 })) } };
+  const { measurePreview, drawOverviewRange } = runInNewContext(`${selectionSource}\n${drawingSource}; ({ measurePreview, drawOverviewRange })`, {
+    ref, range, state, measureStart, measureEnd
+  });
+  const brush = { fillRect(x, y, width, height) { rectangles.push([x, y, width, height]); } };
+  drawOverviewRange(brush, time => time * 10, 40);
+  assert.deepEqual(rectangles, []);
+  range.value = [2, 2];
+  drawOverviewRange(brush, time => time * 10, 40);
+  assert.deepEqual(rectangles[0], [20, 0, 20, 40]);
+  rectangles.length = 0; measurePreview.value = [1, 3];
+  drawOverviewRange(brush, time => time * 10, 40);
+  assert.deepEqual(rectangles[0], [0, 0, 60, 40]);
+  rectangles.length = 0; measurePreview.value = null;
+  drawOverviewRange(brush, time => time * 10, 40);
+  assert.deepEqual(rectangles[0], [20, 0, 20, 40]);
+  assert.deepEqual(range.value, [2, 2]);
+  assert.match(descriptor.template.content, /@preview="measurePreview = \$event"/);
+});
+
 test('overview hover reports music time and one-based measures including delays without modifying studio state', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   const script = descriptor.scriptSetup.content;
@@ -235,7 +261,7 @@ test('overview dragging pans continuously without seeking or changing selections
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'overview-drag' });
   const script = descriptor.scriptSetup.content;
-  const source = script.slice(script.indexOf('let overviewDrag ='), script.indexOf('let suppressMeasureClick ='));
+  const source = script.slice(script.indexOf('let overviewDrag ='), script.indexOf('\nwatch(() => [state.activeId'));
   const calls = [], captured = new Set();
   const state = { chart: { bars: [{ start: 0, end: 50 }, { start: 50, end: 100 }] }, invalid: false };
   const overview = { value: {
@@ -573,9 +599,10 @@ test('global navigation displays the pending F loop endpoint and documents cance
   compileScript(descriptor, { id: 'keyboard-loop-selection' });
   assert.match(descriptor.template.content, /<output v-if="state.loopAnchor !== null" id="measure-loop-anchor">/);
   assert.match(descriptor.template.content, /p0: state.loopAnchor \+ 1/);
-  assert.match(descriptor.template.content, /'loop-anchor': item.index === state.loopAnchor/);
+  assert.match(descriptor.template.content, /:anchor-index="state.loopAnchor"/);
   assert.doesNotMatch(descriptor.template.content, /measure-loop-range|measure-loop-hint|循环范围：第|单击跳转，拖动或按两次 F/);
-  assert.match(descriptor.styles[0].content, /#measures button.loop-anchor\{outline:2px dashed var\(--green\)/);
+  const grid = parse(readFileSync(new URL('MeasureGrid.vue', import.meta.url), 'utf8')).descriptor;
+  assert.match(grid.styles[0].content, /\.measure-grid button.loop-anchor\{outline:2px dashed var\(--green\)/);
 });
 
 test('all snap grids draw dashed subdivisions and solid meter beats without duplicate guides', () => {
@@ -734,72 +761,116 @@ test('the selection menu owns measure and note operations; playback has no indep
   assert.match(descriptor.scriptSetup.content, /\['Shift\+F', '取消小节选择'\]/);
 });
 
-test('global navigation previews and commits pointer-drag loop ranges without consuming ordinary clicks', () => {
-  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+test('shared measure grids preview and commit pointer ranges without consuming ordinary clicks or selecting another grid', () => {
+  const { descriptor } = parse(readFileSync(new URL('MeasureGrid.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'measure-loop-selection' });
   const script = descriptor.scriptSetup.content;
-  const source = script.slice(script.indexOf('let suppressMeasureClick = false;'), script.indexOf('\nwatch(() => [state.activeId'));
-  const state = { chart: {}, invalid: false }, measureDrag = { value: null }, writes = [], captured = new Set();
+  const source = script.slice(script.indexOf('let suppressMeasureClick = false;'), script.indexOf('\nwatch(() => [props.bars'));
+  const props = { disabled: false }, measureDrag = { value: null }, writes = [], captured = new Set();
   const buttons = Array.from({ length: 4 }, (_, index) => {
     const button = { dataset: { measureIndex: String(index) }, setPointerCapture: id => captured.add(id), hasPointerCapture: id => captured.has(id), releasePointerCapture: id => captured.delete(id) };
     button.closest = () => button;
     return button;
   });
   let hit = buttons[0];
-  const handlers = runInNewContext(`${source}; ({ startMeasureLoop, moveMeasureLoop, cancelMeasureLoop, finishMeasureLoop, measureLoopKeydown, measureLoopClick })`, {
-    state, measureDrag, measures: { value: { contains: button => buttons.includes(button) } },
-    document: { elementFromPoint: () => hit }, studio: { setLoop: (...args) => writes.push(args) }
+  const handlers = runInNewContext(`${source}; ({ startDrag, moveDrag, cancelDrag, finishDrag, keydown, captureClick })`, {
+    props, measureDrag, measures: { value: { contains: button => buttons.includes(button) } },
+    document: { elementFromPoint: () => hit }, emit: (name, ...args) => { assert.equal(name, 'select'); writes.push(args); }
   });
   const event = overrides => ({ isPrimary: true, button: 0, pointerId: 1, clientX: 0, clientY: 0, target: hit, ...overrides });
   const drag = (first, last, distance = 20) => {
-    hit = buttons[first]; handlers.startMeasureLoop(event());
-    hit = buttons[last]; handlers.moveMeasureLoop(event({ clientX: distance }));
+    hit = buttons[first]; handlers.startDrag(event());
+    hit = buttons[last]; handlers.moveDrag(event({ clientX: distance }));
   };
-  handlers.startMeasureLoop(event({ isPrimary: false })); assert.equal(measureDrag.value, null);
-  handlers.startMeasureLoop(event({ button: 2 })); assert.equal(measureDrag.value, null);
-  state.invalid = true; handlers.startMeasureLoop(event()); assert.equal(measureDrag.value, null); state.invalid = false;
+  handlers.startDrag(event({ isPrimary: false })); assert.equal(measureDrag.value, null);
+  handlers.startDrag(event({ button: 2 })); assert.equal(measureDrag.value, null);
+  props.disabled = true; handlers.startDrag(event()); assert.equal(measureDrag.value, null); props.disabled = false;
+  buttons[0].disabled = true; handlers.startDrag(event()); assert.equal(measureDrag.value, null); buttons[0].disabled = false;
+  hit = { disabled: false, closest() { return this; } };
+  handlers.startDrag(event()); assert.equal(measureDrag.value, null);
   drag(0, 3);
   assert.equal(measureDrag.value.end, 3); assert.equal(measureDrag.value.dragged, true); assert.equal(writes.length, 0);
-  handlers.finishMeasureLoop(event({ clientX: 20 }));
+  handlers.finishDrag(event({ clientX: 20 }));
   assert.deepEqual(writes.at(-1), [1, 4]); assert.equal(measureDrag.value, null); assert.equal(captured.size, 0);
   let prevented = 0, stopped = 0;
   const click = { detail: 1, preventDefault: () => prevented++, stopPropagation: () => stopped++ };
-  handlers.measureLoopClick(click); assert.equal(prevented, 1); assert.equal(stopped, 1);
-  handlers.measureLoopClick(click); assert.equal(prevented, 1);
-  drag(3, 0); handlers.finishMeasureLoop(event({ clientX: 20 })); assert.deepEqual(writes.at(-1), [1, 4]);
-  drag(2, 2, 6); handlers.finishMeasureLoop(event({ clientX: 6 })); assert.deepEqual(writes.at(-1), [3, 3]);
+  handlers.captureClick(click); assert.equal(prevented, 1); assert.equal(stopped, 1);
+  handlers.captureClick(click); assert.equal(prevented, 1);
+  drag(3, 0); handlers.finishDrag(event({ clientX: 20 })); assert.deepEqual(writes.at(-1), [1, 4]);
+  drag(2, 2, 6); handlers.finishDrag(event({ clientX: 6 })); assert.deepEqual(writes.at(-1), [3, 3]);
   const count = writes.length;
-  drag(1, 1, 4); handlers.finishMeasureLoop(event({ clientX: 4 })); assert.equal(writes.length, count);
-  handlers.measureLoopClick(click); assert.equal(prevented, 1);
+  drag(1, 1, 4); handlers.finishDrag(event({ clientX: 4 })); assert.equal(writes.length, count);
+  handlers.captureClick(click); assert.equal(prevented, 1);
   drag(1, 3);
-  handlers.measureLoopKeydown({ key: 'Escape', preventDefault: () => prevented++, stopPropagation: () => stopped++ });
+  handlers.keydown({ key: 'Escape', preventDefault: () => prevented++, stopPropagation: () => stopped++ });
   assert.equal(measureDrag.value, null); assert.equal(writes.length, count); assert.equal(captured.size, 0);
-  handlers.measureLoopClick({ ...click, detail: 0 }); assert.equal(prevented, 2);
+  handlers.captureClick({ ...click, detail: 0 }); assert.equal(prevented, 2);
   drag(2, 3);
-  handlers.cancelMeasureLoop(event({ pointerId: 2 })); assert.notEqual(measureDrag.value, null);
-  handlers.cancelMeasureLoop(event()); assert.equal(measureDrag.value, null); assert.equal(writes.length, count);
+  handlers.cancelDrag(event({ pointerId: 2 })); assert.notEqual(measureDrag.value, null);
+  handlers.cancelDrag(event()); assert.equal(measureDrag.value, null); assert.equal(writes.length, count);
   drag(0, 2); hit = null;
-  handlers.finishMeasureLoop(event({ clientX: 100 })); assert.deepEqual(writes.at(-1), [1, 3]);
-  assert.match(script, /watch\(\(\) => \[state.activeId, state.chart, state.invalid\], \(\) => \{ cancelMeasureLoop\(\); cancelOverviewDrag\(\); overviewHover.value = null; \}, \{ flush: 'sync' \}\)/);
-  assert.match(descriptor.template.content, /@pointercancel="cancelMeasureLoop" @lostpointercapture="cancelMeasureLoop"/);
-  assert.match(descriptor.template.content, /@click.capture="measureLoopClick"/);
+  handlers.finishDrag(event({ clientX: 100 })); assert.deepEqual(writes.at(-1), [1, 3]);
+  assert.match(script, /watch\(\(\) => \[props.bars, props.disabled\], \(\) => cancelDrag\(\), \{ flush: 'sync' \}\)/);
+  assert.match(descriptor.template.content, /@pointercancel="cancelDrag" @lostpointercapture="cancelDrag"/);
+  assert.match(descriptor.template.content, /@click.capture="captureClick"/);
   assert.match(descriptor.template.content, /:data-measure-index="item.index"/);
   assert.match(descriptor.template.content, /@click="viewMeasure\(\$event, item.index\)"/);
 });
 
+test('shared grid publishes transient Canvas previews and clears them without changing the saved selection', () => {
+  const { descriptor } = parse(readFileSync(new URL('MeasureGrid.vue', import.meta.url), 'utf8'));
+  const script = descriptor.scriptSetup.content;
+  const source = script.slice(script.indexOf('const dragSelection ='), script.indexOf('function viewMeasure('));
+  const props = reactive({ selection: [2, 2] }), measureDrag = ref(null), previews = [], stops = [];
+  try {
+    const { measureSelection } = runInNewContext(`${source}; ({ measureSelection })`, {
+      props, measureDrag, computed,
+      emit: (name, selection) => { assert.equal(name, 'preview'); previews.push(selection); },
+      watch: (...args) => { const stop = watch(...args); stops.push(stop); return stop; }
+    });
+    measureDrag.value = { start: 2, end: 0, dragged: false };
+    assert.equal(previews.length, 0);
+    measureDrag.value.dragged = true;
+    assert.deepEqual([...previews.at(-1)], [1, 3]);
+    assert.deepEqual([...measureSelection.value], [1, 3]);
+    measureDrag.value = null;
+    assert.equal(previews.at(-1), null);
+    assert.deepEqual([...measureSelection.value], [2, 2]);
+    assert.deepEqual([...props.selection], [2, 2]);
+  } finally { for (const stop of stops) stop(); }
+});
+
 test('Shift-click chooses an inclusive range from the viewed measure or pending F anchor without navigating', () => {
-  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
-  const state = { selected: 2, loopAnchor: null }, ranges = [], views = [];
+  const { descriptor } = parse(readFileSync(new URL('MeasureGrid.vue', import.meta.url), 'utf8'));
+  const props = { activeIndex: 2, anchorIndex: null, bars: Array(4).fill({}), unavailable: () => false }, ranges = [], views = [];
   const viewMeasure = runInNewContext(`(${descriptor.scriptSetup.content.match(/function viewMeasure\(event, index\) \{[\s\S]*?\n\}/)[0]})`, {
-    state, studio: { select: index => views.push(index), setLoop: (...args) => ranges.push(args) }
+    props, emit: (name, ...args) => name === 'select' ? ranges.push(args) : views.push(...args)
   });
   viewMeasure({ shiftKey: false }, 1); assert.deepEqual(views, [1]); assert.equal(ranges.length, 0);
   viewMeasure({ shiftKey: true }, 0); assert.deepEqual(ranges.at(-1), [1, 3]); assert.deepEqual(views, [1]);
-  state.loopAnchor = 1;
+  props.anchorIndex = 1;
   viewMeasure({ shiftKey: true }, 3); assert.deepEqual(ranges.at(-1), [2, 4]);
   assert.match(descriptor.template.content, /:aria-pressed="measureSelected\(item.index\)"/);
-  assert.match(descriptor.template.content, /:aria-current="item.index === state.selected \? 'location' : undefined"/);
-  assert.match(descriptor.template.content, /'note-selected': item.index === state.selectedCell\?\.bar/);
+  props.activeIndex = null; props.anchorIndex = null; props.selection = [2, 3];
+  viewMeasure({ shiftKey: true }, 0); assert.deepEqual(ranges.at(-1), [1, 2]);
+  props.unavailable = () => true;
+  viewMeasure({ shiftKey: true }, 3); viewMeasure({ shiftKey: false }, 0);
+  assert.equal(ranges.length, 3); assert.deepEqual(views, [1]);
+  assert.match(descriptor.template.content, /:aria-current="item.index === props.activeIndex \? 'location' : undefined"/);
+  assert.match(descriptor.template.content, /'note-selected': item.index === props.noteIndex/);
+});
+
+test('global navigation keeps viewing, looping and double-click toggles outside the shared grid', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const range = ref([2, 3]), ranges = [];
+  let cleared = 0;
+  const toggle = runInNewContext(`(${descriptor.scriptSetup.content.match(/function toggleMeasure\(index\) \{[\s\S]*?\n\}/)[0]})`, {
+    range, studio: { clearLoop: () => cleared++, setLoop: (...args) => ranges.push(args) }
+  });
+  toggle(1); assert.equal(cleared, 1); assert.equal(ranges.length, 0);
+  toggle(3); assert.deepEqual(ranges.at(-1), [4, 4]);
+  range.value = null; toggle(0); assert.deepEqual(ranges.at(-1), [1, 1]);
+  assert.match(descriptor.template.content, /<MeasureGrid[^>]*:selection="range"[^>]*:active-index="state.selected"[^>]*:anchor-index="state.loopAnchor"[^>]*:note-index="state.selectedCell\?\.bar"[^>]*@activate="studio.select" @select="studio.setLoop" @toggle="toggleMeasure"/);
 });
 
 test('the header keeps title and history while global navigation contains full-chart statistics', () => {
@@ -1040,7 +1111,7 @@ test('graphical branch selection supports reversed endpoints and rejects crossin
   const writes = [], loop = [2, 4], state = reactive({
     selected: 4, customLoop: loop, chart: { branches: [], bars: Array.from({ length: 6 }, (_, index) => ({ index, branchIndex: index === 3 ? 0 : null })) }
   });
-  const manager = runInNewContext(`${source}; ({ create, chooseMeasure, submit, first, last, anchor, error, fields, mode })`, {
+  const manager = runInNewContext(`${source}; ({ create, chooseMeasure, chooseRange, submit, first, last, anchor, error, fields, mode })`, {
     ref, reactive, computed, inject: () => ({ state, bar: ref(null), applyMeasureBranch: (operation, measure) => { writes.push({ operation, measure }); return true; } }), t
   });
   manager.create(); manager.submit();
@@ -1049,6 +1120,11 @@ test('graphical branch selection supports reversed endpoints and rejects crossin
   assert.equal(manager.first.value, 0); assert.equal(manager.last.value, 2); assert.equal(manager.anchor.value, null);
   manager.chooseMeasure(1); manager.chooseMeasure(5);
   assert.match(manager.error.value, /分歧覆盖/); assert.equal(manager.last.value, 1);
+  manager.chooseRange(2, 6);
+  assert.match(manager.error.value, /分歧覆盖/); assert.equal(manager.first.value, 1); assert.equal(manager.last.value, 1);
+  manager.chooseRange(1, 3);
+  assert.equal(manager.error.value, ''); assert.equal(manager.first.value, 0); assert.equal(manager.last.value, 2); assert.equal(manager.anchor.value, null);
+  manager.chooseMeasure(1);
   manager.chooseMeasure(2); manager.fields.route = 'E'; manager.fields.source = '';
   manager.submit();
   assert.equal(writes.length, 1); assert.equal(writes[0].measure, 1);
@@ -1645,8 +1721,8 @@ test('position editors expose preserved commands while branch editing lives in t
   const manager = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8')).descriptor;
   compileScript(manager, { id: 'global-branch-manager' });
   for (const id of ['branch-create', 'branch-condition', 'branch-lower', 'branch-upper', 'branch-source', 'branch-keep']) assert.ok(manager.template.content.includes(`id="${id}"`));
-  assert.match(manager.template.content, /:disabled="item.branchIndex !== null"/);
-  assert.match(manager.template.content, /@click="chooseMeasure\(item.index\)"/);
+  assert.match(manager.template.content, /<MeasureGrid[^>]*:selection="selection"[^>]*:unavailable="item => item.branchIndex !== null"/);
+  assert.match(manager.template.content, /@activate="chooseMeasure" @select="chooseRange"/);
 });
 
 test('all five catalogs are complete and preserve interpolation placeholders', () => {
@@ -1659,7 +1735,7 @@ test('all five catalogs are complete and preserve interpolation placeholders', (
       assert.deepEqual(placeholders(value), placeholders(key), key);
     }
   }
-  const files = ['App.vue', 'SongWorkspace.vue', 'CourseControls.vue', 'StarRating.vue', 'BranchControls.vue', 'TimelineEditor.vue', 'MeasureEditor.vue', 'courses.js', 'useStudio.js', 'pwa.js', 'chart.js', 'branch-commands.js', 'grid.js', 'note-model.js', 'balloon.js', 'loop.js', 'history.js', 'metadata.js'];
+  const files = ['App.vue', 'SongWorkspace.vue', 'CourseControls.vue', 'StarRating.vue', 'BranchControls.vue', 'TimelineEditor.vue', 'MeasureGrid.vue', 'MeasureEditor.vue', 'courses.js', 'useStudio.js', 'pwa.js', 'chart.js', 'branch-commands.js', 'grid.js', 'note-model.js', 'balloon.js', 'loop.js', 'history.js', 'metadata.js'];
   for (const file of files) {
     const source = readFileSync(new URL(file, import.meta.url), 'utf8');
     for (const match of source.matchAll(/'([^'\\\r\n]*(?:\\.[^'\\\r\n]*)*)'/g)) {

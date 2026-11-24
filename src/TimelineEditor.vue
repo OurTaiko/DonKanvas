@@ -4,6 +4,7 @@ import { computed, inject, onMounted, onUnmounted, ref, watch, watchEffect } fro
 import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map } from '@lucide/vue';
 import SectionHeading from './SectionHeading.vue';
 import BranchControls from './BranchControls.vue';
+import MeasureGrid from './MeasureGrid.vue';
 import { barTimeAt, barFractionAt } from './chart.js';
 import { measureStart, measureEnd } from './loop.js';
 import { GRID_DIVISIONS, SNAP_DIVISIONS } from './grid.js';
@@ -38,19 +39,14 @@ const overviewSelection = computed(() => {
   const { start, end } = timelineBounds.value;
   return (cell.value.time - start) / Math.max(.001, end - start) * 100;
 });
-const measures = ref(null), measureDrag = ref(null);
-const measureSelection = computed(() => measureDrag.value?.dragged
-  ? [Math.min(measureDrag.value.start, measureDrag.value.end) + 1, Math.max(measureDrag.value.start, measureDrag.value.end) + 1]
-  : range.value);
+const measurePreview = ref(null);
 function measureSelected(index) {
-  const selected = measureSelection.value;
+  const selected = measurePreview.value ?? range.value;
   return Boolean(selected && index + 1 >= selected[0] && index + 1 <= selected[1]);
 }
-function viewMeasure(event, index) {
-  if (event.shiftKey) {
-    const anchor = state.loopAnchor ?? state.selected;
-    studio.setLoop(Math.min(anchor, index) + 1, Math.max(anchor, index) + 1);
-  } else studio.select(index);
+function toggleMeasure(index) {
+  if (range.value && index + 1 >= range.value[0] && index + 1 <= range.value[1]) studio.clearLoop();
+  else studio.setLoop(index + 1, index + 1);
 }
 const viewport = ref(null), viewportWidth = studio.timelineWidth;
 const snaps = SNAP_DIVISIONS;
@@ -333,50 +329,7 @@ function finishOverviewDrag(event) {
   cancelOverviewDrag();
   if (!drag.dragged) overviewClick(event);
 }
-let suppressMeasureClick = false;
-function measureAt(event) {
-  const button = document.elementFromPoint(event.clientX, event.clientY)?.closest('button[data-measure-index]');
-  return button && measures.value?.contains(button) ? Number(button.dataset.measureIndex) : null;
-}
-function startMeasureLoop(event) {
-  if (!event.isPrimary || event.button !== 0 || measureDrag.value || !state.chart || state.invalid) return;
-  suppressMeasureClick = false;
-  const index = measureAt(event);
-  if (index === null) return;
-  const capture = event.target.closest('button[data-measure-index]');
-  measureDrag.value = { pointerId: event.pointerId, start: index, end: index, x: event.clientX, y: event.clientY, dragged: false, capture };
-  capture.setPointerCapture(event.pointerId);
-}
-function moveMeasureLoop(event) {
-  const drag = measureDrag.value;
-  if (!drag || drag.pointerId !== event.pointerId) return;
-  const index = measureAt(event);
-  if (index !== null) drag.end = index;
-  if (Math.hypot(event.clientX - drag.x, event.clientY - drag.y) >= 5) drag.dragged = true;
-}
-function cancelMeasureLoop(event) {
-  const drag = measureDrag.value;
-  if (!drag || event && event.pointerId !== drag.pointerId) return;
-  suppressMeasureClick = drag.dragged;
-  measureDrag.value = null;
-  if (drag.capture.hasPointerCapture(drag.pointerId)) drag.capture.releasePointerCapture(drag.pointerId);
-}
-function finishMeasureLoop(event) {
-  const drag = measureDrag.value;
-  if (!drag || drag.pointerId !== event.pointerId) return;
-  moveMeasureLoop(event);
-  cancelMeasureLoop();
-  if (drag.dragged) studio.setLoop(Math.min(drag.start, drag.end) + 1, Math.max(drag.start, drag.end) + 1);
-}
-function measureLoopKeydown(event) {
-  if (event.key !== 'Escape' || !measureDrag.value) return;
-  event.preventDefault(); event.stopPropagation(); cancelMeasureLoop();
-}
-function measureLoopClick(event) {
-  if (suppressMeasureClick && event.detail !== 0) { event.preventDefault(); event.stopPropagation(); }
-  suppressMeasureClick = false;
-}
-watch(() => [state.activeId, state.chart, state.invalid], () => { cancelMeasureLoop(); cancelOverviewDrag(); overviewHover.value = null; }, { flush: 'sync' });
+watch(() => [state.activeId, state.chart, state.invalid], () => { cancelOverviewDrag(); overviewHover.value = null; }, { flush: 'sync' });
 function snapChange() {
   hover.value = null;
   if (controls.snapChoice !== 'custom') studio.setSnap(Number(controls.snapChoice));
@@ -391,7 +344,7 @@ onMounted(() => {
   const resize = () => { if (viewport.value) { viewportWidth.value = Math.max(1, viewport.value.clientWidth - TIMELINE_GUTTER * 2); draw(); } };
   observer = new ResizeObserver(resize); observer.observe(viewport.value); observer.observe(overview.value.parentElement); resize();
 });
-onUnmounted(() => { cancelMeasureLoop(); cancelOverviewDrag(); observer?.disconnect(); });
+onUnmounted(() => { cancelOverviewDrag(); observer?.disconnect(); });
 </script>
 
 <template>
@@ -463,7 +416,7 @@ onUnmounted(() => { cancelMeasureLoop(); cancelOverviewDrag(); observer?.disconn
       </SectionHeading>
       <output v-if="state.loopAnchor !== null" id="measure-loop-anchor">{{ t('已标记第 {p0} 小节，再按 F 完成区间选择，Esc 取消。', { p0: state.loopAnchor + 1 }) }}</output>
     </div>
-    <div id="measures" ref="measures" :class="{ dragging: measureDrag?.dragged }" @pointerdown="startMeasureLoop" @pointermove="moveMeasureLoop" @pointerup="finishMeasureLoop" @pointercancel="cancelMeasureLoop" @lostpointercapture="cancelMeasureLoop" @keydown="measureLoopKeydown" @click.capture="measureLoopClick"><button v-for="item in state.chart?.bars || []" :key="item.index" :data-measure-index="item.index" :class="{ active: item.index === state.selected, gogo: item.gogo, 'loop-anchor': item.index === state.loopAnchor, 'in-selection': measureSelected(item.index), 'note-selected': item.index === state.selectedCell?.bar, 'loop-preview': measureDrag?.dragged && measureSelected(item.index) }" :aria-label="t('小节 {p0}', { p0: item.index + 1 }) + (item.index === state.selectedCell?.bar ? ` · ${t('已选音符所在小节')}` : '')" :aria-current="item.index === state.selected ? 'location' : undefined" :aria-pressed="measureSelected(item.index)" @click="viewMeasure($event, item.index)" @dblclick="measureSelected(item.index) ? studio.clearLoop() : studio.setLoop(item.index + 1, item.index + 1)"><span>{{ String(item.index + 1).padStart(3, '0') }}</span><span class="mini-notes"><i v-for="(note, index) in [...item.notes].filter(note => note !== '0').slice(0, 10)" :key="index" :class="{ blue: '24B'.includes(note) }"></i></span></button></div>
+    <MeasureGrid id="measures" :key="state.activeId" :bars="state.chart?.bars || []" :selection="range" :active-index="state.selected" :anchor-index="state.loopAnchor" :note-index="state.selectedCell?.bar" :disabled="state.invalid" @activate="studio.select" @select="studio.setLoop" @toggle="toggleMeasure" @preview="measurePreview = $event" />
   </section>
 </template>
 
@@ -481,9 +434,7 @@ onUnmounted(() => { cancelMeasureLoop(); cancelOverviewDrag(); observer?.disconn
 .timeline-frame{position:relative;isolation:isolate}
 .timeline-frame:focus-within::after{content:'';position:absolute;inset:0;z-index:1;border:2px solid var(--green);pointer-events:none}
 .timeline-frame .timeline-wrap:focus{outline:none}
-#measures{user-select:none;touch-action:pan-y}#measures.dragging,#measures.dragging button{cursor:crosshair}#measures button.loop-preview{outline:1px solid var(--green);outline-offset:-1px}
-#measure-loop-anchor{font-size:11px;color:var(--green);font-variant-numeric:tabular-nums}#measures button.loop-anchor{outline:2px dashed var(--green);outline-offset:-2px}
-#measures button.in-selection{box-shadow:inset 0 3px 0 var(--green)}#measures button.note-selected{position:relative}#measures button.note-selected::after{content:'';position:absolute;right:4px;bottom:4px;width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 2px #fff}
+#measure-loop-anchor{font-size:11px;color:var(--green);font-variant-numeric:tabular-nums}
 #selection-summary{font-size:11px;color:var(--green)}
 .clear-measure-selection{align-self:center;min-height:20px;padding:0 6px;gap:4px;border:0;background:transparent;font-size:11px}.clear-measure-selection svg{width:14px;height:14px}
 .position-caption{margin-bottom:8px}.position-measure{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}

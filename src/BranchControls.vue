@@ -4,6 +4,7 @@ import { GitBranch, ListFilter, X, LocateFixed, Plus, Trash2 } from '@lucide/vue
 import { t } from './i18n.js';
 import { BRANCH_ROUTES, BRANCH_ROUTE_NAMES as names } from './chart.js';
 import SectionHeading from './SectionHeading.vue';
+import MeasureGrid from './MeasureGrid.vue';
 
 const studio = inject('studio'), { state, bar } = studio;
 const dialog = ref(null), list = ref(null);
@@ -13,6 +14,7 @@ const fields = reactive({ condition: 'p', lower: 50, upper: 80, route: 'N', sour
 const branches = computed(() => state.chart?.branches || []);
 const editedBranch = computed(() => branches.value.find(branch => branch.index === target.value));
 const selectedMeasures = computed(() => first.value === null ? [] : state.chart.bars.slice(first.value, last.value + 1));
+const selection = computed(() => first.value === null ? null : [first.value + 1, last.value + 1]);
 const current = computed(() => branches.value.find(branch => branch.index === bar.value?.branchIndex));
 const uniform = computed(() => {
   const routes = state.branchRoutes.filter(Boolean);
@@ -56,11 +58,14 @@ function chooseMeasure(index) {
     first.value = last.value = anchor.value = index;
     return;
   }
-  const start = Math.min(anchor.value, index), end = Math.max(anchor.value, index);
-  if (state.chart.bars.slice(start, end + 1).some(item => item.branchIndex !== null)) {
+  chooseRange(Math.min(anchor.value, index) + 1, Math.max(anchor.value, index) + 1);
+}
+function chooseRange(start, end) {
+  error.value = '';
+  if (state.chart.bars.slice(start - 1, end).some(item => item.branchIndex !== null)) {
     error.value = t('所选小节已被分歧覆盖，请选择连续的共用小节。'); return;
   }
-  first.value = start; last.value = end; anchor.value = null;
+  first.value = start - 1; last.value = end - 1; anchor.value = null;
 }
 function branchCondition(branch) {
   const [condition, lower, upper] = branch.value.split(',').map(part => part.trim());
@@ -95,9 +100,6 @@ function submit() {
   } else return;
   if (studio.applyMeasureBranch(operation, measure)) mode.value = '';
   else error.value = state.notice;
-}
-function preview(item) {
-  return [...item.notes].flatMap((note, index) => note === '0' ? [] : [{ note, x: 4 + index / item.notes.length * 92 }]).slice(0, 64);
 }
 function locate(branch, owner) {
   studio.select(branch.firstBarIndex);
@@ -152,13 +154,8 @@ function keydown(event) {
         <fieldset :disabled="state.invalid">
           <legend>{{ mode === 'create' ? t('创建分歧') : mode === 'route' ? t('创建路线 {p0}', { p0: fields.route }) : t('删除整个分歧') }}</legend>
           <template v-if="mode === 'create'">
-            <p class="selection-help">{{ t('点击起始和结束小节选择区间；已被分歧覆盖的小节不可选。') }}</p>
-            <div class="branch-measure-grid" role="group" :aria-label="t('选择小节')">
-              <button v-for="item in state.chart.bars" :key="item.index" type="button" :data-measure="item.index" :disabled="item.branchIndex !== null" :aria-pressed="first !== null && item.index >= first && item.index <= last" :class="{ endpoint: anchor === item.index }" :title="item.branchIndex === null ? t('第 {p0} 小节', { p0: item.index + 1 }) : branchLabel(branches[item.branchIndex])" @click="chooseMeasure(item.index)">
-                <span>{{ item.index + 1 }}</span><small v-if="item.branchIndex !== null">{{ branchLabel(branches[item.branchIndex]) }}</small>
-                <svg viewBox="0 0 100 20" aria-hidden="true"><path d="M0 10H100" stroke="#b8c7bb" /><circle v-for="(note, index) in preview(item)" :key="index" :cx="note.x" cy="10" r="3" :fill="'24B'.includes(note.note) ? '#579aac' : '#d87859'" /></svg>
-              </button>
-            </div>
+            <p class="selection-help">{{ t('点击首尾小节、拖动或 Shift+单击选择区间；已被分歧覆盖的小节不可选。') }}</p>
+            <MeasureGrid class="branch-measure-grid" role="group" :aria-label="t('选择小节')" :bars="state.chart.bars" :selection="selection" :anchor-index="anchor" :disabled="state.invalid" :unavailable="item => item.branchIndex !== null" :measure-title="item => item.branchIndex === null ? t('第 {p0} 小节', { p0: item.index + 1 }) : branchLabel(branches[item.branchIndex])" @activate="chooseMeasure" @select="chooseRange" />
             <output class="branch-selection">{{ first === null ? t('请先选择有效的小节。') : t('已选小节：{p0}–{p1}', { p0: first + 1, p1: last + 1 }) }}</output>
           </template>
           <div v-if="mode === 'create' || mode === 'route'" :class="{ 'branch-source-fields': mode === 'create' }">
@@ -231,7 +228,7 @@ function keydown(event) {
 .branch-route-card:not(.missing){border-style:solid;box-shadow:inset 3px 0 currentColor}
 .route-note-count,.route-status{display:block;margin-top:4px;font-size:10px;font-weight:400}
 .branch-uniform{border:0;padding:0;margin:0 0 16px;min-width:0}.branch-uniform legend{font-size:12px;font-weight:600;margin-bottom:8px}.branch-uniform .route-segments span{min-width:0}.branch-row-heading{flex-wrap:wrap}.branch-row-heading>.branch-jump{min-width:130px}
-.branch-route-row{flex-direction:column;align-items:stretch!important}.branch-row-heading{display:flex;align-items:center;gap:6px;min-width:0}.branch-row-heading>.icon{flex-shrink:0}.branch-route-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:8px}.branch-route-card{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;padding:10px;border:1px solid var(--line);border-radius:8px;background:#fff}.branch-route-card.missing{border-style:dashed;background:#fdfdfd;border-color:var(--route-missing-border);color:var(--route-color)}.branch-route-card.missing strong{font-weight:400}.branch-route-card strong{font-size:12px;overflow-wrap:anywhere}.branch-route-card button{flex-shrink:0;font-size:11px;padding:5px}.branch-route-card svg,.branch-create svg{width:14px;height:14px}.branch-jump .branch-measures{display:flex;flex-wrap:wrap;gap:4px 12px}.branch-measures>span{white-space:nowrap}.branch-create{margin-bottom:12px}.branch-form fieldset{border:0;padding:0;margin:0;min-width:0}.branch-form legend{font-weight:600;margin-bottom:12px}.branch-form label{display:flex;flex-direction:column;gap:6px;font-size:12px;margin:12px 0;min-width:0}.branch-form input,.branch-form select{width:100%;min-width:0;height:34px}.branch-form p{font-size:12px;line-height:1.6;color:var(--muted)}.branch-condition-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.branch-measure-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:6px;max-height:32vh;overflow:auto;padding:4px;border:1px solid var(--line);border-radius:8px}.branch-measure-grid button{display:flex;flex-direction:column;gap:4px;padding:7px;min-width:0}.branch-measure-grid button[aria-pressed=true]{background:#e2eee5;border-color:var(--green)}.branch-measure-grid button.endpoint{outline:2px dashed var(--green);outline-offset:-3px}.branch-measure-grid svg{width:100%;height:20px}.branch-measure-grid small{font-size:9px}.branch-selection{display:block;font-size:12px;margin-top:10px;color:var(--green)}.branch-form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.branch-route-row{flex-direction:column;align-items:stretch!important}.branch-row-heading{display:flex;align-items:center;gap:6px;min-width:0}.branch-row-heading>.icon{flex-shrink:0}.branch-route-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:8px}.branch-route-card{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;padding:10px;border:1px solid var(--line);border-radius:8px;background:#fff}.branch-route-card.missing{border-style:dashed;background:#fdfdfd;border-color:var(--route-missing-border);color:var(--route-color)}.branch-route-card.missing strong{font-weight:400}.branch-route-card strong{font-size:12px;overflow-wrap:anywhere}.branch-route-card button{flex-shrink:0;font-size:11px;padding:5px}.branch-route-card svg,.branch-create svg{width:14px;height:14px}.branch-jump .branch-measures{display:flex;flex-wrap:wrap;gap:4px 12px}.branch-measures>span{white-space:nowrap}.branch-create{margin-bottom:12px}.branch-form fieldset{border:0;padding:0;margin:0;min-width:0}.branch-form legend{font-weight:600;margin-bottom:12px}.branch-form label{display:flex;flex-direction:column;gap:6px;font-size:12px;margin:12px 0;min-width:0}.branch-form input,.branch-form select{width:100%;min-width:0;height:34px}.branch-form p{font-size:12px;line-height:1.6;color:var(--muted)}.branch-condition-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.branch-measure-grid{max-height:32vh;overflow:auto;padding:4px;border:1px solid var(--line);border-radius:8px}.branch-selection{display:block;font-size:12px;margin-top:10px;color:var(--green)}.branch-form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .branch-caption>div{min-width:0}.branch-caption .branch-current{overflow-wrap:anywhere}
 .branch-context{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;margin:0;padding:8px 12px;border-bottom:1px solid var(--line);background:#fff}.branch-caption{display:flex;align-items:center;gap:10px;flex:1;min-width:215px}.branch-emblem{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;color:var(--green);background:#e2eee5;flex-shrink:0}.branch-emblem svg{width:18px;height:18px}.branch-heading{display:flex;align-items:center;gap:8px}.branch-heading strong{font-size:13px;font-weight:600}.branch-count{font-size:10px;padding:1px 6px;border-radius:9px;background:#e4ece6;color:#55715e}.branch-caption p{font-size:11px;color:var(--muted);margin:4px 0 0}.mixed-route{font-size:10px;color:#946d28;background:#f9edcf;padding:2px 6px;border-radius:4px}.route-segments{display:flex;gap:3px;padding:3px;background:#e4ece6;border:1px solid #d6e2d9;border-radius:8px}.route-segments label{position:relative;cursor:pointer;flex:1}.route-segments input{position:absolute;width:1px;height:1px;opacity:0}.route-segments span{display:flex;gap:6px;align-items:center;justify-content:center;min-width:74px;padding:6px 12px;font-size:12px;border-radius:5px;color:#687b6c;white-space:nowrap}.route-segments b{font-size:10px;opacity:.7}.route-segments input:checked+span{color:#fff;background:var(--green);box-shadow:0 1px 3px #174a2d24}.route-segments input:focus-visible+span{outline:2px solid #2457d6;outline-offset:2px}.route-segments input:disabled+span{opacity:.35;cursor:not-allowed}.manage-branches{font-size:12px;background:#fff}.manage-branches svg{width:15px;height:15px}.branch-context-foot{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;flex-basis:100%;font-size:10px;color:var(--muted);padding-top:2px}.branch-context-foot>span:first-child{color:#5d7464}
 .branch-dialog{width:min(660px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;border:1px solid var(--line);border-radius:12px;padding:22px;color:var(--ink)}.branch-dialog::backdrop{background:#202a2870}.branch-dialog-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.branch-dialog h2{margin:0;font-size:18px}.branch-dialog-heading p{margin:8px 0 16px;font-size:12px;line-height:1.6;color:var(--muted)}.branch-route-list{position:relative;max-height:min(50vh,420px);overflow:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:8px}.branch-route-row{display:flex;align-items:center;gap:10px;padding:9px 10px}.branch-route-row+.branch-route-row{border-top:1px solid #edf1ed}.branch-route-row[aria-current=true]{background:#edf5ee;box-shadow:inset 3px 0 var(--green)}.branch-jump{display:flex;flex:1;gap:10px;border:0;background:transparent;padding:4px;text-align:left;justify-content:flex-start;min-width:0}.branch-jump>span:nth-child(2){min-width:0}.branch-jump strong{display:block;font-size:12px;font-weight:500}.branch-jump small{display:block;margin-top:3px;color:var(--muted);font-size:10px;overflow-wrap:anywhere}.branch-jump>svg{width:14px;height:14px;color:#98aa9d;margin-left:auto;flex-shrink:0}.branch-number{display:grid;place-items:center;border:1px solid #dce5de;background:#fff;border-radius:7px;min-width:29px;height:29px;font-size:11px;color:var(--green)}.individual-routes{flex-shrink:0}.individual-routes span{min-width:30px;padding:5px 8px;font-size:11px}.branch-dialog-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px}.branch-dialog-footer>span{font-size:11px;color:var(--muted)}.no-branches{padding:24px;text-align:center;color:var(--muted)}.branch-route-error{font-size:12px;color:#bd3b30}
