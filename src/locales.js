@@ -494,6 +494,7 @@ export const translations = {
   '特殊气球': ['Special balloon', '特殊風船', '特殊氣球', '특수 풍선'],
   '连打 / 其他': ['Rolls / Other', '連打 / その他', '連打 / 其他', '연타 / 기타'],
   '全曲总览': ['Song overview', '全曲の概要', '全曲總覽', '전체 곡 보기'],
+  '分歧段': ['Branch sections', '分岐区間', '分歧段', '분기 구간'],
   '全曲波形，点击跳转，拖动浏览': ['Full waveform; click to navigate, drag to browse', '全曲波形、クリックで移動、ドラッグで閲覧', '全曲波形，點擊跳轉，拖動瀏覽', '전체 파형, 클릭하여 이동, 드래그하여 탐색'],
   '撤销': ['Undo', '元に戻す', '復原', '실행 취소'],
   '撤销（Ctrl+Z）': ['Undo (Ctrl+Z)', '元に戻す（Ctrl+Z）', '復原（Ctrl+Z）', '실행 취소 (Ctrl+Z)'],

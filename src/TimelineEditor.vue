@@ -106,8 +106,8 @@ function canvasContext(canvas) {
   const brush = canvas.getContext('2d'); brush.setTransform(ratio, 0, 0, ratio, 0, 0); brush.clearRect(0, 0, width, height);
   return { brush, width, height };
 }
-function drawWave(brush, width, start, end, center, amplitude, timeAt = fraction => start + fraction * (end - start)) {
-  brush.fillStyle = '#438875';
+function drawWave(brush, width, start, end, center, amplitude, timeAt = fraction => start + fraction * (end - start), color = '#9fc5b8') {
+  brush.fillStyle = color;
   if (!state.buffer) { brush.fillStyle = '#929c94'; brush.font = '12px Studio, sans-serif'; brush.fillText(t('无伴奏 · 可播放谱面音符音'), 14, center); return; }
   const peaks = state.peaks;
   for (let pixel = 0; pixel < width; pixel++) {
@@ -116,6 +116,25 @@ function drawWave(brush, width, start, end, center, amplitude, timeAt = fraction
     let peak = 0;
     for (let index = Math.max(0, low); index < Math.min(peaks.length, high); index++) peak = Math.max(peak, peaks[index]);
     if (peak) brush.fillRect(pixel, center - peak * amplitude, 1, Math.max(1, peak * amplitude * 2));
+  }
+}
+function gogoIntervals(item) {
+  const intervals = [];
+  let gogo = item.gogo, start = item.start;
+  for (const event of [...item.events.filter(event => event.name.startsWith('GOGO')), { time: item.end, name: 'GOGOEND' }]) {
+    if (gogo) intervals.push([start, event.time]);
+    start = event.time; gogo = event.name === 'GOGOSTART';
+  }
+  return intervals;
+}
+function drawOverviewSections(brush, x) {
+  for (const item of state.chart.bars) {
+    brush.fillStyle = '#d9a032';
+    for (const [start, end] of gogoIntervals(item)) brush.fillRect(x(start), 0, x(end) - x(start), 3);
+    if (item.route) {
+      brush.fillStyle = '#9270b5';
+      brush.fillRect(x(measureStart(item)), 4, x(measureEnd(item)) - x(measureStart(item)), 3);
+    }
   }
 }
 function draw() {
@@ -133,15 +152,12 @@ function draw() {
   const waveformWidth = width + TIMELINE_GUTTER * 2;
   brush.save();
   if (!state.buffer) brush.translate(TIMELINE_GUTTER, 0);
-  drawWave(brush, waveformWidth, timeAt(0), timeAt(waveformWidth), 88, 59, fraction => timeAt(fraction * waveformWidth));
+  drawWave(brush, waveformWidth, timeAt(0), timeAt(waveformWidth), 88, 59, fraction => timeAt(fraction * waveformWidth), '#72a592');
   brush.restore();
   const eventLabelEnds = [];
   for (const item of bars) {
-    let gogo = item.gogo, segmentStart = item.start;
-    for (const event of [...item.events.filter(event => event.name.startsWith('GOGO')), { time: item.end, name: 'GOGOEND' }]) {
-      if (gogo) { brush.fillStyle = '#e5ac3220'; brush.fillRect(x(segmentStart), noteY - 30, x(event.time) - x(segmentStart), noteLaneHeight); }
-      segmentStart = event.time; gogo = event.name === 'GOGOSTART';
-    }
+    brush.fillStyle = '#e5ac3220';
+    for (const [start, end] of gogoIntervals(item)) brush.fillRect(x(start), noteY - 30, x(end) - x(start), noteLaneHeight);
     if (item.delay) {
       brush.fillStyle = '#d9a83b22'; brush.fillRect(x(measureStart(item)), 23, x(item.start) - x(measureStart(item)), height - 48);
     }
@@ -203,6 +219,7 @@ function draw() {
   const overviewContext = canvasContext(overview.value), bounds = timelineBounds.value, total = Math.max(.001, bounds.end - bounds.start);
   const overviewX = time => (time - bounds.start) / total * overviewContext.width;
   drawWave(overviewContext.brush, overviewContext.width, bounds.start, bounds.end, overviewContext.height / 2, overviewContext.height * .44);
+  drawOverviewSections(overviewContext.brush, overviewX);
   for (const item of state.chart.bars) {
     const left = overviewX(measureStart(item)), size = overviewX(measureEnd(item)) - left;
     if (measureSelected(item.index)) { overviewContext.brush.fillStyle = '#16745b24'; overviewContext.brush.fillRect(left, 0, size, overviewContext.height); }
@@ -389,7 +406,13 @@ onUnmounted(() => { cancelMeasureLoop(); cancelOverviewDrag(); observer?.disconn
         <label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span>{{ t('跟随播放') }}</label>
       </div>
       <div class="timeline-frame"><div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @contextmenu.prevent></canvas></div></div></div>
-      <section class="overview"><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span><span v-if="overviewHover" id="overview-hover" role="tooltip" :style="{ left: `${overviewHover.x}px`, top: `${overviewHover.y}px`, transform: `translate(${-overviewHover.fraction * 100}%, calc(-100% - 12px))` }">{{ formatTime(overviewHover.time) }} · {{ t('小节 {p0}', { p0: overviewHover.measure ?? '—' }) }}</span><canvas id="overview" ref="overview" :aria-label="t('全曲波形，点击跳转，拖动浏览')" :aria-describedby="range || cell ? 'selection-summary' : undefined" role="img" @pointerenter="hoverOverview" @pointerleave="overviewHover = null" @pointerdown="startOverviewDrag" @pointermove="hoverOverview($event); moveOverviewDrag($event)" @pointerup="finishOverviewDrag" @pointercancel="cancelOverviewDrag($event); overviewHover = null" @lostpointercapture="cancelOverviewDrag"></canvas></section>
+      <section class="overview">
+        <div class="overview-caption"><span class="overview-legend"><i class="gogo"></i>GOGOTIME <i class="branch"></i>{{ t('分歧段') }}</span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div>
+        <div class="overview-wave">
+          <span v-if="overviewHover" id="overview-hover" role="tooltip" :style="{ left: `${overviewHover.x}px`, top: `${overviewHover.y}px`, transform: `translate(${-overviewHover.fraction * 100}%, calc(-100% - 12px))` }">{{ formatTime(overviewHover.time) }} · {{ t('小节 {p0}', { p0: overviewHover.measure ?? '—' }) }}</span>
+          <canvas id="overview" ref="overview" :aria-label="t('全曲波形，点击跳转，拖动浏览')" :aria-describedby="range || cell ? 'selection-summary' : undefined" role="img" @pointerenter="hoverOverview" @pointerleave="overviewHover = null" @pointerdown="startOverviewDrag" @pointermove="hoverOverview($event); moveOverviewDrag($event)" @pointerup="finishOverviewDrag" @pointercancel="cancelOverviewDrag($event); overviewHover = null" @lostpointercapture="cancelOverviewDrag"></canvas>
+        </div>
+      </section>
       <section class="cell-inspector" :aria-label="t('音符编辑')">
         <dl>
           <div v-for="attribute in cellAttributes" :key="attribute.id"><dt>{{ t(attribute.label) }}</dt><dd :id="attribute.id" :title="attribute.value">{{ attribute.value }}</dd></div>
@@ -419,6 +442,11 @@ onUnmounted(() => { cancelMeasureLoop(); cancelOverviewDrag(); observer?.disconn
 </template>
 
 <style>
+.overview-caption{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;padding:4px 6px;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;pointer-events:none}
+.overview-caption>#overview-range{white-space:nowrap}
+.overview-wave{position:relative}
+.overview-legend{display:flex;align-items:center;gap:4px;white-space:nowrap}
+.overview-legend i{width:10px;height:3px}.overview-legend .gogo{background:#d9a032}.overview-legend .branch{background:#9270b5;margin-left:4px}
 .timeline-wrap{height:auto;padding:0;overscroll-behavior-x:contain}
 .timeline-frame{position:relative;isolation:isolate}
 .timeline-frame:focus-within::after{content:'';position:absolute;inset:0;z-index:1;border:2px solid var(--green);pointer-events:none}

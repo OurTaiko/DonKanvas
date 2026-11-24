@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { computed } from 'vue';
 import { parse, compileScript } from 'vue/compiler-sfc';
+import { TJAParser } from 'tja';
+import { parseChart } from './chart.js';
 import { translations } from './locales.js';
 import { SONG_FIELDS, setSongMetadata } from './metadata.js';
 import { NOTE_TYPES } from './note-model.js';
@@ -63,7 +65,7 @@ test('timeline waveforms extend beneath both gutter masks using the beat project
       canvasContext: canvas => ({ brush: canvas === timeline.value ? timelineBrush : overviewBrush, width: width + TIMELINE_GUTTER * 2, height: 278 })
     });
     draw();
-    const waveform = timelineBrush.rectangles.filter(rect => rect.color === '#438875');
+    const waveform = timelineBrush.rectangles.filter(rect => rect.color === '#72a592');
     const projection = createTimelineViewport(scale, view, beats, width), fullWidth = width + TIMELINE_GUTTER * 2;
     const audiblePixels = Array.from({ length: fullWidth }, (_, x) => x).filter(x => projection.timeAt(x + 1) > 0 && projection.timeAt(x) < 100);
     assert.deepEqual(waveform.map(rect => rect.x), audiblePixels);
@@ -77,6 +79,53 @@ test('timeline waveforms extend beneath both gutter masks using the beat project
     assert.ok(timelineBrush.rectangles.indexOf(masks[0]) > timelineBrush.rectangles.indexOf(waveform.at(-1)));
     state.buffer = null; draw();
     assert.deepEqual(timelineBrush.labels.at(-1), { text: '无伴奏 · 可播放谱面音符音', x: TIMELINE_GUTTER + 14 });
+  }
+});
+
+test('overview section bands follow intra-measure Go-Go events and the selected branch duration independently', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const script = descriptor.scriptSetup.content;
+  const source = script.slice(script.indexOf('function gogoIntervals('), script.indexOf('function draw()'));
+  const text = `TITLE:Overview
+BPM:120
+OFFSET:1
+COURSE:Oni
+#START
+10
+#GOGOSTART
+10
+#DELAY .5
+#GOGOEND
+10
+#GOGOSTART
+10,
+#BRANCHSTART p,50,80
+#N
+#DELAY .25
+1000,
+#E
+#GOGOEND
+#BPMCHANGE 60
+2000,
+2000,
+#BRANCHEND
+#GOGOEND
+1000,
+#END`;
+  for (const route of ['N', 'E']) {
+    const state = { chart: parseChart(text, TJAParser, 0, [route]) }, rectangles = [];
+    const before = JSON.stringify(state);
+    const brush = { fillRect(x, y, width, height) { rectangles.push({ x, y, width, height, color: this.fillStyle }); } };
+    const draw = runInNewContext(`${source}; drawOverviewSections`, { state, measureStart, measureEnd });
+    draw(brush, time => (time + 1) * 10);
+    const gogo = rectangles.filter(rect => rect.color === '#d9a032').map(({ x, y, width, height }) => [x, y, width, height]);
+    const branches = rectangles.filter(rect => rect.color === '#9270b5').map(({ x, y, width, height }) => [x, y, width, height]);
+    assert.deepEqual(gogo, route === 'N' ? [[5, 0, 10, 3], [20, 0, 5, 3], [27.5, 0, 20, 3]] : [[5, 0, 10, 3], [20, 0, 5, 3]]);
+    assert.deepEqual(branches, route === 'N' ? [[25, 4, 22.5, 3]] : [[25, 4, 40, 3], [65, 4, 40, 3]]);
+    assert.equal(JSON.stringify(state), before);
+    state.chart.bars = []; rectangles.length = 0;
+    draw(brush, time => time);
+    assert.deepEqual(rectangles, []);
   }
 });
 
@@ -195,12 +244,16 @@ test('overview dragging pans continuously without seeking or changing selections
   const { descriptor: app } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   const appStyles = app.styles[0].content;
   assert.match(appStyles, /\.overview\{[^}]*position:relative;[^}]*padding:0;/);
-  assert.match(appStyles, /\.overview>#overview-range,\.overview>#overview-hover\{[^}]*position:absolute;[^}]*pointer-events:none/);
-  assert.match(appStyles, /\.overview>#overview-range\{top:4px;right:6px\}/);
+  assert.match(appStyles, /\.overview-wave>#overview-hover\{[^}]*position:absolute;[^}]*pointer-events:none/);
+  assert.doesNotMatch(appStyles, /\.overview>#overview-range/);
   assert.match(appStyles, /\.overview canvas\{[^}]*margin-top:0;[^}]*border-radius:0/);
   const overviewTemplate = descriptor.template.content.match(/<section class="overview">[\s\S]*?<\/section>/)[0];
   assert.doesNotMatch(overviewTemplate, /全曲总览|section-label/);
   assert.match(overviewTemplate, /<span id="overview-range">/);
+  assert.match(overviewTemplate, /<div class="overview-caption"><span class="overview-legend">[\s\S]*?<\/span><span id="overview-range">[\s\S]*?<\/span><\/div>\s*<div class="overview-wave">[\s\S]*?id="overview-hover"[\s\S]*?<canvas id="overview"/);
+  assert.match(descriptor.styles[0].content, /\.overview-caption\{[^}]*display:flex;[^}]*justify-content:space-between;[^}]*flex-wrap:wrap;/);
+  assert.match(descriptor.styles[0].content, /\.overview-wave\{position:relative\}/);
+  assert.doesNotMatch(descriptor.styles[0].content, /\.overview-(?:caption|legend)\{[^}]*position:absolute/);
   assert.match(canvas, /:aria-label="t\('全曲波形，点击跳转，拖动浏览'\)"/);
 });
 
