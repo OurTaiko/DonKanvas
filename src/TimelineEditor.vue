@@ -567,7 +567,7 @@ onUnmounted(() => {
 .measure-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.measure-actions{display:inline-flex;max-width:100%;margin-right:6px;border:0;border-radius:5px;background:transparent}.measure-actions button{min-width:0;padding:4px 8px;gap:4px;border:0;border-radius:4px;font-size:11px}.measure-actions button svg{width:14px;height:14px}
 .timeline-content{min-width:100%}
 .timeline-frame #timeline{height:250px;position:sticky;left:0;touch-action:pan-y pinch-zoom}
-.touch-selection-guide{position:absolute;z-index:2;left:0;right:0;bottom:min(25px,16.666667%);height:min(66px,44%);display:flex;align-items:center;justify-content:space-between;padding:0 36px;background:#16745b18;color:var(--green);pointer-events:none}.touch-selection-guide>svg{width:40px;height:40px;max-height:100%;animation:touch-selection-left .7s ease-in-out infinite alternate}.touch-selection-guide>svg:last-child{animation-name:touch-selection-right}
+.touch-selection-guide{position:absolute;z-index:2;left:0;right:0;bottom:min(25px,16.666667%);height:min(66px,44%);display:flex;align-items:center;justify-content:space-between;padding:0 36px;background:#0006;color:var(--green);pointer-events:none}.touch-selection-guide>svg{width:40px;height:40px;max-height:100%;filter:drop-shadow(1px 0 0 #ccc) drop-shadow(-1px 0 0 #ccc) drop-shadow(0 1px 0 #ccc) drop-shadow(0 -1px 0 #ccc);animation:touch-selection-left .7s ease-in-out infinite alternate}.touch-selection-guide>svg:last-child{animation-name:touch-selection-right}
 @keyframes touch-selection-left{to{transform:translateX(-4px)}}
 @keyframes touch-selection-right{to{transform:translateX(4px)}}
 @media(prefers-reduced-motion:reduce){.touch-selection-guide>svg{animation:none}}
