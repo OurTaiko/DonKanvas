@@ -5,7 +5,7 @@ import { runInNewContext } from 'node:vm';
 import { computed, reactive, ref } from 'vue';
 import { parse, compileScript } from 'vue/compiler-sfc';
 import { TJAParser } from 'tja';
-import { parseChart, BRANCH_ROUTE_NAMES } from './chart.js';
+import { parseChart } from './chart.js';
 import { translations } from './locales.js';
 import { SONG_FIELDS, setSongMetadata } from './metadata.js';
 import { NOTE_TYPES } from './note-model.js';
@@ -240,7 +240,7 @@ test('overview dragging pans continuously without seeking or changing selections
   ]) assert.ok(canvas.includes(`@${eventName}="${handler}"`));
   assert.doesNotMatch(canvas, /@click=/);
   assert.match(descriptor.template.content, /^\s*<div class="workspace">\s*<section class="editor">/);
-  assert.match(descriptor.template.content, /<\/canvas><\/div><\/div><\/div>\s*<section class="overview">[\s\S]*?<\/section>\s*<section class="cell-inspector"/);
+  assert.match(descriptor.template.content, /<\/canvas><\/div><\/div><\/div>\s*<section class="overview">[\s\S]*?<\/section>\s*<div class="editor-information">\s*<section class="cell-inspector"/);
   const styles = readFileSync(new URL('sound.css', import.meta.url), 'utf8');
   assert.match(styles, /\.timeline-wrap\{[^}]*overflow-x:auto;[^}]*scrollbar-width:none/);
   assert.match(styles, /\.timeline-wrap::-webkit-scrollbar\{display:none\}/);
@@ -838,29 +838,18 @@ test('the note editor uses compact wrapping attributes and stable value slots', 
   assert.doesNotMatch(readFileSync(new URL('SongWorkspace.vue', import.meta.url), 'utf8'), /离开输入框时自动应用/);
 });
 
-test('overview attributes show the current timing branch and route, including shared sections', () => {
-  reset();
+test('position attributes omit branch information while preserving timing details', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   const script = descriptor.scriptSetup.content;
   const source = script.slice(script.indexOf('const cellAttributes ='), script.indexOf('const timeline ='));
-  const currentTiming = ref({ bar: { branchIndex: null, route: null }, bpm: 120, scroll: 1, numerator: 4, denominator: 4 });
+  const currentTiming = ref({ bpm: 120, scroll: 1, numerator: 4, denominator: 4 });
   const attributes = runInNewContext(`${source}; cellAttributes`, {
-    computed, cell: ref(null), currentTiming, t, BRANCH_ROUTE_NAMES
+    computed, cell: ref(null), currentTiming, t
   });
-  const branch = () => attributes.value.find(attribute => attribute.id === 'cell-branch');
-  assert.equal(branch().label, '分歧路线');
-  assert.equal(branch().value, '当前位于共用段');
-  for (const [route, name] of Object.entries(BRANCH_ROUTE_NAMES)) {
-    currentTiming.value.bar = { branchIndex: 0, route };
-    assert.equal(branch().value, `分歧 1 · ${name}`);
-  }
-  currentTiming.value.bar = { branchIndex: 2, route: 'E' };
-  assert.equal(branch().value, '分歧 3 · 玄人');
-  setLocale('en');
-  assert.equal(branch().value, 'Branch 3 · Expert');
-  currentTiming.value.bar = { branchIndex: null, route: null };
-  assert.equal(branch().value, 'Currently in a shared section');
-  reset();
+  assert.ok(!attributes.value.some(attribute => attribute.id === 'cell-branch' || attribute.label === '分歧路线'));
+  assert.equal(attributes.value.find(attribute => attribute.id === 'cell-bpm').value, '120');
+  currentTiming.value.bpm = 180;
+  assert.equal(attributes.value.find(attribute => attribute.id === 'cell-bpm').value, '180');
 });
 
 test('balloon and special roll counts are edited in the right note panel', () => {
@@ -1385,15 +1374,19 @@ test('branch filtering and structural management have separate dialogs and actio
   }
   assert.match(descriptor.template.content, /id="branch-filter"[^>]*:disabled="state.invalid \|\| !branches.length"[^>]*@click="openFilter"/);
   assert.match(descriptor.template.content, /id="branch-manage"[^>]*:disabled="state.invalid"[^>]*@click="open"/);
-  assert.match(descriptor.template.content, /<SectionHeading[^>]*class="branch-caption"[^>]*>[\s\S]*class="branch-heading-actions">\s*<button id="branch-filter"[\s\S]*<button id="branch-manage"[\s\S]*<\/span>\s*<template #description>/);
-  assert.match(descriptor.styles[0].content, /\.branch-heading-actions>\.manage-branches\{min-height:20px;padding:0 6px;gap:4px;border:0;background:transparent;font-size:11px/);
+  assert.match(descriptor.template.content, /<\/SectionHeading>\s*<div class="branch-actions">\s*<button id="branch-filter"[\s\S]*<button id="branch-manage"[\s\S]*<\/div>\s*<dialog/);
+  assert.match(descriptor.styles[0].content, /\.branch-actions\{display:flex;flex-basis:100%;flex-wrap:wrap;gap:8px\}/);
+  assert.match(descriptor.styles[0].content, /\.branch-actions>\.manage-branches\{min-height:32px;padding:5px 10px\}/);
   assert.doesNotMatch(descriptor.template.content, /<dialog[^>]*\bopen(?:\s|>)/);
   assert.match(descriptor.styles[0].content, /\.branch-context\{[^}]*margin:0;padding:8px 12px;border-bottom:1px solid var\(--line\);background:#fff/);
   const app = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8')).descriptor;
   assert.match(app.template.content, /<div class="editor-scroll">\s*<TimelineEditor v-if="studio.bar.value" \/>/);
   assert.doesNotMatch(app.template.content, /<BranchControls/);
   const timeline = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8')).descriptor;
-  assert.match(timeline.template.content, /<section class="cell-inspector"[\s\S]*?<\/dl>\s*<\/section>\s*<\/section>\s*<\/div>\s*<BranchControls \/>\s*<section class="measure-section">/);
+  assert.match(timeline.template.content, /<div class="editor-information">\s*<section class="cell-inspector"[\s\S]*?<\/dl>\s*<\/section>\s*<BranchControls \/>\s*<\/div>\s*<\/section>\s*<\/div>\s*<section class="measure-section">/);
+  assert.match(timeline.styles[0].content, /\.editor-information\{display:grid;grid-template-columns:minmax\(0,1fr\)\}/);
+  assert.match(timeline.styles[0].content, /\.editor-information>section\.branch-context\{[^}]*border-bottom:0\}/);
+  assert.match(timeline.styles[0].content, /@container\(min-width:900px\)\{\.editor-information\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/);
   assert.doesNotMatch(app.styles[0].content, /\.chart-context/);
 });
 

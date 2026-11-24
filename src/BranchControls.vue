@@ -116,12 +116,12 @@ function keydown(event) {
   <section class="branch-context" :aria-label="t('分歧路线')" @keydown.space.stop @keydown.left.stop @keydown.right.stop>
     <SectionHeading class="branch-caption" :icon="GitBranch" :title="t('谱面分歧')">
       <span class="branch-count">{{ branches.length }}</span><span v-if="!uniform" class="mixed-route">{{ t('自定义路线') }}</span>
-      <span class="branch-heading-actions">
-        <button id="branch-filter" type="button" class="manage-branches" :disabled="state.invalid || !branches.length" @click="openFilter"><ListFilter aria-hidden="true" />{{ t('路线筛选') }}</button>
-        <button id="branch-manage" type="button" class="manage-branches" :disabled="state.invalid" @click="open"><GitBranch aria-hidden="true" />{{ t('全局分歧管理') }}</button>
-      </span>
       <template #description><p class="branch-current">{{ current ? `${branchLabel(current)} · ${current.route ? t(names[current.route]) : '—'} · ${conditionLabel(current)}` : t('当前位于共用段') }}</p></template>
     </SectionHeading>
+    <div class="branch-actions">
+      <button id="branch-filter" type="button" class="manage-branches" :disabled="state.invalid || !branches.length" @click="openFilter"><ListFilter aria-hidden="true" />{{ t('路线筛选') }}</button>
+      <button id="branch-manage" type="button" class="manage-branches" :disabled="state.invalid" @click="open"><GitBranch aria-hidden="true" />{{ t('全局分歧管理') }}</button>
+    </div>
     <dialog ref="filterDialog" class="branch-dialog branch-filter-dialog" aria-labelledby="branch-filter-title" @keydown="keydown">
       <div class="branch-dialog-heading"><div><h2 id="branch-filter-title">{{ t('路线筛选') }}</h2><p>{{ t('仅切换显示和试听路线，不修改分歧结构。') }}</p></div><button type="button" class="icon" :title="t('关闭')" :aria-label="t('关闭')" @click="filterDialog.close()"><X /></button></div>
       <fieldset class="branch-uniform">
@@ -208,9 +208,8 @@ function keydown(event) {
 </template>
 
 <style scoped>
-.branch-heading-actions{display:inline-flex;align-self:center;flex-wrap:wrap;gap:4px}
-.branch-heading-actions>.manage-branches{min-height:20px;padding:0 6px;gap:4px;border:0;background:transparent;font-size:11px}
-.branch-heading-actions>.manage-branches svg{width:14px;height:14px}
+.branch-actions{display:flex;flex-basis:100%;flex-wrap:wrap;gap:8px}
+.branch-actions>.manage-branches{min-height:32px;padding:5px 10px}
 .branch-caption .branch-current{margin:0}
 .branch-dialog-heading>.icon{border:0}
 .branch-source-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}

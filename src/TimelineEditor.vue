@@ -4,7 +4,7 @@ import { computed, inject, onMounted, onUnmounted, ref, watch, watchEffect } fro
 import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map } from '@lucide/vue';
 import SectionHeading from './SectionHeading.vue';
 import BranchControls from './BranchControls.vue';
-import { barTimeAt, barFractionAt, BRANCH_ROUTE_NAMES } from './chart.js';
+import { barTimeAt, barFractionAt } from './chart.js';
 import { measureStart, measureEnd } from './loop.js';
 import { GRID_DIVISIONS, SNAP_DIVISIONS } from './grid.js';
 import { NOTE_TYPES, selectCell, cellValue } from './note-model.js';
@@ -26,7 +26,6 @@ const cellAttributes = computed(() => {
     { id: 'cell-bpm', label: 'BPM', value: String(timing.bpm) },
     { id: 'cell-scroll', label: '卷轴倍率', value: `${timing.scroll}×` },
     { id: 'cell-meter', label: '拍号', value: `${timing.numerator}/${timing.denominator}` },
-    { id: 'cell-branch', label: '分歧路线', value: timing.bar.branchIndex !== null ? `${t('分歧 {p0}', { p0: timing.bar.branchIndex + 1 })} · ${t(BRANCH_ROUTE_NAMES[timing.bar.route])}` : t('当前位于共用段') },
     ...(timing.gogo ? [{ id: 'cell-gogo', label: 'Go-Go 状态', value: t('开始') }] : []),
     ...(timing.delay ? [{ id: 'cell-delay', label: '延迟 / s', value: String(timing.delay) }] : []),
     ...(selected?.span ? [{ id: 'cell-long', label: '长音状态', value: `${t(NOTE_TYPES[Number(selected.span.note)].name)} · ${(selected.span.end - selected.span.start).toFixed(3)} s · ${selected.span.complete ? t('已结束') : t('缺少结束标记')}` }] : [])
@@ -416,6 +415,7 @@ onUnmounted(() => { cancelMeasureLoop(); cancelOverviewDrag(); observer?.disconn
           <canvas id="overview" ref="overview" :aria-label="t('全曲波形，点击跳转，拖动浏览')" :aria-describedby="range ? 'selection-summary' : undefined" role="img" @pointerenter="hoverOverview" @pointerleave="overviewHover = null" @pointerdown="startOverviewDrag" @pointermove="hoverOverview($event); moveOverviewDrag($event)" @pointerup="finishOverviewDrag" @pointercancel="cancelOverviewDrag($event); overviewHover = null" @lostpointercapture="cancelOverviewDrag"></canvas>
         </div>
       </section>
+      <div class="editor-information">
       <section class="cell-inspector" :aria-label="t('落点信息')">
         <SectionHeading class="position-caption" :icon="Grid2X2" :title="t('落点信息')">
           <span class="position-measure">{{ t('小节 {p0}', { p0: (cell?.bar ?? state.selected) + 1 }) }}</span>
@@ -433,9 +433,10 @@ onUnmounted(() => { cancelMeasureLoop(); cancelOverviewDrag(); observer?.disconn
           <div v-for="attribute in cellAttributes" :key="attribute.id"><dt>{{ t(attribute.label) }}</dt><dd :id="attribute.id" :title="attribute.value">{{ attribute.value }}</dd></div>
         </dl>
       </section>
+      <BranchControls />
+      </div>
     </section>
   </div>
-  <BranchControls />
   <section class="measure-section">
     <div class="measure-heading">
       <SectionHeading :icon="Map" :title="t('全局导航')">
@@ -459,6 +460,9 @@ onUnmounted(() => { cancelMeasureLoop(); cancelOverviewDrag(); observer?.disconn
 </template>
 
 <style>
+.editor-information{display:grid;grid-template-columns:minmax(0,1fr)}
+.editor-information>section.branch-context{min-width:0;align-content:start;border-top:1px solid var(--line);border-bottom:0}
+@container(min-width:900px){.editor-information{grid-template-columns:repeat(2,minmax(0,1fr))}.editor-information>section.branch-context{border-left:1px solid var(--line);padding-block:15px}}
 .overview-caption{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;padding:4px 6px;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;pointer-events:none}
 .overview-caption>#overview-range{white-space:nowrap}
 .overview-wave{position:relative}
