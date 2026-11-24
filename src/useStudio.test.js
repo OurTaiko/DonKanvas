@@ -3157,6 +3157,29 @@ test('A and D move by the snap grid, repeat, cross measures and stop at chart bo
   } finally { cleanup(); }
 });
 
+test('touch selection steps share A/D behavior for off-grid notes, measure crossings and chart boundaries', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file());
+    const text = studio.state.text, history = studio.state.undo.length;
+    for (const position of [
+      { bar: 0, numerator: 1, denominator: 24, divisions: 16 },
+      { bar: 0, numerator: 0, denominator: 16, divisions: 16 },
+      { bar: 0, numerator: 15, denominator: 16, divisions: 16 },
+      { bar: studio.state.chart.bars.length - 1, numerator: 15, denominator: 16, divisions: 16 }
+    ]) {
+      for (const direction of [-1, 1]) {
+        studio.selectCell(position); studio.moveCell(direction);
+        const touchSelection = { ...studio.state.selectedCell };
+        studio.selectCell(position);
+        handlers.get('keydown')({ key: direction < 0 ? 'a' : 'd', preventDefault() {} });
+        assert.deepEqual(studio.state.selectedCell, touchSelection);
+      }
+    }
+    assert.equal(studio.state.text, text); assert.equal(studio.state.undo.length, history);
+  } finally { cleanup(); }
+});
+
 test('A/D navigation moves off-grid positions to the nearest snap in the requested direction', async () => {
   const { studio, handlers, cleanup } = mountStudio();
   const press = key => handlers.get('keydown')({ key, preventDefault() {} });

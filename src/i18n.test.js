@@ -160,6 +160,78 @@ COURSE:Oni
   assert.doesNotMatch(descriptor.scriptSetup.content + descriptor.styles[0].content, /#9270b5/);
 });
 
+function touchSelectionHarness() {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const script = descriptor.scriptSetup.content;
+  const source = script.slice(script.indexOf('const touchGuide = ref(false);'), script.indexOf('function point(event)'));
+  const timers = new Map(), moves = [], scrolls = [], captures = new Set();
+  const state = reactive({ selectedCell: { bar: 0 }, invalid: false, editorBlocked: false });
+  let now = 0, timerId = 0;
+  const target = {
+    setPointerCapture: id => captures.add(id),
+    hasPointerCapture: id => captures.has(id),
+    releasePointerCapture: id => captures.delete(id)
+  };
+  const handlers = runInNewContext(`${source}; ({ startTouchSelection, moveTouchSelection, finishTouchSelection, cancelTouchSelection, touchGuide })`, {
+    ref, watch, state, hover: ref(null),
+    studio: { moveCell: direction => moves.push(direction) },
+    viewport: ref({ scrollLeft: 100, scrollTo: options => scrolls.push(options.left) }),
+    setTimeout: (callback, delay) => { timers.set(++timerId, { callback, at: now + delay }); return timerId; },
+    clearTimeout: id => timers.delete(id)
+  });
+  const event = (x = 100, extra = {}) => ({ pointerType: 'touch', pointerId: 1, currentTarget: target, clientX: x, clientY: 100, preventDefault() {}, ...extra });
+  const advance = delay => {
+    now += delay;
+    for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
+  };
+  return { ...handlers, event, advance, moves, scrolls, captures, state };
+}
+
+test('touch long press guides selection and converts horizontal distance to reversible A/D steps', () => {
+  const touch = touchSelectionHarness();
+  touch.startTouchSelection(touch.event(), true);
+  touch.advance(449); assert.equal(touch.touchGuide.value, false);
+  touch.advance(1); assert.equal(touch.touchGuide.value, true);
+  touch.moveTouchSelection(touch.event(123)); assert.deepEqual(touch.moves, []);
+  touch.moveTouchSelection(touch.event(124)); assert.deepEqual(touch.moves, [1]);
+  touch.moveTouchSelection(touch.event(172)); assert.deepEqual(touch.moves, [1, 1, 1]);
+  touch.moveTouchSelection(touch.event(124)); assert.deepEqual(touch.moves, [1, 1, 1, -1, -1]);
+  assert.deepEqual(touch.scrolls, []);
+  touch.finishTouchSelection(touch.event(124, { pointerId: 2 }));
+  assert.equal(touch.touchGuide.value, true);
+  touch.finishTouchSelection(touch.event(124));
+  assert.equal(touch.touchGuide.value, false); assert.equal(touch.captures.size, 0);
+  touch.moveTouchSelection(touch.event(196)); assert.equal(touch.moves.length, 5);
+});
+
+test('ordinary touch swipes browse without activating selection adjustment and canceled holds stay inactive', () => {
+  const touch = touchSelectionHarness();
+  touch.startTouchSelection(touch.event(), true);
+  touch.moveTouchSelection(touch.event(80)); touch.advance(500);
+  assert.equal(touch.touchGuide.value, false); assert.deepEqual(touch.moves, []);
+  assert.deepEqual(touch.scrolls, [120]);
+  touch.cancelTouchSelection();
+  touch.startTouchSelection(touch.event(), false); touch.advance(500);
+  assert.equal(touch.touchGuide.value, false);
+  touch.cancelTouchSelection();
+  touch.startTouchSelection(touch.event(), true); touch.cancelTouchSelection(); touch.advance(500);
+  assert.equal(touch.touchGuide.value, false); assert.equal(touch.captures.size, 0);
+  touch.startTouchSelection(touch.event(100, { pointerType: 'mouse' }), true); touch.advance(500);
+  assert.equal(touch.touchGuide.value, false); assert.equal(touch.captures.size, 0);
+});
+
+test('touch adjustment releases capture when editing is blocked, source becomes invalid or the document changes', () => {
+  const touch = touchSelectionHarness();
+  for (const [field, value] of [['editorBlocked', true], ['invalid', true], ['activeId', 'another-chart']]) {
+    touch.startTouchSelection(touch.event(), true); touch.advance(450);
+    assert.equal(touch.touchGuide.value, true);
+    touch.state[field] = value;
+    assert.equal(touch.touchGuide.value, false); assert.equal(touch.captures.size, 0);
+    touch.moveTouchSelection(touch.event(172)); assert.deepEqual(touch.moves, []);
+    touch.state[field] = undefined;
+  }
+});
+
 test('overview centers a location icon on the exact selected time, including both waveform edges', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   const source = descriptor.scriptSetup.content.match(/const overviewSelection = computed\(\(\) => \{[\s\S]*?\n\}\);/)[0];
@@ -288,7 +360,8 @@ test('overview dragging pans continuously without seeking or changing selections
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'overview-drag' });
   const script = descriptor.scriptSetup.content;
-  const source = script.slice(script.indexOf('let overviewDrag ='), script.indexOf('\nwatch(() => [state.activeId'));
+  const start = script.indexOf('let overviewDrag =');
+  const source = script.slice(start, script.indexOf('\nwatch(() => [state.activeId', start));
   const calls = [], captured = new Set();
   const state = { chart: { bars: [{ start: 0, end: 50 }, { start: 50, end: 100 }] }, invalid: false };
   const overview = { value: {
@@ -348,7 +421,7 @@ test('overview dragging pans continuously without seeking or changing selections
   ]) assert.ok(canvas.includes(`@${eventName}="${handler}"`));
   assert.doesNotMatch(canvas, /@click=/);
   assert.match(descriptor.template.content, /^\s*<div class="workspace">\s*<section class="editor">/);
-  assert.match(descriptor.template.content, /<\/canvas><\/div><\/div><\/div>\s*<section class="overview">[\s\S]*?<\/section>\s*<div class="editor-information">\s*<Teleport[^>]*>\s*<section class="cell-inspector"/);
+  assert.match(descriptor.template.content, /<\/canvas><\/div><\/div><div v-if="touchGuide" class="touch-selection-guide"[^>]*><ChevronsLeft[^>]*\/><ChevronsRight[^>]*\/><\/div><\/div>\s*<section class="overview">[\s\S]*?<\/section>\s*<div class="editor-information">\s*<Teleport[^>]*>\s*<section class="cell-inspector"/);
   const styles = readFileSync(new URL('sound.css', import.meta.url), 'utf8');
   assert.match(styles, /\.timeline-wrap\{[^}]*overflow-x:auto;[^}]*scrollbar-width:none/);
   assert.match(styles, /\.timeline-wrap::-webkit-scrollbar\{display:none\}/);

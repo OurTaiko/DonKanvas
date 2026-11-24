@@ -1,7 +1,7 @@
 <script setup>
 import { t } from './i18n.js';
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
-import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map, TriangleAlert, Ellipsis, Check, ChevronRight, ZoomIn, Crosshair, Maximize2, Ruler } from '@lucide/vue';
+import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map, TriangleAlert, Ellipsis, Check, ChevronRight, ZoomIn, Crosshair, Maximize2, Ruler, ChevronsLeft, ChevronsRight } from '@lucide/vue';
 import SectionHeading from './SectionHeading.vue';
 import BranchControls from './BranchControls.vue';
 import MeasureGrid from './MeasureGrid.vue';
@@ -309,12 +309,54 @@ function timelineCell(item, time, x) {
   }
   return selected;
 }
+const touchGuide = ref(false);
+let touchGesture = null;
+function cancelTouchSelection() {
+  const gesture = touchGesture;
+  touchGesture = null; touchGuide.value = false;
+  if (!gesture) return;
+  clearTimeout(gesture.timer);
+  if (gesture.target.hasPointerCapture(gesture.pointerId)) gesture.target.releasePointerCapture(gesture.pointerId);
+}
+function startTouchSelection(event, allowHold) {
+  if (event.pointerType !== 'touch') return;
+  const gesture = { pointerId: event.pointerId, target: event.currentTarget, startX: event.clientX, startY: event.clientY, lastX: event.clientX, scrollLeft: viewport.value.scrollLeft, active: false, timer: null };
+  touchGesture = gesture;
+  gesture.target.setPointerCapture(gesture.pointerId);
+  if (allowHold) gesture.timer = setTimeout(() => {
+    if (touchGesture !== gesture || state.invalid || state.editorBlocked || !state.selectedCell) return;
+    gesture.active = true; touchGuide.value = true; hover.value = null;
+  }, 450);
+}
+function moveTouchSelection(event) {
+  const gesture = touchGesture;
+  if (!gesture || event.pointerId !== gesture.pointerId) return false;
+  if (!gesture.active) {
+    gesture.lastX = event.clientX;
+    const dx = event.clientX - gesture.startX, dy = event.clientY - gesture.startY;
+    if (Math.hypot(dx, dy) > 8) {
+      clearTimeout(gesture.timer);
+      if (Math.abs(dx) > Math.abs(dy)) viewport.value.scrollTo({ left: gesture.scrollLeft - dx, behavior: 'instant' });
+    }
+    return true;
+  }
+  event.preventDefault();
+  const steps = Math.trunc((event.clientX - gesture.lastX) / 24);
+  gesture.lastX += steps * 24;
+  for (let step = 0; step < Math.abs(steps); step++) studio.moveCell(Math.sign(steps));
+  return true;
+}
+function finishTouchSelection(event) {
+  if (event.pointerId === touchGesture?.pointerId) cancelTouchSelection();
+}
+watch(() => [state.activeId, state.chart, state.invalid, state.editorBlocked], cancelTouchSelection, { flush: 'sync' });
 function point(event) {
   const rect = timeline.value.getBoundingClientRect();
   const projection = createTimelineViewport(timelineScale.value, visible.value, viewBeats.value, viewportWidth.value);
   return { rect, ...projection.hitTest(event.clientX - rect.left) };
 }
 function pointerMove(event) {
+  if (moveTouchSelection(event) || event.pointerType === 'touch') return;
   if (!state.chart || state.invalid) return;
   const { rect, time, item, x } = point(event);
   if (event.clientY - rect.top < rect.height * (1 - 100 / Math.max(150, rect.height)) || !item) { hover.value = null; return; }
@@ -322,14 +364,16 @@ function pointerMove(event) {
   hover.value = { bar: item.index, fraction: selected.numerator / selected.denominator };
 }
 function pointerDown(event) {
-  if (!state.chart || state.invalid) return;
+  if (!state.chart || state.invalid || state.editorBlocked) return;
+  if (event.pointerType === 'touch' && (event.isPrimary === false || touchGesture)) { cancelTouchSelection(); return; }
   const { rect, time, item, x } = point(event);
-  if (event.clientY - rect.top < rect.height * (1 - 100 / Math.max(150, rect.height))) { studio.seek(Math.max(timelineBounds.value.start, Math.min(timelineBounds.value.end, time))); return; }
+  if (event.clientY - rect.top < rect.height * (1 - 100 / Math.max(150, rect.height))) { studio.seek(Math.max(timelineBounds.value.start, Math.min(timelineBounds.value.end, time))); startTouchSelection(event, false); return; }
   if (item) {
     event.preventDefault(); viewport.value.focus({ preventScroll: true });
     const pixel = event.clientX - rect.left;
     studio.selectCell({ bar: item.index, divisions: controls.snap, ...timelineCell(item, time, x) }, pixel < TIMELINE_GUTTER || pixel >= TIMELINE_GUTTER + viewportWidth.value);
   }
+  startTouchSelection(event, Boolean(item));
 }
 let overviewDrag = null;
 function overviewTime(event) {
@@ -407,7 +451,7 @@ onMounted(() => {
   document.addEventListener('focusin', dismissTools);
 });
 onUnmounted(() => {
-  cancelOverviewDrag(); observer?.disconnect();
+  cancelTouchSelection(); cancelOverviewDrag(); observer?.disconnect();
   document.removeEventListener('pointerdown', dismissTools);
   document.removeEventListener('focusin', dismissTools);
 });
@@ -444,7 +488,7 @@ onUnmounted(() => {
         <label v-else class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span>{{ t('跟随播放') }}</label>
         </div></details>
       </div>
-      <div class="timeline-frame"><div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @contextmenu.prevent></canvas></div></div></div>
+      <div class="timeline-frame"><div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @pointerup="finishTouchSelection" @pointercancel="finishTouchSelection" @lostpointercapture="finishTouchSelection" @contextmenu.prevent></canvas></div></div><div v-if="touchGuide" class="touch-selection-guide" role="status" :aria-label="t('左右滑动微调选择')"><ChevronsLeft aria-hidden="true" /><ChevronsRight aria-hidden="true" /></div></div>
       <section class="overview">
         <div class="overview-caption"><span class="overview-legend"><i class="gogo"></i>GOGOTIME <span v-for="route in BRANCH_ROUTES" :key="route" class="overview-route"><i :style="{ background: branchColor(route) }"></i>{{ t(BRANCH_ROUTE_NAMES[route]) }}</span></span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div>
         <div class="overview-wave">
@@ -522,7 +566,11 @@ onUnmounted(() => {
 .chart-statistics{display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;min-width:0;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.chart-statistics>span{white-space:nowrap}.chart-statistics b{font-weight:500;color:var(--ink)}
 .measure-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.measure-actions{display:inline-flex;max-width:100%;margin-right:6px;border:0;border-radius:5px;background:transparent}.measure-actions button{min-width:0;padding:4px 8px;gap:4px;border:0;border-radius:4px;font-size:11px}.measure-actions button svg{width:14px;height:14px}
 .timeline-content{min-width:100%}
-.timeline-frame #timeline{height:250px;position:sticky;left:0}
+.timeline-frame #timeline{height:250px;position:sticky;left:0;touch-action:pan-y pinch-zoom}
+.touch-selection-guide{position:absolute;z-index:2;left:0;right:0;bottom:min(25px,16.666667%);height:min(66px,44%);display:flex;align-items:center;justify-content:space-between;padding:0 36px;background:#16745b18;color:var(--green);pointer-events:none}.touch-selection-guide>svg{width:40px;height:40px;max-height:100%;animation:touch-selection-left .7s ease-in-out infinite alternate}.touch-selection-guide>svg:last-child{animation-name:touch-selection-right}
+@keyframes touch-selection-left{to{transform:translateX(-4px)}}
+@keyframes touch-selection-right{to{transform:translateX(4px)}}
+@media(prefers-reduced-motion:reduce){.touch-selection-guide>svg{animation:none}}
 @media(max-width:900px){.workspace>.editor{display:flex;flex-direction:column;min-height:0}.editor>.editor-bar,.editor>.overview{flex-shrink:0}.editor>.overview{padding:0}.editor>.timeline-frame{flex:0 1 186px;height:186px;min-height:0}.timeline-frame>.timeline-wrap,.timeline-frame .timeline-content,.timeline-frame #timeline{height:100%}}
 .editor-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .editor-history{display:flex;align-items:center;gap:4px}.editor-history>.icon{width:28px;min-width:28px;padding:4px}.editor-history svg{width:14px;height:14px}

@@ -1,5 +1,6 @@
 // Translation order: English, Japanese, Traditional Chinese, Korean.
 export const translations = {
+  '左右滑动微调选择': ['Slide left or right to adjust selection', '左右にスライドして選択位置を微調整', '左右滑動微調選取', '좌우로 밀어 선택 위치 미세 조정'],
   '更多工具': ['More tools', 'その他のツール', '更多工具', '추가 도구'],
   '播放菜单': ['Playback menu', '再生メニュー', '播放選單', '재생 메뉴'],
   '落点信息': ['Position information', '配置位置の情報', '落點資訊', '배치 위치 정보'],
