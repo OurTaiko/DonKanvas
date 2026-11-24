@@ -1,5 +1,7 @@
 // Translation order: English, Japanese, Traditional Chinese, Korean.
 export const translations = {
+  '尚未载入音频': ['No audio loaded', '音声が読み込まれていません', '尚未載入音訊', '오디오가 로드되지 않았습니다'],
+  '关闭提示': ['Dismiss message', 'メッセージを閉じる', '關閉提示', '메시지 닫기'],
   '左右滑动微调选择': ['Slide left or right to adjust selection', '左右にスライドして選択位置を微調整', '左右滑動微調選取', '좌우로 밀어 선택 위치 미세 조정'],
   '更多工具': ['More tools', 'その他のツール', '更多工具', '추가 도구'],
   '播放菜单': ['Playback menu', '再生メニュー', '播放選單', '재생 메뉴'],

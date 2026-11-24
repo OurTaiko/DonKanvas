@@ -454,7 +454,7 @@ test('the new-document tab follows the last file inside the left-aligned scrolli
   assert.match(descriptor.styles[0].content, /\.chart-tabs \.new-chart-tab\{[^}]*flex-shrink:0/);
   assert.match(descriptor.styles[0].content, /\.chart-tabs-content\{[^}]*min-height:43px/);
   assert.match(descriptor.template.content, /<section v-if="studio.bar.value" class="document-toolbar">/);
-  assert.match(descriptor.template.content, /<div v-if="state.notice && \(studio.bar.value \|\| state.error\)" id="notice"/);
+  assert.doesNotMatch(descriptor.template.content, /id="notice"/);
 });
 
 test('the header file menu groups file actions and shortcuts without occupying the tab row', () => {
@@ -748,6 +748,31 @@ test('audio loading is the rightmost control in the active chart transport', () 
   assert.equal([...template.matchAll(/id="open-audio"/g)].length, 1);
   assert.match(transport, /<\/details>\s*<button id="open-audio"[\s\S]*?<\/button>\s*<\/div><\/details><\/section>/);
   assert.match(descriptor.styles[0].content, /\.compact-playback \.transport-right\{[^}]*position:absolute;[^}]*overflow:auto/);
+});
+
+test('audio messages dismiss per document and hide after loading while new errors remain visible', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  const script = descriptor.scriptSetup.content;
+  const source = script.slice(script.indexOf('const dismissedAudioMessages ='), script.indexOf('let desktopWorkspaceOpen'));
+  const state = reactive({ activeId: null, chart: null, buffer: null, error: false, noticeMessage: 'ready' });
+  const result = runInNewContext(`${source}; ({ showAudioMessage, messageBarError, dismissMessageBar })`, {
+    ref, computed, watch, state
+  });
+  assert.equal(result.showAudioMessage.value, false);
+  state.activeId = 'first'; state.chart = {};
+  assert.equal(result.showAudioMessage.value, true);
+  result.dismissMessageBar(); assert.equal(result.showAudioMessage.value, false);
+  state.noticeMessage = 'saved'; assert.equal(result.showAudioMessage.value, false);
+  state.activeId = 'second'; assert.equal(result.showAudioMessage.value, true);
+  state.buffer = {}; assert.equal(result.showAudioMessage.value, false);
+  state.buffer = null; assert.equal(result.showAudioMessage.value, true);
+  state.activeId = 'first'; assert.equal(result.showAudioMessage.value, false);
+  state.error = true; state.noticeMessage = 'failed';
+  assert.equal(result.messageBarError.value, true);
+  result.dismissMessageBar();
+  assert.equal(result.messageBarError.value, false); assert.equal(state.error, true);
+  state.noticeMessage = 'another failure'; assert.equal(result.messageBarError.value, true);
+  state.error = false; assert.equal(result.messageBarError.value, false);
 });
 
 test('dropping TJA files anywhere opens them sequentially, preserves native text drags and reports unsupported files or modal guards', async () => {
@@ -1194,9 +1219,10 @@ test('toolbar commands use scoped transparent surfaces with hover, pressed, focu
   compileScript(descriptor, { id: 'compact-toolbar-commands' });
   const styles = descriptor.styles[0].content;
   const rules = styles.slice(styles.indexOf(':is(.studio-panel,.transport-host) :is(.document-toolbar'));
-  for (const surface of ['document-toolbar', 'editor-bar', 'transport', 'inspector-heading', 'aside-actions']) {
+  for (const surface of ['document-toolbar', 'editor-bar', 'transport', 'inspector-heading']) {
     assert.ok(rules.includes(`.${surface}`));
   }
+  assert.doesNotMatch(rules, /:is\([^)]*\.aside-actions/);
   assert.match(rules, /border-color:transparent;background:transparent;color:var\(--ink\);box-shadow:none;border-radius:4px/);
   assert.match(rules, /button:not\(\.primary\),/);
   assert.match(rules, /button:not\(\.primary\):not\(:disabled\):hover/);
@@ -1679,8 +1705,8 @@ test('editor columns are siblings and mobile transport can leave the scrolling c
   const template = descriptor.template.content;
   assert.match(template, /<div class="editor-core" :inert="state.editorBlocked">\s*<section v-if="studio.bar.value" class="document-toolbar">[\s\S]*?<\/section>\s*<div class="editor-scroll">/);
   assert.match(template, /<TimelineEditor v-if="studio.bar.value" :mobile="mobileWorkspace" \/>/);
-  assert.match(template, /<\/div>\s*<Teleport to="body" :disabled="!mobileWorkspace"><div ref="transportHost" class="transport-host">\s*<section v-if="studio.bar.value" class="transport">/);
-  assert.match(template, /<\/div><\/details><\/section>\s*<div v-if="state.notice && \(studio.bar.value \|\| state.error\)" id="notice"[^>]*>{{ state.notice }}<\/div>\s*<\/div><\/Teleport>/);
+  assert.match(template, /<\/div>\s*<Teleport to="body" :disabled="!mobileWorkspace"><div ref="transportHost" class="transport-host">\s*<div v-if="messageBarError \|\| showAudioMessage"/);
+  assert.match(template, /<\/div><\/details><\/section>\s*<\/div><\/Teleport>/);
   assert.match(template, /<Teleport v-if="studio.bar.value" to="#mobile-edit-panel" :disabled="!mobileWorkspace" defer><MeasureEditor :inert="state.editorBlocked" \/><\/Teleport>/);
   assert.doesNotMatch(template, /id="preview-range"|id="loop-summary"|id="apply-loop"|id="loop-current"/);
   assert.match(template, /ref="selectionDialog"[\s\S]*@submit.prevent="applySelection"/);
@@ -1771,21 +1797,24 @@ test('compact playback menu closes on Escape and returns focus without changing 
   assert.match(descriptor.styles[0].content, /\.compact-playback:not\(\[open\]\)>\.transport-right\{display:none\}/);
 });
 
-test('status messages sit below playback outside scrolling content and share mobile height tracking and safe-area space', () => {
+test('dismissible audio and error messages sit above playback with no legacy status bar or audio attention animation', () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'bottom-status' });
   const template = descriptor.template.content;
-  assert.equal(template.split('id="notice"').length - 1, 1);
+  assert.doesNotMatch(template, /id="notice"|mobile-open-audio/);
   const scrolling = template.slice(template.indexOf('<div class="editor-scroll">'), template.indexOf('<Teleport to="body"'));
-  assert.doesNotMatch(scrolling, /id="notice"/);
+  assert.doesNotMatch(scrolling, /id="playback-message-bar"/);
   const host = template.match(/<div ref="transportHost" class="transport-host">[\s\S]*?<\/Teleport>/)[0];
-  assert.match(host, /<\/section>\s*<div v-if="state.notice && \(studio.bar.value \|\| state.error\)" id="notice" role="status" aria-live="polite" :class="\{ error: state.error \}"/);
+  assert.match(host, /id="playback-message-bar"[\s\S]*:role="messageBarError \? 'alert' : 'status'"/);
+  assert.match(host, /id="message-load-audio"[^>]*@click="audioFile.click\(\)"/);
+  assert.match(host, /:aria-label="t\('关闭提示'\)" @click="dismissMessageBar"/);
+  assert.ok(host.indexOf('id="playback-message-bar"') < host.indexOf('class="transport"'));
   assert.match(descriptor.scriptSetup.content, /transportObserver.observe\(transportHost.value\)/);
   const styles = descriptor.styles[0].content;
-  assert.match(styles, /#notice\{[^}]*min-height:0;max-height:20dvh;overflow:auto;/);
-  assert.match(styles, /#notice.error\{color:#bd352b\}/);
-  assert.match(styles, /\.transport:has\(\+#notice\)\{padding-bottom:7px\}/);
-  assert.match(styles, /\.transport-host>#notice\{padding-bottom:calc\(4px \+ env\(safe-area-inset-bottom,0px\)\)\}/);
+  assert.doesNotMatch(styles + descriptor.scriptSetup.content, /#notice|audioAttention|audio-entry-attention/);
+  assert.match(styles, /\.playback-message-bar\{[^}]*height:36px;max-height:36px;overflow:hidden;/);
+  assert.match(styles, /\.playback-message-bar.error\{[^}]*color:#bd352b/);
+  assert.match(styles, /\.transport\{padding-bottom:calc\(7px \+ env\(safe-area-inset-bottom,0px\)\)\}/);
 });
 
 test('branch filtering and structural management have separate dialogs and actions without search inputs', () => {

@@ -35,6 +35,14 @@ function playbackKeydown(event) {
 }
 const fileMenu = ref(null), editMenu = ref(null), selectionMenu = ref(null), settingsMenu = ref(null), languageMenu = ref(null), shortcutMenu = ref(null), projectMenu = ref(null);
 const mobileWorkspace = ref(matchMedia('(max-width:900px)').matches), workspaceOpen = ref(!mobileWorkspace.value), workspaceSidebar = ref(null), workspaceTop = ref(0);
+const dismissedAudioMessages = ref(new Set()), errorMessageDismissed = ref(false);
+const showAudioMessage = computed(() => Boolean(state.chart && !state.buffer && !dismissedAudioMessages.value.has(state.activeId)));
+const messageBarError = computed(() => state.error && !errorMessageDismissed.value);
+watch(() => [state.noticeMessage, state.error], () => { errorMessageDismissed.value = false; }, { flush: 'sync' });
+function dismissMessageBar() {
+  if (messageBarError.value) errorMessageDismissed.value = true;
+  else dismissedAudioMessages.value.add(state.activeId);
+}
 let desktopWorkspaceOpen = true;
 function toggleWorkspace() {
   workspaceOpen.value = !workspaceOpen.value;
@@ -534,6 +542,11 @@ async function dropFiles(event) {
     </section>
     </div>
     <Teleport to="body" :disabled="!mobileWorkspace"><div ref="transportHost" class="transport-host">
+    <div v-if="messageBarError || showAudioMessage" id="playback-message-bar" class="playback-message-bar" :class="{ error: messageBarError }" :role="messageBarError ? 'alert' : 'status'">
+      <Info aria-hidden="true" /><p>{{ messageBarError ? state.notice : t('尚未载入音频') }}</p>
+      <button v-if="!messageBarError && showAudioMessage" id="message-load-audio" type="button" class="message-action" @click="audioFile.click()"><AudioLines aria-hidden="true" />{{ t('载入音频') }}</button>
+      <button type="button" class="icon message-dismiss" :title="t('关闭提示')" :aria-label="t('关闭提示')" @click="dismissMessageBar"><X aria-hidden="true" /></button>
+    </div>
     <section v-if="studio.bar.value" class="transport"><div class="transport-left">
       <button id="previous" class="icon" :title="t('播放位置后退 / 前进一小节')" :aria-label="t('上一小节')" :disabled="!state.chart || state.invalid" @click="studio.seekMeasure(-1)"><SkipBack /></button>
       <button id="play" class="play icon primary" :class="{ playing: state.playing }" :title="t('播放 / 暂停（空格）')" aria-keyshortcuts="Space" :aria-label="state.playing ? t('暂停') : t('播放')" :disabled="!state.chart" @click="state.playing ? studio.pause() : studio.play()"><Pause v-if="state.playing" /><Play v-else /></button>
@@ -555,7 +568,6 @@ async function dropFiles(event) {
       </details>
       <button id="open-audio" class="primary" :title="t('载入音频')" :aria-label="t('载入音频')" :disabled="!state.chart" @click="audioFile.click()"><AudioLines /><span>{{ t('载入音频') }}</span></button>
     </div></details></section>
-    <div v-if="state.notice && (studio.bar.value || state.error)" id="notice" role="status" aria-live="polite" :class="{ error: state.error }">{{ state.notice }}</div>
     </div></Teleport>
     </div>
     <section v-show="studio.bar.value && mobileWorkspace" class="mobile-inspector" :inert="state.editorBlocked">
@@ -606,12 +618,10 @@ main{display:flex;flex:1;min-height:0;max-width:none;margin:0;padding:0}
 .workspace-document-title{flex:1;min-width:0;padding:8px 12px 8px 0;pointer-events:none}.workspace-document-title.expanded{padding-right:36px}.workspace-document-title h1{min-width:0;margin:0;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.workspace-document-title #encoding{font-size:10px;white-space:nowrap;flex-shrink:0}
 @media(max-width:900px){.editor-core>.document-toolbar{display:none}}
 .document-toolbar #encoding{margin-left:0;font-size:10px;white-space:nowrap;flex-shrink:0}
-#notice{min-height:0;max-height:20dvh;overflow:auto;padding:4px 12px;border-top:1px solid var(--line);background:var(--paper);color:var(--muted);font-size:11px;line-height:16px;overflow-wrap:anywhere}
-#notice.error{color:#bd352b}
-.transport-host:has(>#notice) .transport{box-shadow:none}
-@media(max-width:900px){.transport:has(+#notice){padding-bottom:7px}.transport-host>#notice{padding-bottom:calc(4px + env(safe-area-inset-bottom,0px))}}
 .transport{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;z-index:5;flex-shrink:0;padding:7px 12px;gap:6px 12px;background:#fff;border-bottom:0;box-shadow:0 -4px 12px #202a2808}.transport-left{min-width:0;gap:4px;flex-wrap:nowrap}.transport-right{width:auto;margin-left:0;gap:8px;flex-wrap:nowrap;justify-content:flex-end}.transport button{min-height:30px;padding:4px 8px}.transport-left>.icon{width:30px;min-width:30px}.transport .play{width:36px;height:34px}.time{margin-left:4px;gap:4px;white-space:nowrap}.time b{font-size:16px}
 .transport-host{flex-shrink:0;min-width:0;container-type:inline-size}
+.playback-message-bar{display:flex;align-items:center;gap:8px;height:36px;max-height:36px;overflow:hidden;padding:4px 8px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:#edf5ef;color:var(--ink);font-size:12px}.playback-message-bar>p{flex:1;min-width:0;max-height:24px;overflow:auto;margin:0;color:inherit;font:inherit;line-height:1.5;overflow-wrap:anywhere}.playback-message-bar>button{flex-shrink:0;min-height:24px;padding:2px 6px;font:inherit}.playback-message-bar>.message-dismiss{width:24px;min-width:24px;padding:3px;border:0;background:transparent}.playback-message-bar.error{background:#fff0ed;color:#bd352b}
+.playback-message-bar>.message-action{min-height:24px;padding:2px 6px;border:1px solid #95b9a9;border-radius:3px;background:transparent;color:var(--green);font-size:11px;gap:4px;white-space:nowrap}.playback-message-bar>.message-action:hover{background:#16745b14}.playback-message-bar>.message-action>svg{width:14px;height:14px}
 .volume-popover{position:relative;font-size:12px}.volume-popover summary{display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--line);border-radius:4px;cursor:pointer;list-style:none;background:#fff}.volume-popover summary::-webkit-details-marker{display:none}.volume-popover summary:focus-visible{outline:2px solid var(--green);outline-offset:3px}
 .volume-panel{position:absolute;right:0;bottom:calc(100% + 6px);z-index:20;width:310px;max-width:85vw;padding:15px;border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 6px 24px #202a2820;display:grid;gap:14px}.volume-panel>label:not(.check){display:grid;grid-template-columns:minmax(58px,max-content) minmax(0,1fr) 36px;gap:8px}.volume-panel input[type=range]{width:100%;margin:0}.volume-panel output{text-align:right;font-size:11px;color:var(--muted)}.volume-panel p{overflow-wrap:anywhere;line-height:1.5}
 .overview{position:relative;padding:0;border-top:1px solid var(--line)}.overview-wave>#overview-hover{position:absolute;z-index:2;pointer-events:none;max-width:100%;padding:6px 9px;border:1px solid var(--line);border-radius:5px;background:#fff;font-size:11px;font-variant-numeric:tabular-nums;color:var(--ink);box-shadow:0 3px 12px #202a2826;overflow-wrap:anywhere}.overview canvas{height:40px;margin-top:0;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(10% - 1px),#c5d3c9 10%) #e5ece7;border-radius:0;touch-action:none;cursor:grab}.overview canvas:active{cursor:grabbing}.measure-section{padding-inline:12px}
@@ -656,18 +666,18 @@ main{display:flex;flex:1;min-height:0;max-width:none;margin:0;padding:0}
 @container(max-width:400px){.document-toolbar #encoding{display:none}.document-title{gap:6px}.transport .time b{font-size:14px}.transport .time span{font-size:10px}}
 @media(max-width:720px){header{padding:3px 8px;gap:6px}.document-toolbar{gap:7px}.document-toolbar h1{max-width:180px}.filename-control{margin-left:0}.filename-control input{width:150px}}
 
-:is(.studio-panel,.transport-host) :is(.document-toolbar,.editor-bar,.transport,.inspector-heading,.aside-actions) button:not(.primary),
+:is(.studio-panel,.transport-host) :is(.document-toolbar,.editor-bar,.transport,.inspector-heading) button:not(.primary),
 .studio-panel .branch-context>.manage-branches,
 :is(.file-actions>.file-popover,.settings-popover,.volume-popover)>summary{
   border-color:transparent;background:transparent;color:var(--ink);box-shadow:none;border-radius:4px;
 }
-:is(.studio-panel,.transport-host) :is(.document-toolbar,.editor-bar,.transport,.inspector-heading,.aside-actions) button:not(.primary):not(:disabled):hover,
+:is(.studio-panel,.transport-host) :is(.document-toolbar,.editor-bar,.transport,.inspector-heading) button:not(.primary):not(:disabled):hover,
 .studio-panel .branch-context>.manage-branches:not(:disabled):hover,
 :is(.file-actions>.file-popover,.settings-popover,.volume-popover)>summary:hover{background:#202a280d}
-:is(.studio-panel,.transport-host) :is(.document-toolbar,.editor-bar,.transport,.inspector-heading,.aside-actions) button:not(.primary):not(:disabled):active,
+:is(.studio-panel,.transport-host) :is(.document-toolbar,.editor-bar,.transport,.inspector-heading) button:not(.primary):not(:disabled):active,
 .studio-panel .branch-context>.manage-branches:not(:disabled):active,
 :is(.file-actions>.file-popover,.settings-popover,.volume-popover)>summary:active{background:#202a281a}
-:is(.studio-panel,.transport-host) :is(.document-toolbar,.editor-bar,.transport,.inspector-heading,.aside-actions) button:not(.primary):focus-visible,
+:is(.studio-panel,.transport-host) :is(.document-toolbar,.editor-bar,.transport,.inspector-heading) button:not(.primary):focus-visible,
 .studio-panel .branch-context>.manage-branches:focus-visible,
 :is(.file-actions>.file-popover,.settings-popover,.volume-popover)>summary:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
 :is(.studio-panel,.transport-host) .transport .play{width:30px;height:30px}
