@@ -117,8 +117,8 @@ function keydown(event) {
 <template>
   <section class="branch-context" :aria-label="t('分歧路线')" @keydown.space.stop @keydown.left.stop @keydown.right.stop>
     <SectionHeading class="branch-caption" :icon="GitBranch" :title="t('谱面分歧')">
-      <span class="branch-count">{{ branches.length }}</span><span v-if="!uniform" class="mixed-route">{{ t('自定义路线') }}</span>
-      <template #description><p class="branch-current">{{ current ? `${branchLabel(current)} · ${current.route ? t(names[current.route]) : '—'} · ${conditionLabel(current)}` : t('当前位于共用段') }}</p></template>
+      <span class="branch-count">{{ branches.length }}</span>
+      <template #description><p class="branch-current"><template v-if="current"><span v-if="current.route" class="branch-route-tag" :data-route="current.route">{{ t(names[current.route]) }}</span> {{ branchLabel(current) }} · {{ conditionLabel(current) }}</template><template v-else>{{ t('当前位于共用段') }}</template></p></template>
     </SectionHeading>
     <div class="branch-actions">
       <button id="branch-filter" type="button" class="manage-branches" :disabled="state.invalid || !branches.length" @click="openFilter"><ListFilter aria-hidden="true" />{{ t('路线筛选') }}</button>
@@ -215,9 +215,10 @@ function keydown(event) {
 .branch-condition-fields select{max-width:none}
 .inline-condition{border:0;padding:0;margin:0;min-width:0}.inline-condition label{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:12px}.inline-condition input,.inline-condition select{box-sizing:border-box;width:100%;min-width:0;height:34px}
 .branch-route-cards{border-top:1px solid var(--line);padding-top:12px}
-.branch-route-card[data-route=N]{--route-color:#50565d;--route-missing-border:#9aa0a6;--route-hover-background:#f1f2f3}
-.branch-route-card[data-route=E]{--route-color:#245c91;--route-missing-border:#81a6cd;--route-hover-background:#eaf3fc}
-.branch-route-card[data-route=M]{--route-color:#983968;--route-missing-border:#cb87aa;--route-hover-background:#fbeaf4}
+.branch-route-tag[data-route=N],.branch-route-card[data-route=N]{--route-color:#50565d;--route-missing-border:#9aa0a6;--route-hover-background:#f1f2f3}
+.branch-route-tag[data-route=E],.branch-route-card[data-route=E]{--route-color:#245c91;--route-missing-border:#81a6cd;--route-hover-background:#eaf3fc}
+.branch-route-tag[data-route=M],.branch-route-card[data-route=M]{--route-color:#983968;--route-missing-border:#cb87aa;--route-hover-background:#fbeaf4}
+.branch-route-tag{display:inline-block;padding:0 5px;border-radius:4px;color:var(--route-color);background:var(--route-hover-background);font-weight:600}
 .branch-route-card[data-route=N]:not(.missing){background:#f1f2f3;border-color:#a3a8ae;color:var(--route-color)}
 .branch-route-card[data-route=E]:not(.missing){background:#eaf3fc;border-color:#96b9df;color:var(--route-color)}
 .branch-route-card[data-route=M]:not(.missing){background:#fbeaf4;border-color:#d99abd;color:var(--route-color)}

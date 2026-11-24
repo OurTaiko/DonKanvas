@@ -5,7 +5,7 @@ import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, 
 import SectionHeading from './SectionHeading.vue';
 import BranchControls from './BranchControls.vue';
 import MeasureGrid from './MeasureGrid.vue';
-import { barTimeAt, barFractionAt } from './chart.js';
+import { barTimeAt, barFractionAt, BRANCH_ROUTES, BRANCH_ROUTE_NAMES } from './chart.js';
 import { measureStart, measureEnd } from './loop.js';
 import { GRID_DIVISIONS, SNAP_DIVISIONS } from './grid.js';
 import { NOTE_TYPES, selectCell, cellValue } from './note-model.js';
@@ -130,12 +130,15 @@ function gogoIntervals(item) {
   }
   return intervals;
 }
+function branchColor(route) {
+  return { N: '#a3a8ae', E: '#459de0', M: '#e45b99' }[route];
+}
 function drawOverviewSections(brush, x, height) {
   for (const item of state.chart.bars) {
-    brush.fillStyle = '#d9a032';
+    brush.fillStyle = '#f46b32';
     for (const [start, end] of gogoIntervals(item)) brush.fillRect(x(start), 0, x(end) - x(start), 3);
     if (item.route) {
-      brush.fillStyle = '#9270b5';
+      brush.fillStyle = branchColor(item.route);
       brush.fillRect(x(measureStart(item)), height - 3, x(measureEnd(item)) - x(measureStart(item)), 3);
     }
   }
@@ -168,7 +171,7 @@ function draw() {
   brush.restore();
   const eventLabelEnds = [];
   for (const item of bars) {
-    brush.fillStyle = '#e5ac3220';
+    brush.fillStyle = '#f46b3220';
     for (const [start, end] of gogoIntervals(item)) brush.fillRect(x(start), noteY - 30, x(end) - x(start), noteLaneHeight);
     if (item.delay) {
       brush.fillStyle = '#d9a83b22'; brush.fillRect(x(measureStart(item)), 23, x(item.start) - x(measureStart(item)), height - 48);
@@ -369,7 +372,7 @@ onUnmounted(() => { cancelOverviewDrag(); observer?.disconnect(); });
       </div>
       <div class="timeline-frame"><div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @contextmenu.prevent></canvas></div></div></div>
       <section class="overview">
-        <div class="overview-caption"><span class="overview-legend"><i class="gogo"></i>GOGOTIME <i class="branch"></i>{{ t('分歧段') }}</span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div>
+        <div class="overview-caption"><span class="overview-legend"><i class="gogo"></i>GOGOTIME <span v-for="route in BRANCH_ROUTES" :key="route" class="overview-route"><i :style="{ background: branchColor(route) }"></i>{{ t(BRANCH_ROUTE_NAMES[route]) }}</span></span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div>
         <div class="overview-wave">
           <svg v-if="overviewSelection !== null" class="overview-selection" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" :style="{ left: `${overviewSelection}%` }"><circle cx="12" cy="12" r="7" /><path d="M12 2v20M2 12h20" /></svg>
           <span v-if="overviewHover" id="overview-hover" role="tooltip" :style="{ left: `${overviewHover.x}px`, top: `${overviewHover.y}px`, transform: `translate(${-overviewHover.fraction * 100}%, calc(-100% - 12px))` }">{{ formatTime(overviewHover.time) }} · {{ t('小节 {p0}', { p0: overviewHover.measure ?? '—' }) }}</span>
@@ -429,7 +432,7 @@ onUnmounted(() => { cancelOverviewDrag(); observer?.disconnect(); });
 .overview-wave{position:relative}
 .overview-selection{position:absolute;z-index:1;top:50%;width:24px;height:24px;transform:translate(-50%,-50%);color:#49638c;stroke-width:2;pointer-events:none}
 .overview-legend{display:flex;align-items:center;gap:4px;white-space:nowrap}
-.overview-legend i{width:10px;height:3px}.overview-legend .gogo{background:#d9a032}.overview-legend .branch{background:#9270b5;margin-left:4px}
+.overview-legend i{width:10px;height:3px}.overview-legend .gogo{background:#f46b32}.overview-route{display:inline-flex;align-items:center;gap:4px;margin-left:4px}
 .timeline-wrap{height:auto;padding:0;overscroll-behavior-x:contain}
 .timeline-frame{position:relative;isolation:isolate}
 .timeline-frame:focus-within::after{content:'';position:absolute;inset:0;z-index:1;border:2px solid var(--green);pointer-events:none}

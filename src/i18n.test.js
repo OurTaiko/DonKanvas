@@ -112,25 +112,33 @@ COURSE:Oni
 #DELAY .25
 #BPMCHANGE 120
 2000,
+#M
+#GOGOEND
+#DELAY .25
+3000,
 #BRANCHEND
 #GOGOEND
 1000,
 #END`;
-  for (const route of ['N', 'E']) {
+  for (const route of ['N', 'E', 'M']) {
     const state = { chart: parseChart(text, TJAParser, 0, [route]) }, rectangles = [];
     const before = JSON.stringify(state);
     const brush = { fillRect(x, y, width, height) { rectangles.push({ x, y, width, height, color: this.fillStyle }); } };
     const draw = runInNewContext(`${source}; drawOverviewSections`, { state, measureStart, measureEnd });
     draw(brush, time => (time + 1) * 10, 40);
-    const gogo = rectangles.filter(rect => rect.color === '#d9a032').map(({ x, y, width, height }) => [x, y, width, height]);
-    const branches = rectangles.filter(rect => rect.color === '#9270b5').map(({ x, y, width, height }) => [x, y, width, height]);
+    const gogo = rectangles.filter(rect => rect.color === '#f46b32').map(({ x, y, width, height }) => [x, y, width, height]);
+    const color = { N: '#a3a8ae', E: '#459de0', M: '#e45b99' }[route];
+    const branches = rectangles.filter(rect => rect.y === 37);
     assert.deepEqual(gogo, route === 'N' ? [[5, 0, 10, 3], [20, 0, 5, 3], [27.5, 0, 20, 3]] : [[5, 0, 10, 3], [20, 0, 5, 3]]);
-    assert.deepEqual(branches, [[25, 37, 22.5, 3]]);
+    assert.deepEqual(branches, [{ x: 25, y: 37, width: 22.5, height: 3, color }]);
     assert.equal(JSON.stringify(state), before);
     state.chart.bars = []; rectangles.length = 0;
     draw(brush, time => time, 40);
     assert.deepEqual(rectangles, []);
   }
+  assert.match(descriptor.template.content, /v-for="route in BRANCH_ROUTES"[^>]*class="overview-route"><i :style="\{ background: branchColor\(route\) \}"><\/i>\{\{ t\(BRANCH_ROUTE_NAMES\[route\]\) \}\}/);
+  assert.doesNotMatch(descriptor.template.content, /t\('分歧段'\)/);
+  assert.doesNotMatch(descriptor.scriptSetup.content + descriptor.styles[0].content, /#9270b5/);
 });
 
 test('overview centers a location icon on the exact selected time, including both waveform edges', () => {
@@ -176,8 +184,8 @@ test('overview measure ranges fill the full height behind the Go-Go and branch b
   ]);
   drawOverviewSections(brush, time => (time + 1) * 20, 40);
   assert.deepEqual(rectangles.slice(3), [
-    { x: 40, y: 0, width: 40, height: 3, color: '#d9a032' },
-    { x: 30, y: 37, width: 50, height: 3, color: '#9270b5' }
+    { x: 40, y: 0, width: 40, height: 3, color: '#f46b32' },
+    { x: 30, y: 37, width: 50, height: 3, color: '#a3a8ae' }
   ]);
   assert.match(script, /drawOverviewRange\(overviewContext\.brush, overviewX, overviewContext\.height\);\s*drawOverviewSections\(overviewContext\.brush, overviewX, overviewContext\.height\);/);
   rectangles.length = 0;
@@ -1412,8 +1420,43 @@ test('navigation, position information and branches share an icon heading with i
 test('branch information occupies the caption subtitle without instructional copy or a separate footer row', () => {
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'compact-branch-caption' });
-  assert.match(descriptor.template.content, /class="branch-current">\{\{ current \?/);
+  assert.match(descriptor.template.content, /class="branch-current"><template v-if="current">/);
   assert.doesNotMatch(descriptor.template.content, /统一切换全部分歧，或按需单独调整。|仅影响显示与试听，不修改谱面。|branch-context-foot/);
+});
+
+test('branch context tags only the viewed route and hides the tag in shared measures', () => {
+  const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'branch-context-route-color' });
+  const source = descriptor.scriptSetup.content.replace(/^import .*;\n/gm, '');
+  const bar = ref(null), state = reactive({ chart: { branches: [{ index: 0, route: 'N' }, { index: 1, route: 'M' }] } });
+  const { current } = runInNewContext(`${source}; ({ current })`, {
+    ref, reactive, computed, inject: () => ({ state, bar }), t
+  });
+  assert.match(descriptor.template.content, /class="branch-count">\{\{ branches.length \}\}<\/span>\s*<template #description>/);
+  assert.doesNotMatch(descriptor.template.content, /mixed-route|自定义路线/);
+  const description = descriptor.template.content.match(/<template #description>([\s\S]*?)<\/p><\/template>/)[1];
+  assert.match(description, /class="branch-current"><template v-if="current"><span v-if="current.route" class="branch-route-tag" :data-route="current.route">\{\{ t\(names\[current.route\]\) \}\}<\/span> \{\{ branchLabel\(current\) \}\}/);
+  const binding = descriptor.template.content.match(/class="branch-route-tag" :data-route="([^"]+)"/)[1];
+  const routeColor = () => current.value ? runInNewContext(binding, { current: current.value }) : undefined;
+  assert.equal(routeColor(), undefined);
+  bar.value = { branchIndex: 0 };
+  for (const route of ['N', 'E', 'M']) {
+    state.chart.branches[0].route = route;
+    assert.equal(routeColor(), route);
+  }
+  bar.value = { branchIndex: 1 };
+  assert.equal(routeColor(), 'M');
+  bar.value = { branchIndex: null };
+  assert.equal(routeColor(), undefined);
+  state.chart = null;
+  assert.equal(routeColor(), undefined);
+  const styles = descriptor.styles[0].content;
+  for (const route of ['N', 'E', 'M']) {
+    assert.ok(styles.includes(`.branch-route-tag[data-route=${route}],.branch-route-card[data-route=${route}]{--route-color:`));
+  }
+  assert.match(styles, /\.branch-route-tag\{[^}]*color:var\(--route-color\);background:var\(--route-hover-background\)/);
+  assert.doesNotMatch(descriptor.template.content, /<section class="branch-context"[^>]*:data-route/);
+  assert.doesNotMatch(styles, /\.branch-context\[data-route/);
 });
 
 test('one wrapping toolbar combines measure actions, snap, zoom and follow controls above the timeline', () => {
