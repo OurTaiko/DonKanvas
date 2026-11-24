@@ -174,7 +174,7 @@ test('overview centers a location icon on the exact selected time, including bot
   assert.equal(position.value, 50);
   cell.value = null;
   assert.equal(position.value, null);
-  assert.ok(descriptor.template.content.includes('<svg v-if="overviewSelection !== null" class="overview-selection" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" :style="{ left: `${overviewSelection}%` }"><circle cx="12" cy="12" r="7" /><path d="M12 2v20M2 12h20" /></svg>'));
+  assert.ok(descriptor.template.content.includes('<svg v-if="overviewSelection !== null" class="overview-selection" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" :style="{ left: `${overviewSelection}%` }"><circle cx="12" cy="12" r="7" stroke-width="1" stroke-dasharray="4 2" stroke-linecap="butt" /><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" /></svg>'));
   const markerStyle = descriptor.styles[0].content.match(/\.overview-selection\{([^}]*)\}/)[1];
   assert.match(markerStyle, /top:50%;width:24px;height:24px;transform:translate\(-50%,-50%\);color:#49638c;stroke-width:2;pointer-events:none/);
   assert.doesNotMatch(markerStyle, /border|background|box-shadow/);
@@ -1436,7 +1436,7 @@ test('command changes auto-apply only their own field at the correct scope and v
 test('the timeline toolbar groups explicit before and after measure insertion actions with availability guards', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'insert-measures' });
-  const toolbar = descriptor.template.content.match(/<div class="editor-actions">[\s\S]*?<\/button>\s*<\/div>(?=\s*<label class="follow-control">)/)[0];
+  const toolbar = descriptor.template.content.match(/<div class="editor-actions">[\s\S]*?<\/button>\s*<\/div>(?=\s*<button v-if="compactTools" id="follow-playback")/)[0];
   assert.match(toolbar, /class="measure-actions" role="group" :aria-label="t\('插入小节'\)"/);
   for (const [id, side] of [['insert-bar-before', 'before'], ['insert-bar-after', 'after']]) {
     const button = toolbar.match(new RegExp(`<button id="${id}"[^>]*>[\\s\\S]*?<\\/button>`))[0];
@@ -1561,14 +1561,14 @@ test('one single-line toolbar retains priority controls and collapses secondary 
   assert.doesNotMatch(tools, /音乐波形|振幅/);
   for (const id of ['bar-number', 'undo', 'redo', 'insert-bar-before', 'insert-bar-after', 'delete-bar', 'snap-division', 'custom-snap', 'follow-playback', 'view']) {
     assert.ok(tools.includes(`id="${id}"`), id);
-    assert.equal(descriptor.template.content.split(`id="${id}"`).length - 1, 1);
+    assert.equal(descriptor.template.content.split(`id="${id}"`).length - 1, id === 'follow-playback' ? 2 : 1);
   }
   assert.match(tools, /@change="snapChange"/);
   assert.match(tools, /id="bar-number"[\s\S]*id="snap-division"[\s\S]*id="undo"[\s\S]*id="redo"[\s\S]*<details ref="toolsMenu"[\s\S]*id="custom-snap"[\s\S]*id="view"[\s\S]*id="insert-bar-before"[\s\S]*id="insert-bar-after"[\s\S]*id="delete-bar"[\s\S]*id="follow-playback"/);
   assert.match(tools, /v-show="controls.snapChoice === 'custom'"/);
   assert.match(tools, /min="1" max="768"/);
   assert.match(tools, /@change="studio.setSnap\(Number\(controls.customSnap\)\)"/);
-  assert.match(tools, /id="view"[\s\S]*<label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"><\/span>[\s\S]*<\/label>\s*<\/div><\/details>\s*<\/div>$/);
+  assert.match(tools, /id="view"[\s\S]*<label v-else class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"><\/span>[\s\S]*<\/label>\s*<\/div><\/details>\s*<\/div>$/);
   assert.match(descriptor.styles[0].content, /\.follow-control input:checked\+\.switch-track\{background:var\(--green\)\}/);
   assert.match(descriptor.styles[0].content, /\.follow-control input:checked\+\.switch-track::before\{transform:translateX\(12px\)\}/);
   assert.match(descriptor.styles[0].content, /\.follow-control input:focus-visible\+\.switch-track\{outline:2px solid var\(--green\)/);
@@ -1578,6 +1578,26 @@ test('one single-line toolbar retains priority controls and collapses secondary 
   assert.match(descriptor.styles[0].content, /\.editor-bar,\.editor-tools\{flex-wrap:nowrap\}/);
   assert.doesNotMatch(descriptor.template.content, /snap-controls|snap-position/);
   assert.doesNotMatch(readFileSync(new URL('sound.css', import.meta.url), 'utf8'), /\.snap-controls/);
+});
+
+test('zoom submenu keyboard navigation wraps and returns focus without closing the parent menu', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const source = descriptor.scriptSetup.content.match(/function zoomKeydown\(event\) \{[\s\S]*?\n\}/)[0];
+  const document = { activeElement: null };
+  const items = Array.from({ length: 3 }, () => ({ focus() { document.activeElement = this; } }));
+  const zoomOptions = { value: { querySelectorAll: () => items } };
+  let closed = 0, prevented = 0, stopped = 0;
+  const keydown = new Function('zoomOptions', 'document', 'closeZoom', `${source}; return zoomKeydown;`)(zoomOptions, document, () => closed++);
+  const press = key => keydown({ key, preventDefault: () => prevented++, stopPropagation: () => stopped++ });
+  document.activeElement = items[2];
+  press('ArrowDown'); assert.equal(document.activeElement, items[0]);
+  press('ArrowUp'); assert.equal(document.activeElement, items[2]);
+  press('Home'); assert.equal(document.activeElement, items[0]);
+  press('End'); assert.equal(document.activeElement, items[2]);
+  press('Escape'); press('ArrowLeft'); assert.equal(closed, 2);
+  press('Tab'); assert.equal(prevented, 6); assert.equal(stopped, 6);
+  assert.match(descriptor.template.content, /role="menuitemradio" :aria-checked="controls.view === choice.value"/);
+  assert.match(descriptor.template.content, /role="menuitemcheckbox" :aria-checked="state.followPlayback" @click="state.followPlayback = !state.followPlayback"/);
 });
 
 test('editor columns are siblings and mobile transport can leave the scrolling center content', () => {

@@ -1,7 +1,7 @@
 <script setup>
 import { t } from './i18n.js';
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
-import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map, TriangleAlert, Ellipsis } from '@lucide/vue';
+import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map, TriangleAlert, Ellipsis, Check, ChevronRight, ZoomIn, Crosshair, Maximize2, Ruler } from '@lucide/vue';
 import SectionHeading from './SectionHeading.vue';
 import BranchControls from './BranchControls.vue';
 import MeasureGrid from './MeasureGrid.vue';
@@ -16,13 +16,41 @@ import { formatTime } from './useStudio.js';
 const studio = inject('studio');
 defineProps({ mobile: Boolean });
 const toolbar = ref(null), toolsMenu = ref(null), compactTools = ref(true), toolsOpen = ref(false);
+const zoomMenu = ref(null), zoomOptions = ref(null), zoomOpen = ref(false), zoomPosition = ref({});
+const zoomChoices = computed(() => [{ value: 'auto', label: t('自动'), icon: Maximize2 }, ...zooms.map(([value, label]) => ({ value, label: `${label} ${t('小节宽')}`, icon: Ruler }))]);
+async function openZoom() {
+  zoomOpen.value = !zoomOpen.value;
+  if (!zoomOpen.value) return;
+  const rect = zoomMenu.value.querySelector('summary').getBoundingClientRect();
+  const width = Math.min(180, innerWidth - 16), height = Math.min(300, innerHeight - 16);
+  const left = rect.left >= width + 8 ? rect.left - width : Math.min(rect.right, innerWidth - width - 8);
+  zoomPosition.value = { left: `${Math.max(8, left)}px`, top: `${Math.max(8, Math.min(rect.top, innerHeight - height - 8))}px`, width: `${width}px`, maxHeight: `${height}px` };
+  await nextTick();
+  zoomOptions.value?.querySelector('[aria-checked="true"]')?.focus();
+}
+function closeZoom() {
+  zoomOpen.value = false;
+  zoomMenu.value?.querySelector('summary').focus();
+}
+function zoomKeydown(event) {
+  if (['Escape', 'ArrowLeft'].includes(event.key)) {
+    event.preventDefault(); event.stopPropagation(); closeZoom();
+  } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+    event.preventDefault(); event.stopPropagation();
+    const items = [...zoomOptions.value.querySelectorAll('[role="menuitemradio"]')];
+    const current = items.indexOf(document.activeElement);
+    const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    items[index].focus();
+  }
+}
+watch([toolsOpen, compactTools], () => { zoomOpen.value = false; });
 function dismissTools(event) {
   if (!compactTools.value || !toolsMenu.value?.open) return;
   if (event.type === 'keydown') {
     if (event.key !== 'Escape') return;
     event.preventDefault(); event.stopPropagation();
     toolsMenu.value.querySelector('summary').focus();
-  } else if (toolsMenu.value.contains(event.target)) return;
+  } else if (toolsMenu.value.contains(event.target) || zoomOptions.value?.contains(event.target)) return;
   toolsOpen.value = false;
 }
 const { state, controls, bar, spans, visible, viewBeats, timelineScale, timelineBounds, timelineScrollBounds, cell, command, stats, chartStats, currentTiming, range } = studio;
@@ -370,6 +398,7 @@ watch(() => state.playing, playing => {
 }, { flush: 'sync' });
 onMounted(() => {
   const resize = () => {
+    zoomOpen.value = false;
     compactTools.value = toolbar.value.clientWidth < 1100;
     if (viewport.value) { viewportWidth.value = Math.max(1, viewport.value.clientWidth - TIMELINE_GUTTER * 2); draw(); }
   };
@@ -395,9 +424,15 @@ onUnmounted(() => {
         <div class="editor-history"><button id="undo" class="icon" :aria-label="t('撤销')" :title="t('撤销（Ctrl+Z）')" :disabled="!state.undo.length" @click="studio.history()"><Undo2 /></button><button id="redo" class="icon" :aria-label="t('重做')" :title="t('重做（Ctrl+Shift+Z）')" :disabled="!state.redo.length" @click="studio.history(true)"><Redo2 /></button></div>
         <details ref="toolsMenu" class="tools-menu" :open="!compactTools || toolsOpen" @keydown="dismissTools">
         <summary :aria-label="t('更多工具')" :title="t('更多工具')" @click.prevent="toolsOpen = !toolsOpen"><Ellipsis /></summary>
-        <div class="tools-panel">
-        <label v-show="controls.snapChoice === 'custom'" id="custom-snap-label">{{ t('每小节等分') }}<input id="custom-snap" ref="customSnap" v-model.number="controls.customSnap" type="number" min="1" max="768" step="1" @change="studio.setSnap(Number(controls.customSnap))"></label>
-        <label :title="t('以 4/4 小节的拍数作为缩放参考')">{{ t('缩放') }}<select id="view" v-model.number="controls.view" :aria-label="t('时间轴缩放')"><option value="auto">{{ t('自动') }}</option><option v-for="[value, label] in zooms" :key="value" :value="value">{{ label }} {{ t('小节宽') }}</option></select></label>
+        <div class="tools-panel" @scroll="zoomOpen = false">
+        <label v-show="controls.snapChoice === 'custom'" id="custom-snap-label"><Grid2X2 v-if="compactTools" aria-hidden="true" /><span class="menu-item-label">{{ t('每小节等分') }}</span><input id="custom-snap" ref="customSnap" v-model.number="controls.customSnap" type="number" min="1" max="768" step="1" @change="studio.setSnap(Number(controls.customSnap))"></label>
+        <details v-if="compactTools" ref="zoomMenu" class="zoom-menu" :open="zoomOpen">
+          <summary :title="t('以 4/4 小节的拍数作为缩放参考')" aria-haspopup="menu" :aria-expanded="zoomOpen" @click.prevent="openZoom" @keydown.right.prevent="!zoomOpen && openZoom()" @keydown.esc="zoomOpen && zoomKeydown($event)"><ZoomIn aria-hidden="true" /><span class="menu-item-label">{{ t('缩放') }}</span><ChevronRight aria-hidden="true" /></summary>
+          <Teleport to="body"><div v-if="zoomOpen" ref="zoomOptions" class="zoom-options" role="menu" :aria-label="t('时间轴缩放')" :style="zoomPosition" @keydown="zoomKeydown">
+            <button v-for="choice in zoomChoices" :key="choice.value" type="button" role="menuitemradio" :aria-checked="controls.view === choice.value" @click="controls.view = choice.value; closeZoom()"><component :is="choice.icon" aria-hidden="true" />{{ choice.label }}<span class="menu-check"><Check v-if="controls.view === choice.value" aria-hidden="true" /></span></button>
+          </div></Teleport>
+        </details>
+        <label v-else :title="t('以 4/4 小节的拍数作为缩放参考')">{{ t('缩放') }}<select id="view" v-model.number="controls.view" :aria-label="t('时间轴缩放')"><option value="auto">{{ t('自动') }}</option><option v-for="[value, label] in zooms" :key="value" :value="value">{{ label }} {{ t('小节宽') }}</option></select></label>
       <div class="editor-actions">
         <div class="measure-actions" role="group" :aria-label="t('插入小节')">
           <button id="insert-bar-before" :title="t('在当前小节前插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('before')"><BetweenHorizontalStart aria-hidden="true" />{{ t('前插小节') }}</button>
@@ -405,14 +440,15 @@ onUnmounted(() => {
         </div>
         <button id="delete-bar" class="delete-measure" :title="state.chart.bars.length <= 1 ? t('不能删除最后一个小节。') : t('删除当前小节及其音符和指令')" :disabled="!bar || state.invalid || state.chart.bars.length <= 1" @click="studio.deleteBar"><Trash2 aria-hidden="true" />{{ t('删除小节') }}</button>
       </div>
-        <label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span>{{ t('跟随播放') }}</label>
+        <button v-if="compactTools" id="follow-playback" type="button" role="menuitemcheckbox" :aria-checked="state.followPlayback" @click="state.followPlayback = !state.followPlayback"><Crosshair aria-hidden="true" />{{ t('跟随播放') }}<span class="menu-check"><Check v-if="state.followPlayback" aria-hidden="true" /></span></button>
+        <label v-else class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span>{{ t('跟随播放') }}</label>
         </div></details>
       </div>
       <div class="timeline-frame"><div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @contextmenu.prevent></canvas></div></div></div>
       <section class="overview">
         <div class="overview-caption"><span class="overview-legend"><i class="gogo"></i>GOGOTIME <span v-for="route in BRANCH_ROUTES" :key="route" class="overview-route"><i :style="{ background: branchColor(route) }"></i>{{ t(BRANCH_ROUTE_NAMES[route]) }}</span></span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div>
         <div class="overview-wave">
-          <svg v-if="overviewSelection !== null" class="overview-selection" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" :style="{ left: `${overviewSelection}%` }"><circle cx="12" cy="12" r="7" /><path d="M12 2v20M2 12h20" /></svg>
+          <svg v-if="overviewSelection !== null" class="overview-selection" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" :style="{ left: `${overviewSelection}%` }"><circle cx="12" cy="12" r="7" stroke-width="1" stroke-dasharray="4 2" stroke-linecap="butt" /><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" /></svg>
           <span v-if="overviewHover" id="overview-hover" role="tooltip" :style="{ left: `${overviewHover.x}px`, top: `${overviewHover.y}px`, transform: `translate(${-overviewHover.fraction * 100}%, calc(-100% - 12px))` }">{{ formatTime(overviewHover.time) }} · {{ t('小节 {p0}', { p0: overviewHover.measure ?? '—' }) }}</span>
           <canvas id="overview" ref="overview" :aria-label="t('全曲波形，点击跳转，拖动浏览')" :aria-describedby="range ? 'selection-summary' : undefined" role="img" @pointerenter="hoverOverview" @pointerleave="overviewHover = null" @pointerdown="startOverviewDrag" @pointermove="hoverOverview($event); moveOverviewDrag($event)" @pointerup="finishOverviewDrag" @pointercancel="cancelOverviewDrag($event); overviewHover = null" @lostpointercapture="cancelOverviewDrag"></canvas>
         </div>
@@ -514,10 +550,13 @@ onUnmounted(() => {
 .compact-tools .tools-menu>summary{display:flex;align-items:center;justify-content:center;width:28px;height:28px;cursor:pointer;list-style:none;border-radius:4px}
 .tools-menu>summary::-webkit-details-marker{display:none}.tools-menu>summary:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
 .compact-tools .tools-menu{flex:none}
-.compact-tools .tools-panel{position:absolute;z-index:10;right:8px;top:100%;display:flex;flex-direction:column;align-items:stretch;gap:12px;width:280px;max-width:calc(100vw - 16px);max-height:50dvh;overflow:auto;overscroll-behavior:contain;padding:12px;border:1px solid var(--line);border-radius:5px;background:#fff;box-shadow:0 6px 24px #202a2820}
+.compact-tools .tools-panel{position:absolute;z-index:10;right:8px;top:100%;display:flex;flex-direction:column;align-items:stretch;gap:2px;width:280px;max-width:calc(100vw - 16px);max-height:50dvh;overflow:auto;overscroll-behavior:contain;padding:5px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);font:400 12px/1.4 system-ui,sans-serif;box-shadow:0 6px 24px #202a2820}
 .compact-tools .tools-menu:not([open])>.tools-panel{display:none}
-.compact-tools .tools-panel>label{justify-content:space-between;margin-left:0}.compact-tools .editor-actions{gap:8px}.compact-tools .measure-actions{margin-right:0}
+.compact-tools .tools-panel>label{justify-content:space-between;margin-left:0;min-height:36px;padding:4px 8px;border-radius:4px}.compact-tools .editor-actions,.compact-tools .measure-actions{display:contents}.compact-tools .tools-panel button{width:100%;height:auto;min-height:36px;justify-content:flex-start;padding:7px 8px;border:0;border-radius:4px;background:transparent;text-align:left;white-space:normal}.compact-tools .tools-panel button:not(:disabled):hover,.compact-tools .tools-panel>label:hover{background:#edf5ef}.compact-tools .tools-panel .switch-track{order:1;margin-left:auto}
+.zoom-menu>summary{display:flex;align-items:center;gap:8px;min-height:36px;padding:7px 8px;border-radius:4px;cursor:pointer;list-style:none}.zoom-menu>summary::-webkit-details-marker{display:none}.zoom-menu>summary:hover{background:#edf5ef}.zoom-menu>summary:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
+.zoom-options{position:fixed;z-index:50;overflow:auto;overscroll-behavior:contain;padding:5px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);font:400 12px/1.4 system-ui,sans-serif;box-shadow:0 6px 24px #202a2820}.zoom-options button{width:100%;min-height:36px;justify-content:flex-start;padding:7px 8px;border:0;border-radius:4px;background:transparent;text-align:left}.zoom-options button:hover{background:#edf5ef}.menu-check{display:inline-flex;align-items:center;justify-content:center;flex:0 0 17px;width:17px;height:17px;margin-left:auto}
+.compact-tools .tools-panel :is(button,label,input,summary),.zoom-options button{font:inherit;color:inherit}.compact-tools .menu-item-label{flex:1}
 @container(max-width:480px){.editor .editor-bar{padding-inline:6px;gap:4px}.measure-nav{gap:4px}.measure-nav input{width:42px;padding-inline:2px}.editor-tools>label{gap:4px}.editor-tools #snap-division{width:65px;padding-inline:2px}.editor-history{gap:0}}
-@container(max-width:480px){.tool-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}}
+@container(max-width:480px){.tool-label,.measure-nav>label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}}
 @media(max-width:900px){.editor-information{display:none}}
 </style>
