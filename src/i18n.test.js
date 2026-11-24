@@ -121,16 +121,64 @@ COURSE:Oni
     const before = JSON.stringify(state);
     const brush = { fillRect(x, y, width, height) { rectangles.push({ x, y, width, height, color: this.fillStyle }); } };
     const draw = runInNewContext(`${source}; drawOverviewSections`, { state, measureStart, measureEnd });
-    draw(brush, time => (time + 1) * 10);
+    draw(brush, time => (time + 1) * 10, 40);
     const gogo = rectangles.filter(rect => rect.color === '#d9a032').map(({ x, y, width, height }) => [x, y, width, height]);
     const branches = rectangles.filter(rect => rect.color === '#9270b5').map(({ x, y, width, height }) => [x, y, width, height]);
     assert.deepEqual(gogo, route === 'N' ? [[5, 0, 10, 3], [20, 0, 5, 3], [27.5, 0, 20, 3]] : [[5, 0, 10, 3], [20, 0, 5, 3]]);
-    assert.deepEqual(branches, [[25, 4, 22.5, 3]]);
+    assert.deepEqual(branches, [[25, 37, 22.5, 3]]);
     assert.equal(JSON.stringify(state), before);
     state.chart.bars = []; rectangles.length = 0;
-    draw(brush, time => time);
+    draw(brush, time => time, 40);
     assert.deepEqual(rectangles, []);
   }
+});
+
+test('overview centers a location icon on the exact selected time, including both waveform edges', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const source = descriptor.scriptSetup.content.match(/const overviewSelection = computed\(\(\) => \{[\s\S]*?\n\}\);/)[0];
+  const cell = ref(null), timelineBounds = ref({ start: -2, end: 8 });
+  const position = runInNewContext(`${source}; overviewSelection`, { computed, cell, timelineBounds });
+  assert.equal(position.value, null);
+  for (const [time, expected] of [[-2, 0], [-1.9, 1], [3, 50], [7.9, 99], [8, 100]]) {
+    cell.value = { time };
+    assert.ok(Math.abs(position.value - expected) < 1e-10);
+  }
+  timelineBounds.value = { start: 0, end: 16 };
+  assert.equal(position.value, 50);
+  cell.value = null;
+  assert.equal(position.value, null);
+  assert.ok(descriptor.template.content.includes('<svg v-if="overviewSelection !== null" class="overview-selection" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" :style="{ left: `${overviewSelection}%` }"><circle cx="12" cy="12" r="7" /><path d="M12 2v20M2 12h20" /></svg>'));
+  const markerStyle = descriptor.styles[0].content.match(/\.overview-selection\{([^}]*)\}/)[1];
+  assert.match(markerStyle, /top:50%;width:24px;height:24px;transform:translate\(-50%,-50%\);color:#49638c;stroke-width:2;pointer-events:none/);
+  assert.doesNotMatch(markerStyle, /border|background|box-shadow/);
+  assert.doesNotMatch(descriptor.scriptSetup.content, /#239eae35|overviewContext\.height - 4/);
+});
+
+test('overview measure ranges have a continuous contrasting fill and two boundaries without covering section bands', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const source = descriptor.scriptSetup.content.match(/function drawOverviewRange\([\s\S]*?\n\}/)[0];
+  const state = { chart: { bars: [
+    { index: 0, start: -1, end: 1 },
+    { index: 1, start: 1, end: 3, delay: .5 },
+    { index: 2, start: 3, end: 5 }
+  ] } };
+  const selected = new Set([1, 2]), rectangles = [];
+  const brush = { fillRect(x, y, width, height) { rectangles.push({ x, y, width, height, color: this.fillStyle }); } };
+  const draw = runInNewContext(`${source}; drawOverviewRange`, {
+    state, measureStart, measureEnd, measureSelected: index => selected.has(index)
+  });
+  draw(brush, time => (time + 1) * 20, 40);
+  assert.deepEqual(rectangles, [
+    { x: 30, y: 3, width: 90, height: 34, color: '#2457d640' },
+    { x: 30, y: 3, width: 2, height: 34, color: '#7b91bb' },
+    { x: 118, y: 3, width: 2, height: 34, color: '#7b91bb' }
+  ]);
+  rectangles.length = 0;
+  draw(brush, time => (time + 1) / 10, 40);
+  assert.ok(rectangles.every(rect => rect.x >= .15 - 1e-10 && rect.x + rect.width <= .6 + 1e-10));
+  selected.clear(); rectangles.length = 0;
+  draw(brush, time => time, 40);
+  assert.deepEqual(rectangles, []);
 });
 
 test('overview hover reports music time and one-based measures including delays without modifying studio state', () => {

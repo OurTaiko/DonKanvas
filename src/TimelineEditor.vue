@@ -33,6 +33,11 @@ const cellAttributes = computed(() => {
 });
 const timeline = ref(null), overview = ref(null), customSnap = ref(null), hover = ref(null);
 const overviewHover = ref(null);
+const overviewSelection = computed(() => {
+  if (!cell.value) return null;
+  const { start, end } = timelineBounds.value;
+  return (cell.value.time - start) / Math.max(.001, end - start) * 100;
+});
 const measures = ref(null), measureDrag = ref(null);
 const measureSelection = computed(() => measureDrag.value?.dragged
   ? [Math.min(measureDrag.value.start, measureDrag.value.end) + 1, Math.max(measureDrag.value.start, measureDrag.value.end) + 1]
@@ -129,15 +134,24 @@ function gogoIntervals(item) {
   }
   return intervals;
 }
-function drawOverviewSections(brush, x) {
+function drawOverviewSections(brush, x, height) {
   for (const item of state.chart.bars) {
     brush.fillStyle = '#d9a032';
     for (const [start, end] of gogoIntervals(item)) brush.fillRect(x(start), 0, x(end) - x(start), 3);
     if (item.route) {
       brush.fillStyle = '#9270b5';
-      brush.fillRect(x(measureStart(item)), 4, x(measureEnd(item)) - x(measureStart(item)), 3);
+      brush.fillRect(x(measureStart(item)), height - 3, x(measureEnd(item)) - x(measureStart(item)), 3);
     }
   }
+}
+function drawOverviewRange(brush, x, height) {
+  const selected = state.chart.bars.filter(item => measureSelected(item.index));
+  if (!selected.length) return;
+  const left = x(Math.min(...selected.map(measureStart))), right = x(Math.max(...selected.map(measureEnd)));
+  const width = right - left, edge = Math.min(2, width / 2);
+  brush.fillStyle = '#2457d640'; brush.fillRect(left, 3, width, height - 6);
+  brush.fillStyle = '#7b91bb';
+  brush.fillRect(left, 3, edge, height - 6); brush.fillRect(right - edge, 3, edge, height - 6);
 }
 function draw() {
   if (!timeline.value || !overview.value) return;
@@ -221,17 +235,10 @@ function draw() {
   const overviewContext = canvasContext(overview.value), bounds = timelineBounds.value, total = Math.max(.001, bounds.end - bounds.start);
   const overviewX = time => (time - bounds.start) / total * overviewContext.width;
   drawWave(overviewContext.brush, overviewContext.width, bounds.start, bounds.end, overviewContext.height / 2, overviewContext.height * .44);
-  drawOverviewSections(overviewContext.brush, overviewX);
-  for (const item of state.chart.bars) {
-    const left = overviewX(measureStart(item)), size = overviewX(measureEnd(item)) - left;
-    if (measureSelected(item.index)) { overviewContext.brush.fillStyle = '#16745b24'; overviewContext.brush.fillRect(left, 0, size, overviewContext.height); }
-    if (item.index === state.selectedCell?.bar) {
-      overviewContext.brush.fillStyle = '#239eae35'; overviewContext.brush.fillRect(left, 0, size, overviewContext.height);
-      overviewContext.brush.fillStyle = '#239eae'; overviewContext.brush.fillRect(left, overviewContext.height - 4, size, 4);
-    }
-  }
   overviewContext.brush.fillStyle = '#16745b18'; overviewContext.brush.fillRect(overviewX(start), 0, (end - start) / total * overviewContext.width, overviewContext.height);
   overviewContext.brush.strokeStyle = '#16745b'; overviewContext.brush.strokeRect(overviewX(start), .5, (end - start) / total * overviewContext.width, overviewContext.height - 1);
+  drawOverviewRange(overviewContext.brush, overviewX, overviewContext.height);
+  drawOverviewSections(overviewContext.brush, overviewX, overviewContext.height);
   overviewContext.brush.fillStyle = '#c43e35'; overviewContext.brush.fillRect(overviewX(position), 0, 1.5, overviewContext.height);
 }
 function timelineCell(item, time, x) {
@@ -411,6 +418,7 @@ onUnmounted(() => { cancelMeasureLoop(); cancelOverviewDrag(); observer?.disconn
       <section class="overview">
         <div class="overview-caption"><span class="overview-legend"><i class="gogo"></i>GOGOTIME <i class="branch"></i>{{ t('分歧段') }}</span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div>
         <div class="overview-wave">
+          <svg v-if="overviewSelection !== null" class="overview-selection" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" :style="{ left: `${overviewSelection}%` }"><circle cx="12" cy="12" r="7" /><path d="M12 2v20M2 12h20" /></svg>
           <span v-if="overviewHover" id="overview-hover" role="tooltip" :style="{ left: `${overviewHover.x}px`, top: `${overviewHover.y}px`, transform: `translate(${-overviewHover.fraction * 100}%, calc(-100% - 12px))` }">{{ formatTime(overviewHover.time) }} · {{ t('小节 {p0}', { p0: overviewHover.measure ?? '—' }) }}</span>
           <canvas id="overview" ref="overview" :aria-label="t('全曲波形，点击跳转，拖动浏览')" :aria-describedby="range ? 'selection-summary' : undefined" role="img" @pointerenter="hoverOverview" @pointerleave="overviewHover = null" @pointerdown="startOverviewDrag" @pointermove="hoverOverview($event); moveOverviewDrag($event)" @pointerup="finishOverviewDrag" @pointercancel="cancelOverviewDrag($event); overviewHover = null" @lostpointercapture="cancelOverviewDrag"></canvas>
         </div>
@@ -466,6 +474,7 @@ onUnmounted(() => { cancelMeasureLoop(); cancelOverviewDrag(); observer?.disconn
 .overview-caption{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;padding:4px 6px;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;pointer-events:none}
 .overview-caption>#overview-range{white-space:nowrap}
 .overview-wave{position:relative}
+.overview-selection{position:absolute;z-index:1;top:50%;width:24px;height:24px;transform:translate(-50%,-50%);color:#49638c;stroke-width:2;pointer-events:none}
 .overview-legend{display:flex;align-items:center;gap:4px;white-space:nowrap}
 .overview-legend i{width:10px;height:3px}.overview-legend .gogo{background:#d9a032}.overview-legend .branch{background:#9270b5;margin-left:4px}
 .timeline-wrap{height:auto;padding:0;overscroll-behavior-x:contain}
