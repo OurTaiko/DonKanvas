@@ -29,7 +29,10 @@ defineExpose({ focusTree: () => courses.value.focusTree(), focusSection, focusTo
 
 <template>
   <aside class="song-workspace" :class="{ collapsed }" :aria-label="t('歌曲工作区')" @keydown.space.stop @keydown.left.stop @keydown.right.stop>
+    <div class="workspace-heading-row">
     <button ref="toggleButton" type="button" class="workspace-heading workspace-hamburger" :aria-expanded="!collapsed" :title="collapsed ? t('展开歌曲工作区') : t('收起歌曲工作区')" :aria-label="collapsed ? t('展开歌曲工作区') : t('收起歌曲工作区')" @click="emit('toggle')"><Menu aria-hidden="true" /><b v-if="!collapsed">{{ t('歌曲工作区') }}</b><ChevronUp v-if="!collapsed" class="workspace-collapse" aria-hidden="true" /></button>
+    <slot name="title" />
+    </div>
     <nav v-if="collapsed" class="workspace-icons" :aria-label="t('歌曲工作区')"><button type="button" class="icon" :title="t('歌曲信息')" :aria-label="t('歌曲信息')" @click="emit('navigate', 'metadata')"><Info aria-hidden="true" /></button><button type="button" class="icon" :title="t('难度与模式')" :aria-label="t('难度与模式')" @click="emit('navigate', 'courses')"><Layers aria-hidden="true" /></button></nav>
     <template v-else>
     <details ref="metadata" class="metadata-editor">
@@ -56,5 +59,8 @@ defineExpose({ focusTree: () => courses.value.focusTree(), focusSection, focusTo
 .metadata-editor{border-bottom:1px solid var(--line)}.metadata-group>summary{display:flex;align-items:center;gap:7px;cursor:pointer;padding:8px 0;color:var(--muted);font-size:11px}.metadata-group>summary svg{width:14px;height:14px;flex-shrink:0}.metadata-group>summary:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
 .metadata-group .metadata-chevron{width:12px;height:12px;transform:rotate(-90deg)}.metadata-group[open]>summary .metadata-chevron{transform:none}.metadata-group+.metadata-group{margin-top:8px}.metadata-group .metadata-fields{padding-top:6px}
 .metadata-editor form{padding:0 14px 14px}.metadata-editor p{margin:0 0 10px;color:var(--muted);font-size:11px;line-height:1.6}.metadata-fields{display:grid;gap:10px}.metadata-fields label{display:grid;gap:5px;font-size:11px;color:var(--muted)}.metadata-fields input{width:100%;min-width:0;padding:7px 8px;border:1px solid var(--line);border-radius:5px;background:#fff;color:var(--ink);font:inherit;font-size:12px}.metadata-editor .metadata-error{color:#bd3b30;margin-top:10px;overflow-wrap:anywhere}
+.workspace-heading-row{position:sticky;top:0;z-index:1;display:flex;align-items:center;background:#f5f7f5;border-bottom:1px solid var(--line)}.workspace-heading-row>.workspace-heading{position:static;border-bottom:0}
+.workspace-heading-row:has(.workspace-document-title)>.workspace-heading{width:40px;flex-shrink:0;justify-content:center;padding:0}.workspace-heading-row:has(.workspace-document-title)>.workspace-heading::after{content:'';position:absolute;inset:0}.workspace-heading-row:has(.workspace-document-title)>.workspace-heading>b{display:none}.workspace-heading-row:has(.workspace-document-title) .workspace-collapse{position:absolute;right:12px}
+.workspace-heading-row:has(.workspace-document-title):has(.workspace-heading:hover){background:#e1ece5}.workspace-heading-row:has(.workspace-document-title):focus-within::after{content:'';position:absolute;inset:0;z-index:2;border:2px solid var(--green);pointer-events:none}.workspace-heading-row:has(.workspace-document-title)>.workspace-heading:focus-visible{outline:none}
 @media(max-width:900px){.song-workspace{position:relative;flex:1;height:auto;min-height:0;border-right:0}.song-workspace.collapsed{width:100%;overflow:visible}.collapsed .workspace-heading{justify-content:flex-start;padding:0 14px}.workspace-icons{display:none}}
 </style>

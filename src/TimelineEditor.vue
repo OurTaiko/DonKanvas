@@ -1,7 +1,7 @@
 <script setup>
 import { t } from './i18n.js';
-import { computed, inject, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
-import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map, TriangleAlert } from '@lucide/vue';
+import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
+import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map, TriangleAlert, Ellipsis } from '@lucide/vue';
 import SectionHeading from './SectionHeading.vue';
 import BranchControls from './BranchControls.vue';
 import MeasureGrid from './MeasureGrid.vue';
@@ -14,6 +14,17 @@ import { createTimelineViewport, TIMELINE_GUTTER } from './timeline.js';
 import { formatTime } from './useStudio.js';
 
 const studio = inject('studio');
+defineProps({ mobile: Boolean });
+const toolbar = ref(null), toolsMenu = ref(null), compactTools = ref(true), toolsOpen = ref(false);
+function dismissTools(event) {
+  if (!compactTools.value || !toolsMenu.value?.open) return;
+  if (event.type === 'keydown') {
+    if (event.key !== 'Escape') return;
+    event.preventDefault(); event.stopPropagation();
+    toolsMenu.value.querySelector('summary').focus();
+  } else if (toolsMenu.value.contains(event.target)) return;
+  toolsOpen.value = false;
+}
 const { state, controls, bar, spans, visible, viewBeats, timelineScale, timelineBounds, timelineScrollBounds, cell, command, stats, chartStats, currentTiming, range } = studio;
 const balloonHits = computed(() => {
   const { balloon, special } = chartStats.value;
@@ -114,8 +125,9 @@ function canvasContext(canvas) {
   const rectangle = canvas.getBoundingClientRect(), ratio = devicePixelRatio || 1;
   const width = Math.max(1, rectangle.width), height = Math.max(1, rectangle.height);
   if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) { canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); }
-  const brush = canvas.getContext('2d'); brush.setTransform(ratio, 0, 0, ratio, 0, 0); brush.clearRect(0, 0, width, height);
-  return { brush, width, height };
+  const drawingHeight = canvas === timeline.value ? Math.max(150, height) : height;
+  const brush = canvas.getContext('2d'); brush.setTransform(ratio, 0, 0, ratio * height / drawingHeight, 0, 0); brush.clearRect(0, 0, width, drawingHeight);
+  return { brush, width, height: drawingHeight };
 }
 function drawWave(brush, width, start, end, center, amplitude, timeAt = fraction => start + fraction * (end - start), color = '#9fc5b8') {
   brush.fillStyle = color;
@@ -170,12 +182,13 @@ function draw() {
   const scale = timelineScale.value, beats = viewBeats.value, width = viewportWidth.value;
   const { x, timeAt } = createTimelineViewport(scale, visible.value, beats, width), noteY = height - 61;
   const noteLaneHeight = height - 25 - (noteY - 30);
-  brush.fillStyle = '#f3f7f2'; brush.fillRect(TIMELINE_GUTTER, 23, width, 130);
+  const waveformHeight = Math.max(0, height - 120);
+  brush.fillStyle = '#f3f7f2'; brush.fillRect(TIMELINE_GUTTER, 23, width, waveformHeight);
   brush.fillStyle = '#f6f7f3'; brush.fillRect(TIMELINE_GUTTER, noteY - 30, width, noteLaneHeight);
   const waveformWidth = width + TIMELINE_GUTTER * 2;
   brush.save();
   if (!state.buffer) brush.translate(TIMELINE_GUTTER, 0);
-  drawWave(brush, waveformWidth, timeAt(0), timeAt(waveformWidth), 88, 59, fraction => timeAt(fraction * waveformWidth), '#72a592');
+  drawWave(brush, waveformWidth, timeAt(0), timeAt(waveformWidth), 23 + waveformHeight / 2, Math.max(0, waveformHeight / 2 - 6), fraction => timeAt(fraction * waveformWidth), '#72a592');
   brush.restore();
   const eventLabelEnds = [];
   for (const item of bars) {
@@ -276,14 +289,14 @@ function point(event) {
 function pointerMove(event) {
   if (!state.chart || state.invalid) return;
   const { rect, time, item, x } = point(event);
-  if (event.clientY - rect.top < rect.height - 100 || !item) { hover.value = null; return; }
+  if (event.clientY - rect.top < rect.height * (1 - 100 / Math.max(150, rect.height)) || !item) { hover.value = null; return; }
   const selected = timelineCell(item, time, x);
   hover.value = { bar: item.index, fraction: selected.numerator / selected.denominator };
 }
 function pointerDown(event) {
   if (!state.chart || state.invalid) return;
   const { rect, time, item, x } = point(event);
-  if (event.clientY - rect.top < rect.height - 100) { studio.seek(Math.max(timelineBounds.value.start, Math.min(timelineBounds.value.end, time))); return; }
+  if (event.clientY - rect.top < rect.height * (1 - 100 / Math.max(150, rect.height))) { studio.seek(Math.max(timelineBounds.value.start, Math.min(timelineBounds.value.end, time))); return; }
   if (item) {
     event.preventDefault(); viewport.value.focus({ preventScroll: true });
     const pixel = event.clientX - rect.left;
@@ -341,10 +354,14 @@ function finishOverviewDrag(event) {
   if (!drag.dragged) overviewClick(event);
 }
 watch(() => [state.activeId, state.chart, state.invalid], () => { cancelOverviewDrag(); overviewHover.value = null; }, { flush: 'sync' });
-function snapChange() {
+async function snapChange() {
   hover.value = null;
   if (controls.snapChoice !== 'custom') studio.setSnap(Number(controls.snapChoice));
-  else customSnap.value?.focus();
+  else {
+    toolsOpen.value = true;
+    await nextTick();
+    customSnap.value?.focus();
+  }
 }
 watchEffect(draw, { flush: 'post' });
 watchEffect(() => { state.activeId; state.selected; visible.value?.start; controls.snap; hover.value = null; });
@@ -352,24 +369,36 @@ watch(() => state.playing, playing => {
   if (playing && viewport.value) { stopScrolling(); programmaticLeft = viewport.value.scrollLeft; }
 }, { flush: 'sync' });
 onMounted(() => {
-  const resize = () => { if (viewport.value) { viewportWidth.value = Math.max(1, viewport.value.clientWidth - TIMELINE_GUTTER * 2); draw(); } };
-  observer = new ResizeObserver(resize); observer.observe(viewport.value); observer.observe(overview.value.parentElement); resize();
+  const resize = () => {
+    compactTools.value = toolbar.value.clientWidth < 1100;
+    if (viewport.value) { viewportWidth.value = Math.max(1, viewport.value.clientWidth - TIMELINE_GUTTER * 2); draw(); }
+  };
+  observer = new ResizeObserver(resize); observer.observe(toolbar.value); observer.observe(viewport.value); observer.observe(overview.value.parentElement); resize();
+  document.addEventListener('pointerdown', dismissTools);
+  document.addEventListener('focusin', dismissTools);
 });
-onUnmounted(() => { cancelOverviewDrag(); observer?.disconnect(); });
+onUnmounted(() => {
+  cancelOverviewDrag(); observer?.disconnect();
+  document.removeEventListener('pointerdown', dismissTools);
+  document.removeEventListener('focusin', dismissTools);
+});
 </script>
 
 <template>
   <div class="workspace">
     <section class="editor">
-      <div class="lane-head editor-tools editor-bar"><div class="measure-nav">
-        <label for="bar-number">{{ t('查看小节') }}</label>
+      <div ref="toolbar" class="lane-head editor-tools editor-bar" :class="{ 'compact-tools': compactTools }"><div class="measure-nav">
+        <label for="bar-number" :title="t('查看小节')"><span class="tool-label">{{ t('查看小节') }}</span></label>
         <input id="bar-number" type="number" min="1" :max="state.chart?.bars.length" step="1" :value="state.selected + 1" :disabled="!bar || state.invalid" @change="studio.select(Number($event.target.value) - 1); $event.target.value = state.selected + 1">
       </div>
-        <label>{{ t('吸附栅格') }}<select id="snap-division" v-model="controls.snapChoice" @change="snapChange"><option v-for="value in snaps" :key="value" :value="String(value)">{{ value }} {{ t('分') }}</option><option value="custom">{{ t('自定义') }}</option></select></label>
+        <label :title="t('吸附栅格')"><span class="tool-label">{{ t('吸附栅格') }}</span><select id="snap-division" v-model="controls.snapChoice" :aria-label="t('吸附栅格')" @change="snapChange"><option v-for="value in snaps" :key="value" :value="String(value)">{{ value }} {{ t('分') }}</option><option value="custom">{{ t('自定义') }}</option></select></label>
+        <div class="editor-history"><button id="undo" class="icon" :aria-label="t('撤销')" :title="t('撤销（Ctrl+Z）')" :disabled="!state.undo.length" @click="studio.history()"><Undo2 /></button><button id="redo" class="icon" :aria-label="t('重做')" :title="t('重做（Ctrl+Shift+Z）')" :disabled="!state.redo.length" @click="studio.history(true)"><Redo2 /></button></div>
+        <details ref="toolsMenu" class="tools-menu" :open="!compactTools || toolsOpen" @keydown="dismissTools">
+        <summary :aria-label="t('更多工具')" :title="t('更多工具')" @click.prevent="toolsOpen = !toolsOpen"><Ellipsis /></summary>
+        <div class="tools-panel">
         <label v-show="controls.snapChoice === 'custom'" id="custom-snap-label">{{ t('每小节等分') }}<input id="custom-snap" ref="customSnap" v-model.number="controls.customSnap" type="number" min="1" max="768" step="1" @change="studio.setSnap(Number(controls.customSnap))"></label>
         <label :title="t('以 4/4 小节的拍数作为缩放参考')">{{ t('缩放') }}<select id="view" v-model.number="controls.view" :aria-label="t('时间轴缩放')"><option value="auto">{{ t('自动') }}</option><option v-for="[value, label] in zooms" :key="value" :value="value">{{ label }} {{ t('小节宽') }}</option></select></label>
       <div class="editor-actions">
-        <div class="editor-history"><button id="undo" class="icon" :aria-label="t('撤销')" :title="t('撤销（Ctrl+Z）')" :disabled="!state.undo.length" @click="studio.history()"><Undo2 /></button><button id="redo" class="icon" :aria-label="t('重做')" :title="t('重做（Ctrl+Shift+Z）')" :disabled="!state.redo.length" @click="studio.history(true)"><Redo2 /></button></div>
         <div class="measure-actions" role="group" :aria-label="t('插入小节')">
           <button id="insert-bar-before" :title="t('在当前小节前插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('before')"><BetweenHorizontalStart aria-hidden="true" />{{ t('前插小节') }}</button>
           <button id="insert-bar-after" :title="t('在当前小节后插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('after')"><BetweenHorizontalEnd aria-hidden="true" />{{ t('后插小节') }}</button>
@@ -377,6 +406,7 @@ onUnmounted(() => { cancelOverviewDrag(); observer?.disconnect(); });
         <button id="delete-bar" class="delete-measure" :title="state.chart.bars.length <= 1 ? t('不能删除最后一个小节。') : t('删除当前小节及其音符和指令')" :disabled="!bar || state.invalid || state.chart.bars.length <= 1" @click="studio.deleteBar"><Trash2 aria-hidden="true" />{{ t('删除小节') }}</button>
       </div>
         <label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span>{{ t('跟随播放') }}</label>
+        </div></details>
       </div>
       <div class="timeline-frame"><div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @contextmenu.prevent></canvas></div></div></div>
       <section class="overview">
@@ -388,6 +418,7 @@ onUnmounted(() => { cancelOverviewDrag(); observer?.disconnect(); });
         </div>
       </section>
       <div class="editor-information">
+      <Teleport to="#mobile-position-panel" :disabled="!mobile" defer>
       <section class="cell-inspector" :aria-label="t('落点信息')">
         <SectionHeading class="position-caption" :icon="Grid2X2" :title="t('落点信息')">
           <span class="position-source">{{ t(state.playing ? '播放位置' : '所选落点') }}</span>
@@ -403,10 +434,12 @@ onUnmounted(() => { cancelOverviewDrag(); observer?.disconnect(); });
           <div v-for="attribute in cellAttributes" :key="attribute.id"><dt>{{ t(attribute.label) }}</dt><dd :id="attribute.id" :title="attribute.value">{{ attribute.value }}<span v-if="attribute.warning" class="attribute-warning"><TriangleAlert aria-hidden="true" />{{ attribute.warning }}</span></dd></div>
         </dl>
       </section>
-      <BranchControls />
+      </Teleport>
+      <Teleport to="#mobile-branch-panel" :disabled="!mobile" defer><BranchControls /></Teleport>
       </div>
     </section>
   </div>
+  <Teleport to="#mobile-navigation-panel" :disabled="!mobile" defer>
   <section class="measure-section">
     <div class="measure-heading">
       <SectionHeading :icon="Map" :title="t('全局导航')">
@@ -427,6 +460,7 @@ onUnmounted(() => { cancelOverviewDrag(); observer?.disconnect(); });
     </div>
     <MeasureGrid id="measures" :key="state.activeId" :bars="state.chart?.bars || []" :selection="range" :active-index="state.selected" :anchor-index="state.loopAnchor" :note-index="state.selectedCell?.bar" :disabled="state.invalid" @activate="studio.select" @select="studio.setLoop" @toggle="toggleMeasure" @preview="measurePreview = $event" />
   </section>
+  </Teleport>
 </template>
 
 <style>
@@ -453,10 +487,11 @@ onUnmounted(() => { cancelOverviewDrag(); observer?.disconnect(); });
 .measure-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.measure-actions{display:inline-flex;max-width:100%;margin-right:6px;border:0;border-radius:5px;background:transparent}.measure-actions button{min-width:0;padding:4px 8px;gap:4px;border:0;border-radius:4px;font-size:11px}.measure-actions button svg{width:14px;height:14px}
 .timeline-content{min-width:100%}
 .timeline-frame #timeline{height:250px;position:sticky;left:0}
+@media(max-width:900px){.workspace>.editor{display:flex;flex-direction:column;min-height:0}.editor>.editor-bar,.editor>.overview{flex-shrink:0}.editor>.overview{padding:0}.editor>.timeline-frame{flex:0 1 186px;height:186px;min-height:0}.timeline-frame>.timeline-wrap,.timeline-frame .timeline-content,.timeline-frame #timeline{height:100%}}
 .editor-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .editor-history{display:flex;align-items:center;gap:4px}.editor-history>.icon{width:28px;min-width:28px;padding:4px}.editor-history svg{width:14px;height:14px}
 .editor-bar,.lane-head.editor-tools{background:var(--paper)}
-.editor .editor-bar{padding:4px 12px}
+.editor .editor-bar{margin-left:0;padding:4px 12px}
 .lane-head.editor-tools{justify-content:flex-start;gap:6px;padding:4px 12px;border-bottom:1px solid var(--line);font:400 11px/normal system-ui,sans-serif;color:var(--muted)}
 .editor-tools input[type=number],.editor-tools select{background:#fff}
 .editor-tools :is(input[type=number],select,button){box-sizing:border-box;height:28px;min-height:28px;padding-block:0;line-height:normal;font-size:11px}
@@ -472,5 +507,17 @@ onUnmounted(() => { cancelOverviewDrag(); observer?.disconnect(); });
 .editor-tools #custom-snap{width:64px;min-width:0;padding-inline:6px;font-size:11px}
 .editor-tools :is(label,input,select,button,option){font:inherit}
 .choice-symbol.duet{position:relative}.choice-symbol.duet::after{content:'2P';position:absolute;inset:0;display:grid;place-items:center;color:#fff;font:bold 8px sans-serif}
-.editor-bar,.editor-tools{flex-wrap:wrap}
+.editor-bar,.editor-tools{flex-wrap:nowrap}
+.tools-menu,.tools-panel{display:flex;flex:1;align-items:center;gap:6px;min-width:0}.tools-menu>summary{display:none}
+.tools-menu::details-content{display:contents}
+.compact-tools{position:relative}.compact-tools .tools-menu{display:block;margin-left:auto}
+.compact-tools .tools-menu>summary{display:flex;align-items:center;justify-content:center;width:28px;height:28px;cursor:pointer;list-style:none;border-radius:4px}
+.tools-menu>summary::-webkit-details-marker{display:none}.tools-menu>summary:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
+.compact-tools .tools-menu{flex:none}
+.compact-tools .tools-panel{position:absolute;z-index:10;right:8px;top:100%;display:flex;flex-direction:column;align-items:stretch;gap:12px;width:280px;max-width:calc(100vw - 16px);max-height:50dvh;overflow:auto;overscroll-behavior:contain;padding:12px;border:1px solid var(--line);border-radius:5px;background:#fff;box-shadow:0 6px 24px #202a2820}
+.compact-tools .tools-menu:not([open])>.tools-panel{display:none}
+.compact-tools .tools-panel>label{justify-content:space-between;margin-left:0}.compact-tools .editor-actions{gap:8px}.compact-tools .measure-actions{margin-right:0}
+@container(max-width:480px){.editor .editor-bar{padding-inline:6px;gap:4px}.measure-nav{gap:4px}.measure-nav input{width:42px;padding-inline:2px}.editor-tools>label{gap:4px}.editor-tools #snap-division{width:65px;padding-inline:2px}.editor-history{gap:0}}
+@container(max-width:480px){.tool-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}}
+@media(max-width:900px){.editor-information{display:none}}
 </style>

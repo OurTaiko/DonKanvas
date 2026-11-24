@@ -1,14 +1,15 @@
 <script setup>
 import { t, message, formatMessage, LocalizedError, languages, localePreference, initializeLocale, setLocale } from './i18n.js';
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, shallowRef, watch } from 'vue';
-import { Plus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser } from '@lucide/vue';
+import { Plus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser, ListMusic } from '@lucide/vue';
 import { useStudio, formatTime } from './useStudio.js';
 import productIcon from './assets/icon.png';
 import TimelineEditor from './TimelineEditor.vue';
 import MeasureEditor from './MeasureEditor.vue';
 import SongWorkspace from './SongWorkspace.vue';
 import DifficultyIcon from './DifficultyIcon.vue';
-import { COURSE_NAMES, COURSE_LABELS, courseLabel, variantLabel } from './courses.js';
+import DocumentTitle from './DocumentTitle.vue';
+import { COURSE_NAMES, COURSE_LABELS } from './courses.js';
 import { NOTE_TYPES } from './note-model.js';
 import { checkPwaUpdate, activatePwaUpdate, waitForPwaRegistration } from './pwa.js';
 
@@ -18,6 +19,20 @@ provide('studio', studio);
 const { state, controls, range, duration } = studio;
 const chartFile = ref(null), audioFile = ref(null);
 const transportHost = ref(null), transportHeight = ref(0);
+const playbackMenu = ref(null), compactTransport = ref(true), playbackMenuOpen = ref(false);
+const inspectorTabs = ['谱面编辑', '落点信息', '谱面分歧', '全局导航'], inspectorTab = ref(0);
+function inspectorKeydown(event, index) {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault(); event.stopPropagation();
+  const count = inspectorTabs.length;
+  inspectorTab.value = event.key === 'Home' ? 0 : event.key === 'End' ? count - 1 : (index + (event.key === 'ArrowLeft' ? -1 : 1) + count) % count;
+  event.currentTarget.parentElement.children[inspectorTab.value].focus();
+}
+function playbackKeydown(event) {
+  if (event.key !== 'Escape' || !compactTransport.value || !playbackMenu.value.open) return;
+  event.preventDefault(); event.stopPropagation();
+  playbackMenuOpen.value = false; playbackMenu.value.querySelector('summary').focus();
+}
 const fileMenu = ref(null), editMenu = ref(null), selectionMenu = ref(null), settingsMenu = ref(null), languageMenu = ref(null), shortcutMenu = ref(null), projectMenu = ref(null);
 const mobileWorkspace = ref(matchMedia('(max-width:900px)').matches), workspaceOpen = ref(!mobileWorkspace.value), workspaceSidebar = ref(null), workspaceTop = ref(0);
 let desktopWorkspaceOpen = true;
@@ -246,6 +261,7 @@ function popoverKeydown(event, menu) {
   }
 }
 function dismissPopovers(event) {
+  if (compactTransport.value && playbackMenu.value?.open && !playbackMenu.value.contains(event.target)) playbackMenuOpen.value = false;
   for (const menu of [fileMenu.value, editMenu.value, selectionMenu.value, settingsMenu.value, languageMenu.value, shortcutMenu.value, projectMenu.value]) {
     if ([languageMenu.value, shortcutMenu.value, projectMenu.value].includes(menu) && settingsMenu.value?.contains(event.target)) continue;
     if (menu?.open && !menu.contains(event.target)) menu.open = false;
@@ -317,7 +333,11 @@ onMounted(() => {
   if (localeError) studio.notice(message('语言偏好读取失败：{p0}', { p0: localeError }), true);
   tabsObserver = new ResizeObserver(measureTabs);
   tabsObserver.observe(tabsViewport.value); tabsObserver.observe(tabsContent.value); measureTabs();
-  transportObserver = new ResizeObserver(entries => { transportHeight.value = entries[0].target.getBoundingClientRect().height; });
+  transportObserver = new ResizeObserver(entries => {
+    const bounds = entries[0].target.getBoundingClientRect();
+    transportHeight.value = bounds.height;
+    compactTransport.value = bounds.width <= 640;
+  });
   transportObserver.observe(transportHost.value); transportHeight.value = transportHost.value.getBoundingClientRect().height;
   document.addEventListener('pointerdown', dismissPopovers);
   document.addEventListener('focusin', dismissPopovers);
@@ -496,13 +516,15 @@ async function dropFiles(event) {
       <div v-if="tabsScrollMax > 0" class="chart-tabs-scrollbar" role="scrollbar" tabindex="0" :aria-label="t('谱面标签横向滚动')" aria-orientation="horizontal" aria-controls="chart-tabs-viewport" :aria-valuemin="0" :aria-valuemax="tabsScrollMax" :aria-valuenow="Math.round(tabsScrollLeft)" @pointerdown="startScrollbar" @pointermove="moveScrollbar" @pointerup="stopScrollbar" @pointercancel="stopScrollbar" @lostpointercapture="stopScrollbar" @keydown="keydownScrollbar"><span class="chart-tabs-thumb" :style="scrollbarThumb"></span></div>
     </nav>
     <div class="studio-panel-body" :class="{ 'workspace-collapsed': !workspaceOpen || mobileWorkspace }" :style="{ '--workspace-top': `${workspaceTop}px` }">
-    <SongWorkspace v-if="state.chart" ref="workspaceSidebar" :collapsed="!workspaceOpen" :class="{ 'workspace-overlay': mobileWorkspace && workspaceOpen }" @toggle="toggleWorkspace" @navigate="showWorkspaceSection" @keydown="workspaceKeydown" />
+    <SongWorkspace v-if="state.chart" ref="workspaceSidebar" :collapsed="!workspaceOpen" :class="{ 'workspace-overlay': mobileWorkspace && workspaceOpen }" @toggle="toggleWorkspace" @navigate="showWorkspaceSection" @keydown="workspaceKeydown">
+      <template #title><DocumentTitle v-if="mobileWorkspace && studio.bar.value" class="workspace-document-title" :class="{ expanded: workspaceOpen }" /></template>
+    </SongWorkspace>
     <div class="editor-core" :inert="state.editorBlocked">
     <section v-if="studio.bar.value" class="document-toolbar">
-      <div class="document-title"><span class="document-difficulty" role="img" :title="courseLabel(state.chart.variant.course)" :aria-label="courseLabel(state.chart.variant.course)"><DifficultyIcon :course="state.chart.variant.course" /></span><h1 id="song-title" :title="state.chart.title">{{ state.chart.title }}</h1><span id="document-mode" :title="variantLabel(state.chart.variant)">{{ variantLabel(state.chart.variant) }}</span><span v-if="state.encoding" id="encoding">{{ state.encoding }}</span></div>
+      <DocumentTitle v-if="!mobileWorkspace" />
     </section>
     <div class="editor-scroll">
-    <TimelineEditor v-if="studio.bar.value" />
+    <TimelineEditor v-if="studio.bar.value" :mobile="mobileWorkspace" />
     <section v-else class="empty-editor" @keydown.space.stop>
       <FileMusic />
       <h2>{{ state.chart ? t('尚未创建谱面') : t('新建或打开一首歌曲') }}</h2>
@@ -518,9 +540,11 @@ async function dropFiles(event) {
       <button id="stop" class="icon" :title="t('停止')" :aria-label="t('停止')" :disabled="!state.chart" @click="studio.stop"><Square /></button>
       <button id="next" class="icon" :title="t('播放位置后退 / 前进一小节')" :aria-label="t('下一小节')" :disabled="!state.chart || state.invalid" @click="studio.seekMeasure(1)"><SkipForward /></button>
       <div class="time"><b id="time">{{ formatTime(state.position) }}</b><span id="duration">/ {{ formatTime(duration) }}</span></div>
-    </div><div class="transport-right">
+    </div><details ref="playbackMenu" class="playback-menu" :class="{ 'compact-playback': compactTransport }" :open="!compactTransport || playbackMenuOpen" @keydown="playbackKeydown">
+      <summary :aria-label="t('播放菜单')" :title="t('播放菜单')" @click.prevent="playbackMenuOpen = !playbackMenuOpen"><ListMusic /></summary>
+      <div class="transport-right">
       <label>{{ t('速度') }}<select id="rate" v-model.number="controls.rate"><option v-for="rate in [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]" :key="rate" :value="rate">{{ rate }}×</option></select></label>
-      <details class="volume-popover">
+      <details class="volume-popover" :open="compactTransport">
         <summary :aria-label="t('音量')" :title="`${t('音量')} · ${state.buffer ? state.audioName : t('无伴奏 · 可直接播放谱面')}`"><Volume2 /><span>{{ t('音量') }}</span></summary>
         <div class="volume-panel">
           <label for="volume">{{ t('音乐音量') }}<input id="volume" v-model.number="controls.volume" :aria-label="t('音乐音量')" type="range" min="0" max="100"><output for="volume">{{ controls.volume }}%</output></label>
@@ -530,11 +554,20 @@ async function dropFiles(event) {
         </div>
       </details>
       <button id="open-audio" class="primary" :title="t('载入音频')" :aria-label="t('载入音频')" :disabled="!state.chart" @click="audioFile.click()"><AudioLines /><span>{{ t('载入音频') }}</span></button>
-    </div></section>
+    </div></details></section>
     <div v-if="state.notice && (studio.bar.value || state.error)" id="notice" role="status" aria-live="polite" :class="{ error: state.error }">{{ state.notice }}</div>
     </div></Teleport>
     </div>
-    <MeasureEditor v-if="studio.bar.value" :inert="state.editorBlocked" />
+    <section v-show="studio.bar.value && mobileWorkspace" class="mobile-inspector" :inert="state.editorBlocked">
+      <div class="inspector-tabs" role="tablist" :aria-label="t('编辑面板')" @keydown.space.stop @keyup.space.stop>
+        <button v-for="(label, index) in inspectorTabs" :id="`inspector-tab-${index}`" :key="label" type="button" role="tab" :aria-selected="inspectorTab === index" :aria-controls="['mobile-edit-panel', 'mobile-position-panel', 'mobile-branch-panel', 'mobile-navigation-panel'][index]" :tabindex="inspectorTab === index ? 0 : -1" @click="inspectorTab = index" @keydown="inspectorKeydown($event, index)">{{ t(label) }}</button>
+      </div>
+      <div v-show="inspectorTab === 0" id="mobile-edit-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-0" tabindex="0"></div>
+      <div v-show="inspectorTab === 1" id="mobile-position-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-1" tabindex="0"></div>
+      <div v-show="inspectorTab === 2" id="mobile-branch-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-2" tabindex="0"></div>
+      <div v-show="inspectorTab === 3" id="mobile-navigation-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-3" tabindex="0"></div>
+    </section>
+    <Teleport v-if="studio.bar.value" to="#mobile-edit-panel" :disabled="!mobileWorkspace" defer><MeasureEditor :inert="state.editorBlocked" /></Teleport>
     </div>
     </section>
   </main>
@@ -568,8 +601,10 @@ header{position:relative;z-index:40;height:38px;min-height:38px;padding:3px 8px;
 #check-update{width:100%;justify-content:flex-start;min-height:34px;border:0;padding:6px 8px;font-size:12px}.settings-panel:focus-visible{outline:2px solid var(--green)}#update-notice.error{color:#bd352b}
 main{display:flex;flex:1;min-height:0;max-width:none;margin:0;padding:0}
 .document-toolbar{display:flex;align-items:center;gap:8px 12px;flex-wrap:nowrap;flex-shrink:0;padding:8px 12px;border-bottom:1px solid var(--line);font-size:11px;color:var(--muted)}
-.document-toolbar h1{font-size:16px;line-height:1.4;margin:0;min-width:80px;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
-.document-title{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;flex:1}.document-title h1{min-width:0}.document-difficulty{display:flex;flex-shrink:0}#document-mode{flex-shrink:0;max-width:35%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.document-toolbar h1{line-height:1.4;margin:0;min-width:80px;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.document-title{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;flex:1}.document-title h1{min-width:0;font-size:12px;font-weight:700}.document-difficulty{display:flex;flex-shrink:0}#document-mode{flex-shrink:0;max-width:35%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--muted)}
+.workspace-document-title{flex:1;min-width:0;padding:8px 12px 8px 0;pointer-events:none}.workspace-document-title.expanded{padding-right:36px}.workspace-document-title h1{min-width:0;margin:0;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.workspace-document-title #encoding{font-size:10px;white-space:nowrap;flex-shrink:0}
+@media(max-width:900px){.editor-core>.document-toolbar{display:none}}
 .document-toolbar #encoding{margin-left:0;font-size:10px;white-space:nowrap;flex-shrink:0}
 #notice{min-height:0;max-height:20dvh;overflow:auto;padding:4px 12px;border-top:1px solid var(--line);background:var(--paper);color:var(--muted);font-size:11px;line-height:16px;overflow-wrap:anywhere}
 #notice.error{color:#bd352b}
@@ -586,7 +621,12 @@ main{display:flex;flex:1;min-height:0;max-width:none;margin:0;padding:0}
 .empty-editor{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:480px;padding:40px 24px;text-align:center;background:radial-gradient(ellipse at center,#f0f6f1,transparent 70%)}.empty-editor>svg{width:48px;height:48px;color:#8da896;stroke-width:1.3}.empty-editor h2{margin:20px 0 8px;font-size:20px;font-weight:600}.empty-editor p{max-width:380px;color:var(--muted);font-size:13px;line-height:1.8}.empty-editor>.primary{margin-top:8px}
 .empty-difficulty-actions{display:flex;justify-content:center;flex-wrap:wrap;gap:8px;max-width:100%;margin-top:8px}
 @media(min-width:901px) and (max-width:1100px){.studio-panel-body{grid-template-columns:220px minmax(0,1fr)}.studio-panel-body:has(.measure-editor){grid-template-columns:220px minmax(0,1fr) 280px}}
-@media(max-width:900px){#app{height:auto;min-height:100dvh;overflow:visible}header{position:sticky;top:0}main{display:block;padding-bottom:var(--transport-height)}.studio-panel{overflow:visible}.studio-panel-body,.studio-panel-body:has(.measure-editor),.studio-panel-body.workspace-collapsed:has(>.song-workspace),.studio-panel-body.workspace-collapsed:has(.measure-editor){grid-template-columns:minmax(0,1fr)}.studio-panel-body>.song-workspace{height:auto}.studio-panel-body>.song-workspace.workspace-overlay{position:fixed;top:var(--workspace-top);left:0;right:0;z-index:20;width:100%;height:calc(100dvh - var(--workspace-top) - var(--transport-height));max-height:none}body:has(.workspace-overlay){overflow:hidden}.editor-core{min-height:60dvh;overflow:visible}.editor-scroll{flex:auto;overflow:visible}.transport-host{position:fixed;left:0;right:0;bottom:0;z-index:25}.transport{padding-bottom:calc(7px + env(safe-area-inset-bottom,0px))}.empty-editor{min-height:300px}}
+@media(max-width:900px){main{padding-bottom:var(--transport-height)}.studio-panel-body,.studio-panel-body:has(.measure-editor),.studio-panel-body.workspace-collapsed:has(>.song-workspace),.studio-panel-body.workspace-collapsed:has(.measure-editor){grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.studio-panel-body:has(#timeline){grid-template-rows:auto minmax(0,1.2fr) minmax(0,1fr)}.studio-panel-body>.song-workspace{height:auto;grid-row:1}.studio-panel-body>.song-workspace.workspace-overlay{position:fixed;top:var(--workspace-top);left:0;right:0;z-index:20;width:100%;height:calc(100dvh - var(--workspace-top) - var(--transport-height));max-height:none}.editor-core{grid-row:2}.transport-host{position:fixed;left:0;right:0;bottom:0;z-index:25}.transport{padding-bottom:calc(7px + env(safe-area-inset-bottom,0px))}.empty-editor{min-height:100%;padding:20px}}
+.mobile-inspector{display:flex;flex-direction:column;grid-row:3;min-height:0;min-width:0;border-top:1px solid var(--line);overflow:hidden}
+@media(max-width:900px){.studio-panel-body:has(#timeline){grid-template-rows:auto minmax(0,max-content) minmax(0,1fr)}.editor-core:has(#timeline) .editor-scroll{display:flex;overflow:hidden}.editor-core:has(#timeline) .workspace{flex:1;min-width:0;min-height:0}}
+@media(max-width:900px) and (max-height:600px){.studio-panel-body:has(#timeline){grid-template-rows:auto minmax(0,4fr) minmax(0,1fr)}}
+.inspector-tabs{display:flex;flex-shrink:0;border-bottom:1px solid var(--line);background:var(--paper)}.inspector-tabs>[role=tab]{flex:1;min-width:0;min-height:34px;padding:4px;border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;font-size:12px}.inspector-tabs>[aria-selected=true]{border-bottom-color:var(--green);color:var(--green);background:#fff}
+.inspector-tab-panel{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}.inspector-tab-panel>.measure-editor{overflow:visible;border:0}.inspector-tab-panel>.branch-context{border:0}
 .chart-tabs{position:relative;flex-shrink:0;min-width:0;margin:0;border-bottom:1px solid var(--line);background:#edf1ee}
 .chart-tabs .new-chart-tab{width:43px;min-width:43px;min-height:43px;flex-shrink:0;align-self:stretch;border:0;border-right:1px solid var(--line);border-radius:0;background:transparent;color:var(--muted)}.chart-tabs .new-chart-tab:hover{background:#dfe8e2;color:var(--green)}
 .chart-tabs-viewport{overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain}
@@ -607,9 +647,13 @@ main{display:flex;flex:1;min-height:0;max-width:none;margin:0;padding:0}
 .chart-tab .icon{flex-shrink:0;opacity:0;pointer-events:none}
 .chart-tab.active .icon,.chart-tab:hover .icon,.chart-tab:focus-within .icon{opacity:1;pointer-events:auto}
 .chart-tab .icon:hover{background:#cfddd4}
-@media(max-width:900px){.chart-tabs{position:sticky;top:38px;z-index:15}}
-@container(max-width:640px){.transport{grid-template-columns:minmax(0,1fr)}.transport-left .time{margin-left:auto}.transport-right{justify-content:flex-start}.transport #open-audio{margin-left:auto}.volume-popover{position:static}.volume-panel{left:8px;right:8px;width:auto;max-width:none;max-height:calc(100dvh - 140px);overflow:auto;overscroll-behavior:contain}}
-@container(max-width:400px){.document-toolbar #encoding{display:none}.document-title{gap:6px}.transport #open-audio>span,.volume-popover>summary>span{display:none}.transport #open-audio{width:34px;min-width:34px;padding:7px}}
+.playback-menu{display:contents}.playback-menu>summary{display:none}
+.compact-playback{display:block}.compact-playback>summary{display:flex;align-items:center;justify-content:center;width:30px;height:30px;list-style:none;border-radius:4px;cursor:pointer}.playback-menu>summary::-webkit-details-marker{display:none}.playback-menu>summary:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
+.compact-playback .transport-right{position:absolute;bottom:calc(100% + 6px);right:8px;z-index:20;display:flex;flex-direction:column;align-items:stretch;gap:14px;width:310px;max-width:calc(100vw - 16px);max-height:60dvh;overflow:auto;overscroll-behavior:contain;padding:15px;border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 6px 24px #202a2820}
+.compact-playback .transport-right>label{justify-content:space-between}.compact-playback .volume-popover>summary{display:none}.compact-playback .volume-panel{position:static;width:auto;max-width:none;padding:0;border:0;box-shadow:none}
+.compact-playback:not([open])>.transport-right{display:none}
+@container(max-width:640px){.transport-left .time{margin-left:auto}.transport{gap:6px;padding-inline:8px}}
+@container(max-width:400px){.document-toolbar #encoding{display:none}.document-title{gap:6px}.transport .time b{font-size:14px}.transport .time span{font-size:10px}}
 @media(max-width:720px){header{padding:3px 8px;gap:6px}.document-toolbar{gap:7px}.document-toolbar h1{max-width:180px}.filename-control{margin-left:0}.filename-control input{width:150px}}
 
 :is(.studio-panel,.transport-host) :is(.document-toolbar,.editor-bar,.transport,.inspector-heading,.aside-actions) button:not(.primary),

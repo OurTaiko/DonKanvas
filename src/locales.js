@@ -1,7 +1,10 @@
 // Translation order: English, Japanese, Traditional Chinese, Korean.
 export const translations = {
+  '更多工具': ['More tools', 'その他のツール', '更多工具', '추가 도구'],
+  '播放菜单': ['Playback menu', '再生メニュー', '播放選單', '재생 메뉴'],
   '落点信息': ['Position information', '配置位置の情報', '落點資訊', '배치 위치 정보'],
   '谱面分歧': ['Chart branches', '譜面の分岐', '譜面分歧', '보면 분기'],
+  '谱面编辑': ['Chart editing', '譜面編集', '譜面編輯', '채보 편집'],
   '未创建': ['Not created', '未作成', '未建立', '미생성'],
   '点击创建': ['Click to create', 'クリックして作成', '點擊建立', '클릭하여 만들기'],
   '{p0}-{p1} 小节（共 {p2} 小节）': ['Measures {p0}-{p1} ({p2} total)', '{p0}-{p1} 小節（全 {p2} 小節）', '{p0}-{p1} 小節（共 {p2} 小節）', '{p0}-{p1}마디 (총 {p2}마디)'],

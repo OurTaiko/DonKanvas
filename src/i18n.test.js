@@ -53,7 +53,7 @@ test('timeline waveforms extend beneath both gutter masks using the beat project
     beatAt: time => time <= 50 ? time : 50 + (time - 50) * 2,
     timeAt: beat => beat <= 50 ? beat : 50 + (beat - 50) / 2
   };
-  for (const width of [80, 192]) for (const startBeat of [0, 45, 145]) {
+  for (const height of [150, 250, 400]) for (const width of [80, 192]) for (const startBeat of [0, 45, 145]) {
     const timelineBrush = brush(), overviewBrush = brush(), beats = 20;
     const view = { bars: [], startBeat, start: scale.timeAt(startBeat), end: scale.timeAt(startBeat + beats) };
     const timeline = { value: { style: {} } }, overview = { value: {} };
@@ -62,7 +62,7 @@ test('timeline waveforms extend beneath both gutter masks using the beat project
       state, timeline, overview, visible: { value: view }, viewportWidth: { value: width }, viewBeats: { value: beats },
       timelineScale: { value: scale }, timelineBounds: { value: { start: 0, end: 100 } },
       spans: { value: [] }, hover: { value: null }, TIMELINE_GUTTER, createTimelineViewport, syncScroll() {}, t: text => text,
-      canvasContext: canvas => ({ brush: canvas === timeline.value ? timelineBrush : overviewBrush, width: width + TIMELINE_GUTTER * 2, height: 250 })
+      canvasContext: canvas => ({ brush: canvas === timeline.value ? timelineBrush : overviewBrush, width: width + TIMELINE_GUTTER * 2, height })
     });
     draw();
     assert.match(descriptor.styles[0].content, /\.timeline-frame #timeline\{height:250px;/);
@@ -70,13 +70,15 @@ test('timeline waveforms extend beneath both gutter masks using the beat project
     const noteArea = timelineBrush.rectangles.find(rect => rect.color === '#f6f7f3');
     assert.equal(noteArea.y - (waveArea.y + waveArea.height), 6);
     const waveform = timelineBrush.rectangles.filter(rect => rect.color === '#72a592');
+    assert.ok(waveform.every(rect => rect.y >= waveArea.y && rect.y + rect.height <= waveArea.y + waveArea.height));
     const projection = createTimelineViewport(scale, view, beats, width), fullWidth = width + TIMELINE_GUTTER * 2;
     const audiblePixels = Array.from({ length: fullWidth }, (_, x) => x).filter(x => projection.timeAt(x + 1) > 0 && projection.timeAt(x) < 100);
     assert.deepEqual(waveform.map(rect => rect.x), audiblePixels);
     if (startBeat === 45) {
       assert.equal(waveform[0].x, 0); assert.equal(waveform.at(-1).x, fullWidth - 1);
-      assert.equal(waveform[0].height, .25 * 59 * 2);
-      assert.equal(waveform.at(-1).height, .75 * 59 * 2);
+      const amplitude = (height - 120) / 2 - 6;
+      assert.equal(waveform[0].height, .25 * amplitude * 2);
+      assert.equal(waveform.at(-1).height, .75 * amplitude * 2);
     }
     const masks = timelineBrush.rectangles.filter(rect => rect.color === '#b8b8b880');
     assert.deepEqual(masks.map(rect => [rect.x, rect.width]), [[0, 24], [width + 24, 24]]);
@@ -84,6 +86,23 @@ test('timeline waveforms extend beneath both gutter masks using the beat project
     state.buffer = null; draw();
     assert.deepEqual(timelineBrush.labels.at(-1), { text: '无伴奏 · 可播放谱面音符音', x: TIMELINE_GUTTER + 14 });
   }
+});
+
+test('short timeline canvases scale drawing coordinates without changing overview sizing', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const source = descriptor.scriptSetup.content.match(/function canvasContext\(canvas\) \{[\s\S]*?\n\}/)[0];
+  const transforms = [], cleared = [];
+  const brush = { setTransform(...args) { transforms.push(args); }, clearRect(...args) { cleared.push(args); } };
+  const canvas = { getBoundingClientRect: () => ({ width: 320, height: 75 }), getContext: () => brush };
+  const timeline = { value: canvas };
+  const context = runInNewContext(`${source}; canvasContext`, { timeline, devicePixelRatio: 2 });
+  assert.equal(context(canvas).height, 150);
+  assert.deepEqual(transforms.at(-1), [2, 0, 0, 1, 0, 0]);
+  assert.deepEqual(cleared.at(-1), [0, 0, 320, 150]);
+  assert.equal(canvas.height, 150);
+  const overview = { ...canvas, getBoundingClientRect: () => ({ width: 320, height: 40 }) };
+  assert.equal(context(overview).height, 40);
+  assert.deepEqual(transforms.at(-1), [2, 0, 0, 2, 0, 0]);
 });
 
 test('overview section bands follow intra-measure Go-Go events and the selected branch duration independently', () => {
@@ -329,7 +348,7 @@ test('overview dragging pans continuously without seeking or changing selections
   ]) assert.ok(canvas.includes(`@${eventName}="${handler}"`));
   assert.doesNotMatch(canvas, /@click=/);
   assert.match(descriptor.template.content, /^\s*<div class="workspace">\s*<section class="editor">/);
-  assert.match(descriptor.template.content, /<\/canvas><\/div><\/div><\/div>\s*<section class="overview">[\s\S]*?<\/section>\s*<div class="editor-information">\s*<section class="cell-inspector"/);
+  assert.match(descriptor.template.content, /<\/canvas><\/div><\/div><\/div>\s*<section class="overview">[\s\S]*?<\/section>\s*<div class="editor-information">\s*<Teleport[^>]*>\s*<section class="cell-inspector"/);
   const styles = readFileSync(new URL('sound.css', import.meta.url), 'utf8');
   assert.match(styles, /\.timeline-wrap\{[^}]*overflow-x:auto;[^}]*scrollbar-width:none/);
   assert.match(styles, /\.timeline-wrap::-webkit-scrollbar\{display:none\}/);
@@ -391,6 +410,7 @@ test('the header file menu groups file actions and shortcuts without occupying t
   assert.doesNotMatch(tabs, /id="save"|id="save-as"/);
   const styles = descriptor.styles[0].content;
   assert.match(styles, /\.chart-tabs\{[^}]*flex-shrink:0/);
+  assert.doesNotMatch(styles, /\.chart-tabs\{[^}]*position:sticky/);
   assert.match(styles, /\.file-actions \.file-panel button span\{display:inline;/);
   assert.match(styles, /\.file-panel\{position:fixed;/);
 });
@@ -543,6 +563,7 @@ test('scrolling or focusing the shared settings panel retains expanded help, whi
     value: { open: false, contains: target => target === name || name === 'settingsMenu' && ['panel', 'scrollbar', 'languageMenu', 'shortcutMenu', 'projectMenu'].includes(target) }
   }]));
   const script = descriptor.scriptSetup.content;
+  refs.compactTransport = { value: false };
   const { dismiss, toggle } = runInNewContext(`({
     dismiss: ${script.match(/function dismissPopovers\(event\) \{[\s\S]*?\n\}/)[0]},
     toggle: ${script.match(/function toggleSettingsSection\(event\) \{[\s\S]*?\n\}/)[0]}
@@ -652,8 +673,8 @@ test('audio loading is the rightmost control in the active chart transport', () 
   assert.match(button, /@click="audioFile.click\(\)"/);
   assert.match(button, /:aria-label="t\('载入音频'\)"/);
   assert.equal([...template.matchAll(/id="open-audio"/g)].length, 1);
-  assert.match(transport, /<\/details>\s*<button id="open-audio"[\s\S]*?<\/button>\s*<\/div><\/section>/);
-  assert.match(descriptor.styles[0].content, /@container\(max-width:640px\)\{\.transport\{grid-template-columns:minmax\(0,1fr\)\}/);
+  assert.match(transport, /<\/details>\s*<button id="open-audio"[\s\S]*?<\/button>\s*<\/div><\/details><\/section>/);
+  assert.match(descriptor.styles[0].content, /\.compact-playback \.transport-right\{[^}]*position:absolute;[^}]*overflow:auto/);
 });
 
 test('dropping TJA files anywhere opens them sequentially, preserves native text drags and reports unsupported files or modal guards', async () => {
@@ -711,7 +732,7 @@ test('dropping TJA files anywhere opens them sequentially, preserves native text
   });
 
   test('the central title identifies difficulty before the song and mode after it, without a duplicate inspector header', () => {
-    const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+    const { descriptor } = parse(readFileSync(new URL('DocumentTitle.vue', import.meta.url), 'utf8'));
     compileScript(descriptor, { id: 'document-context' });
     const context = descriptor.template.content.match(/<div class="document-title">[\s\S]*?<\/div>/)[0];
     assert.match(context, /courseLabel\(state.chart.variant.course\)/);
@@ -889,7 +910,9 @@ test('the header keeps title and history while global navigation contains full-c
   const template = descriptor.template.content;
   assert.match(template, /<div class="editor-core" :inert="state.editorBlocked">\s*<section v-if="studio.bar.value" class="document-toolbar">/);
   const toolbar = template.match(/<section v-if="studio.bar.value" class="document-toolbar">[\s\S]*?<\/section>/)[0];
-  assert.match(toolbar, /<div class="document-title">[\s\S]*<h1 id="song-title"[\s\S]*?<\/h1><span id="document-mode"[\s\S]*<span v-if="state.encoding" id="encoding">[\s\S]*?<\/span><\/div>/);
+  assert.match(toolbar, /<DocumentTitle v-if="!mobileWorkspace" \/>/);
+  const title = parse(readFileSync(new URL('DocumentTitle.vue', import.meta.url), 'utf8')).descriptor;
+  assert.match(title.template.content, /<div class="document-title">[\s\S]*<h1 id="song-title"[\s\S]*?<\/h1><span id="document-mode"[\s\S]*<span v-if="state.encoding" id="encoding">[\s\S]*?<\/span><\/div>/);
   const timeline = readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8');
   const navigation = timeline.match(/<section class="measure-section">[\s\S]*?<\/section>/)[0];
   assert.match(navigation, /t\('全局导航'\)/);
@@ -1069,11 +1092,11 @@ test('current position timing lives in note attributes and measure selection liv
   for (const field of ['bpm', 'scroll', 'numerator', 'denominator', 'gogo', 'delay']) assert.ok(descriptor.scriptSetup.content.includes(`timing.${field}`), field);
   for (const id of ['cell-bpm', 'cell-scroll', 'cell-meter']) assert.ok(descriptor.scriptSetup.content.includes(`id: '${id}'`), id);
   const nav = descriptor.template.content.match(/<div class="measure-nav">[\s\S]*?<\/div>/)[0];
-  assert.match(nav, /<label for="bar-number">{{ t\('查看小节'\) }}<\/label>\s*<input id="bar-number" type="number" min="1" :max="state.chart\?\.bars.length" step="1"/);
+  assert.match(nav, /<label for="bar-number"[^>]*><span class="tool-label">{{ t\('查看小节'\) }}<\/span><\/label>\s*<input id="bar-number" type="number" min="1" :max="state.chart\?\.bars.length" step="1"/);
   assert.doesNotMatch(descriptor.template.content, /id="bar-prev"|id="bar-next"|measure-stepper/);
   const styles = descriptor.styles[0].content;
   assert.match(styles, /\.measure-nav input\{[^}]*height:28px;min-height:28px;[^}]*background:#fff/);
-  assert.match(styles, /\.editor \.editor-bar\{padding:4px 12px\}/);
+  assert.match(styles, /\.editor \.editor-bar\{[^}]*padding:4px 12px\}/);
   assert.match(styles, /\.lane-head\.editor-tools\{[^}]*padding:4px 12px/);
   assert.match(styles, /\.editor-tools input\[type=number\],\.editor-tools select\{background:#fff\}/);
   assert.match(styles, /\.editor-tools :is\(input\[type=number\],select,button\)\{box-sizing:border-box;height:28px;min-height:28px;/);
@@ -1530,10 +1553,10 @@ test('branch context follows position timing rather than the viewed measure and 
   assert.doesNotMatch(styles, /\.branch-context\[data-route/);
 });
 
-test('one wrapping toolbar combines measure actions, snap, zoom and follow controls above the timeline', () => {
+test('one single-line toolbar retains priority controls and collapses secondary controls above the timeline', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'inline-snap-controls' });
-  const tools = descriptor.template.content.match(/<div class="lane-head editor-tools editor-bar">[\s\S]*?(?=\s*<div class="timeline-frame">)/)[0];
+  const tools = descriptor.template.content.match(/<div ref="toolbar" class="lane-head editor-tools editor-bar"[^>]*>[\s\S]*?(?=\s*<div class="timeline-frame">)/)[0];
   assert.equal(descriptor.template.content.split('class="lane-head editor-tools editor-bar"').length - 1, 1);
   assert.doesNotMatch(tools, /音乐波形|振幅/);
   for (const id of ['bar-number', 'undo', 'redo', 'insert-bar-before', 'insert-bar-after', 'delete-bar', 'snap-division', 'custom-snap', 'follow-playback', 'view']) {
@@ -1541,18 +1564,18 @@ test('one wrapping toolbar combines measure actions, snap, zoom and follow contr
     assert.equal(descriptor.template.content.split(`id="${id}"`).length - 1, 1);
   }
   assert.match(tools, /@change="snapChange"/);
-  assert.match(tools, /id="bar-number"[\s\S]*id="snap-division"[\s\S]*id="custom-snap"[\s\S]*id="view"[\s\S]*id="undo"[\s\S]*id="redo"[\s\S]*id="insert-bar-before"[\s\S]*id="insert-bar-after"[\s\S]*id="delete-bar"[\s\S]*id="follow-playback"/);
+  assert.match(tools, /id="bar-number"[\s\S]*id="snap-division"[\s\S]*id="undo"[\s\S]*id="redo"[\s\S]*<details ref="toolsMenu"[\s\S]*id="custom-snap"[\s\S]*id="view"[\s\S]*id="insert-bar-before"[\s\S]*id="insert-bar-after"[\s\S]*id="delete-bar"[\s\S]*id="follow-playback"/);
   assert.match(tools, /v-show="controls.snapChoice === 'custom'"/);
   assert.match(tools, /min="1" max="768"/);
   assert.match(tools, /@change="studio.setSnap\(Number\(controls.customSnap\)\)"/);
-  assert.match(tools, /id="view"[\s\S]*<label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"><\/span>[\s\S]*<\/label>\s*<\/div>$/);
+  assert.match(tools, /id="view"[\s\S]*<label class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"><\/span>[\s\S]*<\/label>\s*<\/div><\/details>\s*<\/div>$/);
   assert.match(descriptor.styles[0].content, /\.follow-control input:checked\+\.switch-track\{background:var\(--green\)\}/);
   assert.match(descriptor.styles[0].content, /\.follow-control input:checked\+\.switch-track::before\{transform:translateX\(12px\)\}/);
   assert.match(descriptor.styles[0].content, /\.follow-control input:focus-visible\+\.switch-track\{outline:2px solid var\(--green\)/);
   assert.doesNotMatch(descriptor.styles[0].content, /\.editor-actions\{[^}]*margin-left:auto/);
   assert.match(descriptor.styles[0].content, /\.lane-head.editor-tools\{justify-content:flex-start;/);
   assert.match(descriptor.styles[0].content, /\.editor-tools \.follow-control\{[^}]*margin-left:auto;/);
-  assert.match(descriptor.styles[0].content, /\.editor-bar,\.editor-tools\{flex-wrap:wrap\}/);
+  assert.match(descriptor.styles[0].content, /\.editor-bar,\.editor-tools\{flex-wrap:nowrap\}/);
   assert.doesNotMatch(descriptor.template.content, /snap-controls|snap-position/);
   assert.doesNotMatch(readFileSync(new URL('sound.css', import.meta.url), 'utf8'), /\.snap-controls/);
 });
@@ -1562,9 +1585,10 @@ test('editor columns are siblings and mobile transport can leave the scrolling c
   compileScript(descriptor, { id: 'editor-columns' });
   const template = descriptor.template.content;
   assert.match(template, /<div class="editor-core" :inert="state.editorBlocked">\s*<section v-if="studio.bar.value" class="document-toolbar">[\s\S]*?<\/section>\s*<div class="editor-scroll">/);
-  assert.match(template, /<TimelineEditor v-if="studio.bar.value" \/>/);
+  assert.match(template, /<TimelineEditor v-if="studio.bar.value" :mobile="mobileWorkspace" \/>/);
   assert.match(template, /<\/div>\s*<Teleport to="body" :disabled="!mobileWorkspace"><div ref="transportHost" class="transport-host">\s*<section v-if="studio.bar.value" class="transport">/);
-  assert.match(template, /<\/div><\/section>\s*<div v-if="state.notice && \(studio.bar.value \|\| state.error\)" id="notice"[^>]*>{{ state.notice }}<\/div>\s*<\/div><\/Teleport>\s*<\/div>\s*<MeasureEditor v-if="studio.bar.value" :inert="state.editorBlocked" \/>/);
+  assert.match(template, /<\/div><\/details><\/section>\s*<div v-if="state.notice && \(studio.bar.value \|\| state.error\)" id="notice"[^>]*>{{ state.notice }}<\/div>\s*<\/div><\/Teleport>/);
+  assert.match(template, /<Teleport v-if="studio.bar.value" to="#mobile-edit-panel" :disabled="!mobileWorkspace" defer><MeasureEditor :inert="state.editorBlocked" \/><\/Teleport>/);
   assert.doesNotMatch(template, /id="preview-range"|id="loop-summary"|id="apply-loop"|id="loop-current"/);
   assert.match(template, /ref="selectionDialog"[\s\S]*@submit.prevent="applySelection"/);
   assert.match(template, /id="selection-first"/); assert.match(template, /id="selection-last"/);
@@ -1573,6 +1597,85 @@ test('editor columns are siblings and mobile transport can leave the scrolling c
   assert.match(styles, /\.editor-scroll\{[^}]*overflow:auto/);
   assert.match(styles, /\.transport\{[^}]*flex-shrink:0/);
   assert.match(styles, /\.volume-panel\{[^}]*bottom:calc\(100% \+ 6px\)/);
+});
+
+test('mobile song titles render directly in the workspace heading instead of an external teleport target', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  assert.match(descriptor.template.content, /<template #title><DocumentTitle v-if="mobileWorkspace && studio.bar.value" class="workspace-document-title"/);
+  assert.match(descriptor.template.content, /<DocumentTitle v-if="!mobileWorkspace" \/>/);
+  assert.doesNotMatch(descriptor.template.content, /mobile-document-title/);
+  assert.match(descriptor.styles[0].content, /@media\(max-width:900px\)\{\.editor-core>\.document-toolbar\{display:none\}\}/);
+  const sidebar = parse(readFileSync(new URL('SongWorkspace.vue', import.meta.url), 'utf8')).descriptor;
+  compileScript(sidebar, { id: 'merged-workspace-title' });
+  assert.match(sidebar.template.content, /class="workspace-heading-row">[\s\S]*ref="toggleButton"[\s\S]*<slot name="title" \/>/);
+  assert.match(sidebar.styles[0].content, /\.workspace-heading-row:has\(\.workspace-document-title\):focus-within::after\{[^}]*position:absolute;inset:0;z-index:2;border:2px solid var\(--green\);pointer-events:none/);
+  const timeline = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8')).descriptor;
+  assert.match(timeline.styles[0].content, /\.editor \.editor-bar\{margin-left:0;/);
+});
+
+test('mobile inspector keyboard navigation wraps, supports endpoints and leaves editing keys alone', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  const source = descriptor.scriptSetup.content.match(/function inspectorKeydown\(event, index\) \{[\s\S]*?\n\}/)[0];
+  const inspectorTabs = runInNewContext(descriptor.scriptSetup.content.match(/const inspectorTabs = (\[[^\n]*?\])/)[0] + '; inspectorTabs');
+  assert.deepEqual(Array.from(inspectorTabs), ['谱面编辑', '落点信息', '谱面分歧', '全局导航']);
+  const inspectorTab = { value: 0 }, focused = [];
+  const handler = runInNewContext(`${source}; inspectorKeydown`, { inspectorTab, inspectorTabs });
+  const children = inspectorTabs.map((_, index) => ({ focus() { focused.push(index); } }));
+  let prevented = 0, stopped = 0;
+  for (const [key, index, expected] of [['ArrowLeft', 0, 3], ['ArrowRight', 3, 0], ['End', 0, 3], ['Home', 3, 0]]) {
+    handler({ key, preventDefault() { prevented++; }, stopPropagation() { stopped++; }, currentTarget: { parentElement: { children } } }, index);
+    assert.equal(inspectorTab.value, expected);
+    assert.equal(focused.at(-1), expected);
+  }
+  handler({ key: 'a', preventDefault() { throw new Error('Editing key intercepted'); } }, 0);
+  handler({ key: 'ArrowRight', ctrlKey: true, preventDefault() { throw new Error('Modified key intercepted'); } }, 0);
+  assert.equal(prevented, 4); assert.equal(stopped, 4);
+  assert.match(descriptor.template.content, /<section v-show="studio.bar.value && mobileWorkspace" class="mobile-inspector"/);
+  assert.equal([...descriptor.template.content.matchAll(/class="inspector-tab-panel" role="tabpanel"/g)].length, 4);
+  assert.match(descriptor.template.content, /:aria-controls="\['mobile-edit-panel', 'mobile-position-panel', 'mobile-branch-panel', 'mobile-navigation-panel'\]\[index\]"/);
+  for (const [index, panel] of ['edit', 'position', 'branch', 'navigation'].entries()) {
+    assert.match(descriptor.template.content, new RegExp(`v-show="inspectorTab === ${index}" id="mobile-${panel}-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-${index}"`));
+  }
+  assert.match(descriptor.template.content, /v-show="inspectorTab === 3" id="mobile-navigation-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-3"/);
+  const timeline = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8')).descriptor;
+  assert.match(timeline.template.content, /<Teleport to="#mobile-navigation-panel" :disabled="!mobile" defer>\s*<section class="measure-section">[\s\S]*<MeasureGrid id="measures"[\s\S]*<\/section>\s*<\/Teleport>/);
+  assert.match(descriptor.styles[0].content, /\.inspector-tab-panel\{[^}]*min-height:0;overflow:auto;overscroll-behavior:contain/);
+});
+
+test('selecting custom snap opens secondary tools before focusing and presets retain direct snapping', async () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const source = descriptor.scriptSetup.content.match(/async function snapChange\(\) \{[\s\S]*?\n\}/)[0];
+  const controls = { snapChoice: 'custom' }, toolsOpen = { value: false }, hover = { value: {} }, calls = [];
+  const handler = runInNewContext(`${source}; snapChange`, {
+    controls, toolsOpen, hover,
+    customSnap: { value: { focus() { assert.equal(toolsOpen.value, true); calls.push('focus'); } } },
+    nextTick: async () => { calls.push('tick'); },
+    studio: { setSnap(value) { calls.push(value); } }
+  });
+  await handler();
+  assert.equal(hover.value, null);
+  assert.deepEqual(calls, ['tick', 'focus']);
+  controls.snapChoice = '24'; toolsOpen.value = false; calls.length = 0;
+  await handler();
+  assert.deepEqual(calls, [24]);
+  assert.equal(toolsOpen.value, false);
+});
+
+test('compact playback menu closes on Escape and returns focus without changing playback', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  const source = descriptor.scriptSetup.content.match(/function playbackKeydown\(event\) \{[\s\S]*?\n\}/)[0];
+  const compactTransport = { value: true }, playbackMenuOpen = { value: true };
+  let focused = 0, prevented = 0, stopped = 0;
+  const handler = runInNewContext(`${source}; playbackKeydown`, {
+    compactTransport, playbackMenuOpen, playbackMenu: { value: { open: true, querySelector: () => ({ focus() { focused++; } }) } }
+  });
+  const event = { key: 'Escape', preventDefault() { prevented++; }, stopPropagation() { stopped++; } };
+  handler(event);
+  assert.equal(playbackMenuOpen.value, false);
+  assert.equal(focused, 1); assert.equal(prevented, 1); assert.equal(stopped, 1);
+  compactTransport.value = false; playbackMenuOpen.value = true; handler(event);
+  assert.equal(playbackMenuOpen.value, true); assert.equal(focused, 1);
+  assert.match(descriptor.styles[0].content, /\.compact-playback:not\(\[open\]\)>\.transport-right\{display:none\}/);
 });
 
 test('status messages sit below playback outside scrolling content and share mobile height tracking and safe-area space', () => {
@@ -1625,10 +1728,10 @@ test('branch filtering and structural management have separate dialogs and actio
   assert.doesNotMatch(descriptor.template.content, /<dialog[^>]*\bopen(?:\s|>)/);
   assert.match(descriptor.styles[0].content, /\.branch-context\{[^}]*margin:0;padding:8px 12px;border-bottom:1px solid var\(--line\);background:#fff/);
   const app = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8')).descriptor;
-  assert.match(app.template.content, /<div class="editor-scroll">\s*<TimelineEditor v-if="studio.bar.value" \/>/);
+  assert.match(app.template.content, /<div class="editor-scroll">\s*<TimelineEditor v-if="studio.bar.value" :mobile="mobileWorkspace" \/>/);
   assert.doesNotMatch(app.template.content, /<BranchControls/);
   const timeline = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8')).descriptor;
-  assert.match(timeline.template.content, /<div class="editor-information">\s*<section class="cell-inspector"[\s\S]*?<\/dl>\s*<\/section>\s*<BranchControls \/>\s*<\/div>\s*<\/section>\s*<\/div>\s*<section class="measure-section">/);
+  assert.match(timeline.template.content, /<div class="editor-information">\s*<Teleport to="#mobile-position-panel" :disabled="!mobile" defer>\s*<section class="cell-inspector"[\s\S]*?<\/dl>\s*<\/section>\s*<\/Teleport>\s*<Teleport to="#mobile-branch-panel" :disabled="!mobile" defer><BranchControls \/><\/Teleport>\s*<\/div>\s*<\/section>\s*<\/div>\s*<Teleport to="#mobile-navigation-panel" :disabled="!mobile" defer>\s*<section class="measure-section">/);
   assert.match(timeline.styles[0].content, /\.editor-information\{display:grid;grid-template-columns:minmax\(0,1fr\)\}/);
   assert.match(timeline.styles[0].content, /\.editor-information>section\.branch-context\{[^}]*border-bottom:0\}/);
   assert.match(timeline.styles[0].content, /@container\(min-width:900px\)\{\.editor-information\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/);
