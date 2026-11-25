@@ -19,7 +19,7 @@ const placeholders = text => [...new Set(text.match(/\{\w+\}/g) || [])].sort();
 
 test('branch empty-state labels omit terminal punctuation in every language', () => {
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
-  assert.equal([...descriptor.template.content.matchAll(/t\('暂无分歧'\)/g)].length, 2);
+  assert.equal([...descriptor.template.content.matchAll(/t\('暂无分歧'\)/g)].length, 1);
   assert.doesNotMatch(descriptor.template.content, /暂无分歧。/);
   try {
     for (const language of languages) {
@@ -1672,14 +1672,15 @@ test('branch cards count each created route independently of the viewed route an
 test('branch titles use inclusive measure ranges and readable conditions with all branches sorted', () => {
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   const script = descriptor.scriptSetup.content;
-  const source = script.slice(script.indexOf('const sortedBranches ='), script.indexOf('async function openFilter()'));
+  const source = script.slice(script.indexOf('const sortedBranches ='), script.indexOf('function create()'));
   const parser = script.slice(script.indexOf('function branchCondition('), script.indexOf('function updateCondition('));
   const branch = { index: 0, firstBarIndex: 6, barCount: 3, value: 'p,50,80' };
   const branches = ref([branch]);
-  const labels = runInNewContext(`${source}\n${parser}\n({ branchLabel, conditionLabel, sortedBranches })`, { computed, branches, t });
+  const labels = runInNewContext(`${source}\n${parser}\n({ branchLabel, branchTitle, conditionLabel, sortedBranches })`, { computed, branches, t });
   reset();
   try {
     assert.equal(labels.branchLabel(branch), '7-9 小节（共 3 小节）');
+    assert.equal(labels.branchTitle(branch), '分歧 1 · 7-9 小节（共 3 小节）');
     assert.equal(labels.branchLabel({ firstBarIndex: 0, barCount: 1 }), '1-1 小节（共 1 小节）');
     assert.equal(labels.branchLabel({ firstBarIndex: 4, barCount: 0 }), '空分歧');
     assert.equal(labels.conditionLabel(branch), '精度：普通 < 50% · 玄人 50%–<80% · 达人 ≥ 80%');
@@ -1687,14 +1688,15 @@ test('branch titles use inclusive measure ranges and readable conditions with al
     assert.equal(labels.conditionLabel({ value: 's,100.5,200' }), '分数：普通 < 100.5 · 玄人 100.5–<200 · 达人 ≥ 200');
     locale.value = 'en';
     assert.equal(labels.branchLabel(branch), 'Measures 7-9 (3 total)');
+    assert.equal(labels.branchTitle(branch), 'Branch 1 · Measures 7-9 (3 total)');
     assert.equal(labels.conditionLabel(branch), 'Accuracy: Normal < 50% · Expert 50%–<80% · Master ≥ 80%');
     const later = { ...branch, index: 1, firstBarIndex: 9, barCount: 9 };
     const earlier = { ...branch, index: 2, firstBarIndex: 1 };
     branches.value = [later, branch, earlier];
     assert.deepEqual(Array.from(labels.sortedBranches.value, item => item.index), [2, 0, 1]);
     assert.deepEqual(branches.value.map(item => item.index), [1, 0, 2]);
-    assert.equal((descriptor.template.content.match(/<strong>\{\{ branchLabel\(branch\) \}\}<\/strong><small>\{\{ conditionLabel\(branch\) \}\}<\/small>/g) || []).length, 2);
-    assert.doesNotMatch(descriptor.template.content, /t\('分歧 \{p0\}'|\{\{ branch\.value \}\}/);
+    assert.equal((descriptor.template.content.match(/<strong>\{\{ branchTitle\(branch\) \}\}<\/strong><small>\{\{ conditionLabel\(branch\) \}\}<\/small>/g) || []).length, 1);
+    assert.doesNotMatch(descriptor.template.content, /\{\{ branch\.value \}\}/);
   } finally { reset(); }
 });
 
@@ -2026,7 +2028,7 @@ test('branch context follows selected point timing rather than playback or the v
   assert.equal(routeColor(), undefined);
   const styles = descriptor.styles[0].content;
   for (const route of ['N', 'E', 'M']) {
-    assert.ok(styles.includes(`.branch-route-tag[data-route=${route}],.branch-route-card[data-route=${route}]{--route-color:`));
+    assert.ok(styles.includes(`.branch-route-tag[data-route=${route}],.branch-route-card[data-route=${route}],.branch-route-text[data-route=${route}],.branch-route-filter button[data-route=${route}]{--route-color:`));
   }
   assert.match(styles, /\.branch-route-tag\{[^}]*color:var\(--route-color\);background:var\(--route-hover-background\)/);
   assert.doesNotMatch(descriptor.template.content, /<section class="branch-context"[^>]*:data-route/);
@@ -2207,19 +2209,18 @@ test('dismissible audio and error messages sit above playback with no legacy sta
   assert.match(styles, /\.transport\{padding-bottom:calc\(7px \+ env\(safe-area-inset-bottom,0px\)\)\}/);
 });
 
-test('branch lists and condition editors stay in the panel while structural forms and filtering use dialogs', () => {
+test('branch lists combine route filtering and condition editors while structural forms use a dialog', () => {
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'branch-controls' });
   const dialogs = [...descriptor.template.content.matchAll(/<dialog\b[\s\S]*?<\/dialog>/g)].map(match => match[0]);
-  assert.equal(dialogs.length, 2);
-  const [filter, action] = dialogs;
+  assert.equal(dialogs.length, 1);
+  const [action] = dialogs;
   const manager = descriptor.template.content.slice(descriptor.template.content.indexOf('<div class="branch-manager"'));
-  assert.match(filter, /aria-labelledby="branch-filter-title"/);
-  assert.match(filter, /role="radiogroup"/);
-  assert.match(filter, /studio.changeAllBranches\(route\)/);
-  assert.match(filter, /studio.changeBranch\(branch.index, route\)/);
-  assert.match(filter, /locate\(branch, filterDialog\)/);
-  assert.doesNotMatch(filter, /branch-create|@click="edit\(|@click="removeRoute\(/);
+  assert.match(descriptor.template.content, /class="route-segments branch-route-filter" role="group" :aria-label="t\('路线筛选'\)"/);
+  assert.match(descriptor.template.content, /:aria-pressed="uniform === route"[^>]*@click="studio.changeAllBranches\(route\)"/);
+  assert.match(manager, /studio.changeBranch\(branch.index, route\)/);
+  assert.match(manager, /locate\(branch\)/);
+  assert.doesNotMatch(descriptor.scriptSetup.content, /filterDialog|filterList|openFilter/);
   assert.match(manager, /role="group" :aria-label="t\('全局分歧管理'\)"/);
   assert.doesNotMatch(manager, /<form|id="branch-create"|edit\(branch, 'condition'\)/);
   assert.match(manager, /class="branch-condition-fields inline-condition"/);
@@ -2231,17 +2232,31 @@ test('branch lists and condition editors stay in the panel while structural form
   assert.doesNotMatch(action, /mode === 'condition'|mode === 'removeRoute'/);
   assert.doesNotMatch(descriptor.template.content, /branch-manager-help|创建、删除分歧及路线，编辑判定条件。|BPM、拍号和延迟在所有路线的对应小节及落点同步/);
   assert.match(manager, /@click="removeRoute\(branch, route\)"/);
-  assert.doesNotMatch(manager, /role="radiogroup"|studio.changeBranch|studio.changeAllBranches/);
+  assert.doesNotMatch(manager, /role="radiogroup"|studio.changeAllBranches/);
   for (const dialog of dialogs) {
     assert.doesNotMatch(dialog, /type="search"|v-model="query"/);
     assert.doesNotMatch(dialog, /t\('完成'\)/);
     assert.match(dialog, /:aria-label="t\('关闭'\)"/);
   }
-  assert.match(filter, /v-for="branch in sortedBranches"/);
-  assert.match(descriptor.template.content, /id="branch-filter"[^>]*:disabled="state.invalid \|\| !branches.length"[^>]*@click="openFilter"/);
+  assert.match(manager, /v-for="branch in sortedBranches"/);
+  assert.doesNotMatch(descriptor.template.content, /id="branch-filter"/);
   assert.doesNotMatch(descriptor.template.content, /id="branch-manage"/);
-  assert.match(descriptor.template.content, /<\/SectionHeading>\s*<div class="branch-actions">\s*<button id="branch-create"[^>]*@click="create"[\s\S]*?<button id="branch-filter"[\s\S]*?<\/div>\s*<dialog/);
-  assert.match(descriptor.styles[0].content, /\.branch-manager \.branch-route-list\{max-height:none;overflow:visible\}/);
+  assert.match(descriptor.template.content, /<\/SectionHeading>\s*<div class="branch-actions">\s*<button id="branch-create"[^>]*@click="create"[\s\S]*?class="route-segments branch-route-filter"/);
+  assert.match(descriptor.styles[0].content, /\.branch-route-filter\{margin-left:auto;/);
+  assert.match(descriptor.template.content, /<div v-if="state.branchRouteWarning" id="branch-route-message" class="branch-route-message" role="status">/);
+  assert.doesNotMatch(descriptor.scriptSetup.content, /\bInfo\b/);
+  assert.match(descriptor.styles[0].content, /\.branch-route-message\{[^}]*padding:10px;/);
+  assert.match(descriptor.styles[0].content, /\.branch-route-message p\{[^}]*line-height:20px;/);
+  assert.match(descriptor.styles[0].content, /\.branch-route-message \.message-dismiss\{width:20px;height:20px;min-height:20px;padding:3px;/);
+  assert.match(descriptor.template.content, /v-for="item in state.branchRouteWarning.branches"/);
+  assert.match(descriptor.template.content, /@click="state.branchRouteWarning = null"/);
+  assert.match(descriptor.template.content, /class="branch-route-text" :data-route="item.route"/);
+  assert.match(descriptor.styles[0].content, /\.branch-route-filter button\[aria-pressed=true\]\{background:var\(--route-hover-background\);color:var\(--route-color\)/);
+  assert.match(descriptor.styles[0].content, /\.branch-manager \.branch-route-list\{max-height:none;overflow:visible;display:flex;flex-direction:column;gap:10px;border:0;border-radius:0\}/);
+  assert.match(manager, /class="branch-row-heading">[\s\S]*?<\/div>\s*<div class="branch-card-body">\s*<fieldset/);
+  assert.match(descriptor.styles[0].content, /\.branch-manager \.branch-route-row\{gap:0;padding:0;border:1px solid var\(--line\);border-radius:8px;background:#fff;overflow:hidden\}/);
+  assert.match(descriptor.styles[0].content, /\.branch-manager \.branch-row-heading\{padding:6px 8px;border-bottom:1px solid var\(--line\);background:#f4f7f5\}/);
+  assert.match(descriptor.styles[0].content, /\.branch-manager \.branch-row-heading>\.branch-jump:is\(:hover,:focus-visible\):not\(:disabled\),\.branch-manager \.branch-row-heading>\.icon:is\(:hover,:focus-visible\):not\(:disabled\)\{background:#e1ece5;color:var\(--green\)\}/);
   assert.match(descriptor.styles[0].content, /\.branch-actions\{display:flex;flex-basis:100%;gap:8px\}/);
   assert.match(descriptor.styles[0].content, /\.branch-actions>\.manage-branches\{min-height:32px;padding:5px 10px\}/);
   assert.doesNotMatch(descriptor.template.content, /<dialog[^>]*\bopen(?:\s|>)/);
@@ -2271,11 +2286,11 @@ test('branch management keeps measure details in the title and places route acti
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'branch-measure-summary' });
   const manager = descriptor.template.content.slice(descriptor.template.content.indexOf('<div class="branch-manager"'));
-  assert.match(manager, /<strong>\{\{ branchLabel\(branch\) \}\}<\/strong>/);
+  assert.match(manager, /<strong>\{\{ branchTitle\(branch\) \}\}<\/strong>/);
   assert.doesNotMatch(manager, /class="branch-measures"|t\('(?:起始小节|结束小节|小节数：)/);
   const cards = manager.match(/<div class="branch-route-cards">([\s\S]*?)<\/article>/)[1];
   assert.doesNotMatch(cards, /<small|小节数/);
-  assert.match(cards, /<strong>[\s\S]*<\/strong>\s*<button/);
+  assert.match(cards, /class="route-select"[\s\S]*<strong>[\s\S]*<\/strong>[\s\S]*<\/button>\s*<button[^>]*class="route-remove"/);
   assert.match(descriptor.styles[0].content, /\.branch-route-card\{display:flex;align-items:center;justify-content:space-between;/);
   const conditionFields = manager.match(/<fieldset class="branch-condition-fields inline-condition"[\s\S]*?<\/fieldset>/)[0];
   assert.doesNotMatch(conditionFields, /<legend/);
@@ -2286,44 +2301,51 @@ test('branch management keeps measure details in the title and places route acti
   assert.match(styles, /\.branch-condition-fields select\{max-width:none\}/);
   assert.match(styles, /\.inline-condition input,\.inline-condition select\{box-sizing:border-box;width:100%;min-width:0;height:34px\}/);
   assert.match(styles, /\.branch-route-cards\{[^}]*border-top:1px solid var\(--line\);padding-top:12px/);
-  assert.match(cards, /:data-route="route" :class="\{ missing: !branch.routes.includes\(route\) \}"/);
+  assert.match(cards, /selected: branch.routes.includes\(route\) && branch.route === route/);
   for (const route of ['N', 'E', 'M']) {
     assert.ok(styles.includes(`.branch-route-card[data-route=${route}]:not(.missing){background:#`));
   }
   assert.match(styles, /\.branch-route-card\.missing\{[^}]*background:#[0-9a-f]{6};/);
   assert.doesNotMatch(styles, /\.branch-route-card\.missing\{[^}]*background:transparent/);
   assert.match(styles, /\.branch-route-card\.missing\{border-style:dashed;/);
-  assert.match(styles, /\.branch-route-card:not\(\.missing\)\{border-style:solid;box-shadow:inset 3px 0 currentColor\}/);
-  assert.match(cards, /<\/button>\s*<Plus v-else aria-hidden="true" \/>/);
-  assert.match(cards, /<component :is="branch.routes.includes\(route\) \? 'div' : 'button'"/);
-  assert.match(cards, /:type="branch.routes.includes\(route\) \? undefined : 'button'"/);
-  assert.match(cards, /:disabled="!branch.routes.includes\(route\) && \(state.invalid \|\| !branch.barCount\)"/);
-  assert.match(cards, /@click="!branch.routes.includes\(route\) && edit\(branch, 'route', route\)"/);
+  assert.match(styles, /\.branch-route-card\[data-route\]\.selected\{border-color:var\(--route-color\);border-left-width:3px;border-right-width:3px;padding:6px 8px;box-shadow:none\}/);
+  assert.match(styles, /\.branch-manager \.branch-route-card\.selected\{padding:6px 3px\}/);
+  assert.doesNotMatch(descriptor.scriptSetup.content + cards, /route-check|\bCheck\b/);
+  assert.match(cards, /<span v-else class="route-subtitle">\{\{ t\(names\[route\]\) \}\}<\/span>/);
+  assert.match(descriptor.template.content, /id="branch-action-subtitle" class="branch-route-text" :data-route="fields.route">\{\{ actionSubtitle \}\}/);
+  assert.match(styles, /\.branch-manager \.branch-route-card\{padding:6px 10px\}/);
+  assert.match(styles, /\.branch-manager \.branch-route-row\[aria-current=true\]\{box-shadow:none\}/);
+  assert.match(styles, /\.branch-manager \.branch-jump,\.branch-manager \.branch-row-heading>\.icon,\.branch-route-card \.route-select,\.branch-route-card \.route-remove\{font-family:inherit;font-size:12px;font-weight:400;line-height:1\.4;color:inherit;border:0;background:transparent;box-shadow:none\}/);
+  assert.match(styles, /\.branch-manager \.branch-jump strong,\.branch-route-card strong\{font-family:inherit;font-weight:400\}/);
+  assert.doesNotMatch(descriptor.scriptSetup.content + manager, /LocateFixed/);
+  assert.match(cards, /<Plus v-if="!branch.routes.includes\(route\)" aria-hidden="true" \/>/);
+  assert.match(cards, /:aria-pressed="branch.routes.includes\(route\) \? branch.route === route : undefined"/);
+  assert.match(cards, /:disabled="state.invalid \|\| \(!branch.routes.includes\(route\) && !branch.barCount\)"/);
+  assert.match(cards, /@click="branch.routes.includes\(route\) \? studio.changeBranch\(branch.index, route\) : edit\(branch, 'route', route\)"/);
   assert.doesNotMatch(cards, /route-create-hint|<a\b/);
   assert.match(cards, /:aria-label="t\('删除路线 \{p0\}', \{ p0: route \}\)" @click="removeRoute\(branch, route\)"><X \/><\/button>/);
-  assert.match(cards, /<span v-else class="route-status">\{\{ t\('点击创建'\) \}\}<\/span>/);
+  assert.match(cards, /t\('创建分歧 - \{p0\}', \{ p0: t\(names\[route\]\) \}\)/);
+  assert.doesNotMatch(cards, /创建路线|\{\{ route \}\}/);
   assert.doesNotMatch(cards, /<Trash2|t\('删除'\)/);
 });
 
-test('branch dialogs support Escape and filtering scrolls to the current branch while panel location stays available', async () => {
+test('branch dialog supports Escape and named creation while inline filters allow partially available routes', () => {
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   const source = descriptor.scriptSetup.content.replace(/^import .*;\n/gm, '');
   const calls = [];
-  const controls = runInNewContext(`${source}; ({ openFilter, locate, keydown, dialog, filterDialog, filterList, mode, error })`, {
-    ref, reactive, computed, watch, nextTick: async () => {}, inject: () => ({
-      state: {}, bar: ref(null), pause: () => calls.push('pause'), select: index => calls.push(index)
+  const state = reactive({ branchRoutes: ['N', 'N'], chart: { branches: [{ index: 0, routes: ['N', 'E'] }, { index: 1, routes: ['N', 'M'] }] } });
+  const controls = runInNewContext(`${source}; ({ locate, keydown, dialog, mode, error, fields, actionTitle, actionSubtitle, available, uniform })`, {
+    ref, reactive, computed, watch, t, BRANCH_ROUTES: ['N', 'E', 'M'], names: { N: '普通', E: '玄人', M: '达人' }, inject: () => ({
+      state, selectedTiming: ref(null), pause: () => calls.push('pause'), select: index => calls.push(index)
     })
   });
   const owner = name => ({ showModal: () => calls.push(`open:${name}`), close: () => calls.push(`close:${name}`) });
   const manager = owner('action');
   controls.dialog.value = manager;
-  controls.filterDialog.value = owner('filter');
-  controls.filterList.value = { offsetTop: 20, scrollTop: 0, querySelector: () => ({ offsetTop: 100 }) };
-  await controls.openFilter();
-  assert.equal(controls.filterList.value.scrollTop, 80);
-  assert.deepEqual(calls.splice(0), ['pause', 'open:filter']);
-  controls.locate({ firstBarIndex: 4 }, controls.filterDialog.value);
-  assert.deepEqual(calls.splice(0), [4, 'close:filter']);
+  assert.deepEqual(Array.from(controls.available.value), ['N', 'E', 'M']);
+  assert.equal(controls.uniform.value, 'N');
+  state.branchRoutes = ['E', 'M'];
+  assert.equal(controls.uniform.value, null);
   controls.locate({ firstBarIndex: 6 });
   assert.deepEqual(calls.splice(0), [6]);
   const escape = currentTarget => controls.keydown({ key: 'Escape', currentTarget, preventDefault() {}, stopPropagation() {} });
@@ -2331,8 +2353,19 @@ test('branch dialogs support Escape and filtering scrolls to the current branch 
   escape(manager);
   assert.equal(controls.mode.value, ''); assert.equal(controls.error.value, '');
   assert.deepEqual(calls.splice(0), ['close:action']);
-  escape(manager); escape(controls.filterDialog.value);
-  assert.deepEqual(calls, ['close:action', 'close:filter']);
+  escape(manager);
+  assert.deepEqual(calls, ['close:action']);
+  try {
+    controls.mode.value = 'route';
+    for (const language of languages) {
+      locale.value = language.code;
+      for (const [route, name] of Object.entries({ N: '普通', E: '玄人', M: '达人' })) {
+        controls.fields.route = route;
+        assert.equal(controls.actionTitle.value, t('创建分歧'));
+        assert.equal(controls.actionSubtitle.value, t(name));
+      }
+    }
+  } finally { reset(); }
 });
 
 test('branch creation groups equal-width route and source fields and displays errors next to actions', () => {

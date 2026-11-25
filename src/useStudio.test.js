@@ -1312,6 +1312,9 @@ test('one bulk route change stops playback and persists all choices once without
     studio.changeAllBranches('M');
     assert.equal(studio.state.playing, true);
     assert.equal(studio.state.customLoop, loop); assert.equal(studio.state.selected, selected);
+    studio.changeBranch(0, 'M');
+    assert.equal(studio.state.playing, true);
+    assert.equal(studio.state.customLoop, loop); assert.equal(studio.state.selected, selected);
     studio.changeBranch(2, 'E');
     assert.deepEqual(studio.state.branchRoutes, ['M', null, 'E']);
     studio.changeAllBranches('M'); studio.restore();
@@ -1320,20 +1323,29 @@ test('one bulk route change stops playback and persists all choices once without
   } finally { cleanup(); }
 });
 
-test('bulk route selection rejects unavailable paths atomically but individual overrides remain available', async () => {
+test('bulk route selection switches available paths and retains missing paths while individual overrides remain available', async () => {
   const { studio, cleanup } = mountStudio();
   try {
     const text = multiBranchChart.replace('#E\n2000,\n#M\n3000,', '#M\n3000,');
     await studio.openChart(file('partial-branches.tja', text));
     studio.changeAllBranches('E');
-    assert.equal(studio.state.error, true); assert.match(studio.state.notice, /没有路线 E/);
-    assert.deepEqual(studio.state.branchRoutes, ['N', null, 'N']);
+    assert.equal(studio.state.error, false);
+    assert.deepEqual(studio.state.branchRoutes, ['E', null, 'N']);
+    assert.deepEqual(studio.state.branchRouteWarning, { route: 'E', branches: [{ index: 2, first: 3, last: 3, route: 'N' }] });
+    studio.state.branchRouteWarning = null;
+    studio.changeAllBranches('E');
+    assert.deepEqual(studio.state.branchRouteWarning, { route: 'E', branches: [{ index: 2, first: 3, last: 3, route: 'N' }] });
     assert.equal(studio.state.text, text); assert.equal(studio.state.undo.length, 0);
     studio.changeBranch(0, 'E');
     assert.deepEqual(studio.state.branchRoutes, ['E', null, 'N']);
     studio.changeAllBranches('M');
     assert.deepEqual(studio.state.branchRoutes, ['M', null, 'M']);
     assert.equal(studio.state.error, false);
+    assert.equal(studio.state.branchRouteWarning, null);
+    studio.changeAllBranches('E');
+    assert.deepEqual(studio.state.branchRoutes, ['E', null, 'M']);
+    assert.equal(studio.state.branchRouteWarning.branches[0].route, 'M');
+    studio.changeAllBranches('M');
     studio.changeAllBranches('bad');
     assert.deepEqual(studio.state.branchRoutes, ['M', null, 'M']);
     studio.editSource('broken');
@@ -1357,6 +1369,26 @@ test('bulk route changes retain synchronized durations and later branches withou
     assert.equal(studio.state.chart.bars[2].start, 6);
     assert.equal(studio.state.text, text);
     assert.equal(studio.state.undo, undo);
+  } finally { cleanup(); }
+});
+
+test('individual and bulk branch route switches preserve the viewport and playback-follow preference', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file('stationary-branches.tja', multiBranchChart));
+    for (const follow of [false, true]) {
+      studio.panTimeline(.75);
+      studio.state.followPlayback = follow;
+      const start = studio.state.viewStart, beat = studio.visible.value.startBeat;
+      for (const change of [() => studio.changeBranch(0, 'E'), () => studio.changeBranch(2, 'M'), () => studio.changeAllBranches('N'), () => studio.changeAllBranches('E')]) {
+        change();
+        near(studio.state.viewStart, start);
+        near(studio.visible.value.startBeat, beat);
+        assert.equal(studio.state.followPlayback, follow);
+        assert.equal(studio.state.text, multiBranchChart);
+        assert.equal(studio.state.undo.length, 0);
+      }
+    }
   } finally { cleanup(); }
 });
 

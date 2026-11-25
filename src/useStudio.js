@@ -31,7 +31,7 @@ export const formatTime = value => {
 };
 
 export function useStudio() {
-  const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, playing: false, loopAnchor: null, copiedMeasures: null, pasteRequest: 0, editorBlocked: false, fileErrors: [], saveState: '尚未打开谱面', noticeMessage: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', get notice() { return formatMessage(this.noticeMessage); }, error: false });
+  const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, playing: false, loopAnchor: null, copiedMeasures: null, pasteRequest: 0, editorBlocked: false, fileErrors: [], branchRouteWarning: null, saveState: '尚未打开谱面', noticeMessage: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', get notice() { return formatMessage(this.noticeMessage); }, error: false });
   let nextDocumentId = 1, viewAnimation = null, reloadApproved = false;
   const controls = reactive({ hits: true, rate: 1, volume: MIX_DEFAULTS.music, hitVolume: MIX_DEFAULTS.hits, view: 'auto', zoom: 1, snap: GRID_DIVISIONS, snapChoice: '16', customSnap: GRID_DIVISIONS });
   const bar = computed(() => state.chart?.bars[state.selected]);
@@ -116,7 +116,7 @@ export function useStudio() {
   let context, music, gain, musicDuck, hitGain, output, anchor = 0, origin = 0, loopStart = 0, loopEnd = 0, scheduledUntil = 0, playbackRate = 1, looping = false;
   let sourceTimer, scheduler, frame, disposed = false, audioRequest = 0, playRequest = 0;
   const voices = new Set(), hitBuffers = new Map();
-  const notice = (message, error = false) => { state.noticeMessage = message; state.error = error; };
+  const notice = (message, error = false) => { state.branchRouteWarning = null; state.noticeMessage = message; state.error = error; };
   const reportFileError = (error, filename = '') => { state.fileErrors = [...state.fileErrors, { error, filename }]; };
   const guard = action => { try { return action(); } catch (error) { notice(error, true); } };
   function audioContext() {
@@ -554,7 +554,6 @@ export function useStudio() {
     state.selected = Math.min(chart.bars.length - 1, chart.branches[index].firstBarIndex + Math.min(relative, Math.max(0, chart.branches[index].barCount - 1)));
     state.selectedCell = null; state.commandCell = null; state.customLoop = null;
     state.position = Math.max(0, measureStart(bar.value)); syncSource();
-    panTimeline(measureStart(bar.value), false); state.followPlayback = true;
     if (persist()) notice(message('已切换分歧路线；试听按当前选择播放。'));
   }
   function changeBranch(index, route) {
@@ -562,6 +561,7 @@ export function useStudio() {
       requireValid();
       const previous = state.chart?.branches[index];
       if (!previous || !previous.routes.includes(route)) throw new LocalizedError(message('分歧路线选择无效。'));
+      if (previous.route === route) return;
       const routes = [...state.branchRoutes]; routes[index] = route;
       applyBranchRoutes(routes, index);
     });
@@ -571,11 +571,13 @@ export function useStudio() {
       requireValid();
       const branches = state.chart?.branches.filter(branch => branch.routes.length);
       if (!branches?.length || !BRANCH_ROUTES.includes(route)) throw new LocalizedError(message('分歧路线选择无效。'));
-      if (branches.some(branch => !branch.routes.includes(route))) throw new LocalizedError(message('部分分歧没有路线 {p0}，请展开逐处选择。', { p0: route }));
-      const changed = branches.filter(branch => branch.route !== route);
-      if (!changed.length) return;
+      const missing = branches.filter(branch => !branch.routes.includes(route)).map(branch => ({ index: branch.index, first: branch.firstBarIndex + 1, last: branch.firstBarIndex + branch.barCount, route: branch.route }));
+      const warning = missing.length ? { route, branches: missing } : null;
+      const changed = branches.filter(branch => branch.routes.includes(route) && branch.route !== route);
+      if (!changed.length) { state.branchRouteWarning = warning; return; }
       const index = changed.find(branch => branch.index === bar.value.branchIndex)?.index ?? changed[0].index;
-      applyBranchRoutes(state.chart.branches.map(branch => branch.routes.length ? route : null), index);
+      applyBranchRoutes(state.chart.branches.map(branch => branch.routes.includes(route) ? route : branch.route), index);
+      if (!state.error) state.branchRouteWarning = warning;
     });
   }
   function leaveDocument() {
