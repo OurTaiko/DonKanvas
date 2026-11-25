@@ -57,6 +57,25 @@ const { state, controls, bar, spans, visible, viewBeats, timelineScale, timeline
 const visibleMeasureIndices = computed(() => visible.value?.bars
   .filter(item => measureEnd(item) > visible.value.start && measureStart(item) < visible.value.end)
   .map(item => item.index) ?? []);
+const deleteDialog = ref(null), deleteTarget = ref(null), deleteError = ref('');
+function closeDeleteMeasure() {
+  deleteDialog.value?.close();
+  deleteTarget.value = null;
+  deleteError.value = '';
+}
+function requestDeleteMeasure() {
+  if (!bar.value || state.invalid || state.chart.bars.length <= 1) return;
+  studio.pause();
+  deleteTarget.value = state.selected;
+  deleteError.value = '';
+  deleteDialog.value.showModal();
+}
+function confirmDeleteMeasure() {
+  if (deleteTarget.value === null || deleteTarget.value !== state.selected || !bar.value || state.invalid || state.chart.bars.length <= 1) return;
+  if (studio.deleteBar()) closeDeleteMeasure();
+  else deleteError.value = state.notice;
+}
+watch(() => [state.activeId, state.course, state.chart, state.selected, state.invalid, state.editorBlocked], closeDeleteMeasure, { flush: 'sync' });
 const balloonHits = computed(() => {
   const { balloon, special } = chartStats.value;
   return balloon === null || special === null ? null : balloon + special;
@@ -485,12 +504,21 @@ onUnmounted(() => {
           <button id="insert-bar-before" :title="t('在当前小节前插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('before')"><BetweenHorizontalStart aria-hidden="true" />{{ t('前插小节') }}</button>
           <button id="insert-bar-after" :title="t('在当前小节后插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('after')"><BetweenHorizontalEnd aria-hidden="true" />{{ t('后插小节') }}</button>
         </div>
-        <button id="delete-bar" class="delete-measure" :title="state.chart.bars.length <= 1 ? t('不能删除最后一个小节。') : t('删除当前小节及其音符和指令')" :disabled="!bar || state.invalid || state.chart.bars.length <= 1" @click="studio.deleteBar"><Trash2 aria-hidden="true" />{{ t('删除小节') }}</button>
+        <button id="delete-bar" class="delete-measure" :title="state.chart.bars.length <= 1 ? t('不能删除最后一个小节。') : t('删除当前小节及其音符和指令')" :disabled="!bar || state.invalid || state.chart.bars.length <= 1" @click="requestDeleteMeasure"><Trash2 aria-hidden="true" />{{ t('删除小节') }}</button>
       </div>
         <button v-if="compactTools" id="follow-playback" type="button" role="menuitemcheckbox" :aria-checked="state.followPlayback" @click="state.followPlayback = !state.followPlayback"><Crosshair aria-hidden="true" />{{ t('跟随播放') }}<span class="menu-check"><Check v-if="state.followPlayback" aria-hidden="true" /></span></button>
         <label v-else class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span>{{ t('跟随播放') }}</label>
         </div></details>
       </div>
+      <Teleport to="body">
+        <dialog ref="deleteDialog" class="delete-measure-dialog" aria-labelledby="delete-measure-title" aria-describedby="delete-measure-description" @keydown.stop @cancel.prevent="closeDeleteMeasure" @close="deleteTarget = null">
+          <div class="delete-measure-heading"><h2 id="delete-measure-title">{{ t('删除小节') }}</h2><button type="button" class="icon" :title="t('关闭')" :aria-label="t('关闭')" @click="closeDeleteMeasure"><X aria-hidden="true" /></button></div>
+          <p id="delete-measure-description">{{ t('删除第 {p0} 小节及其音符和指令？此操作可撤销。', { p0: deleteTarget === null ? '' : deleteTarget + 1 }) }}</p>
+          <p v-if="bar && bar.branchIndex !== null">{{ t('若小节位于分歧内，将同步删除各路线中的对应小节。') }}</p>
+          <p v-if="deleteError" class="delete-measure-error" role="alert">{{ deleteError }}</p>
+          <div class="delete-measure-actions"><button id="delete-measure-cancel" type="button" autofocus @click="closeDeleteMeasure">{{ t('取消') }}</button><button id="delete-measure-confirm" type="button" @click="confirmDeleteMeasure"><Trash2 aria-hidden="true" />{{ t('删除小节') }}</button></div>
+        </dialog>
+      </Teleport>
       <div class="timeline-frame"><div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @pointerup="finishTouchSelection" @pointercancel="finishTouchSelection" @lostpointercapture="finishTouchSelection" @contextmenu.prevent></canvas></div></div><div v-if="touchGuide" class="touch-selection-guide" role="status" :aria-label="t('左右滑动微调选择')"><ChevronsLeft aria-hidden="true" /><ChevronsRight aria-hidden="true" /></div></div>
       <section class="overview">
         <div class="overview-caption"><span class="overview-legend"><i class="gogo"></i>GOGOTIME <span v-for="route in BRANCH_ROUTES" :key="route" class="overview-route"><i :style="{ background: branchColor(route) }"></i>{{ t(BRANCH_ROUTE_NAMES[route]) }}</span></span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div>
@@ -550,13 +578,22 @@ onUnmounted(() => {
 </template>
 
 <style>
+.delete-measure-dialog{box-sizing:border-box;width:min(420px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;padding:20px;border:1px solid #bfd0c5;border-radius:8px;background:#fff;color:var(--ink)}
+.delete-measure-dialog::backdrop{background:#18271f66}
+.delete-measure-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.delete-measure-heading h2{margin:0;font-size:18px;line-height:1.4}
+.delete-measure-dialog p{margin:14px 0;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
+.delete-measure-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.delete-measure-actions button{font-size:12px;white-space:normal}
+.delete-measure-actions svg{width:15px;height:15px;flex-shrink:0}
+.delete-measure-error{color:#9e3434}
 .editor-core:has(#timeline) .editor-scroll{display:flex;overflow:hidden}
 .editor-core:has(#timeline) .workspace{flex:1;min-width:0;min-height:0}
 .workspace>.editor{display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .editor>.editor-bar,.editor>.timeline-frame,.editor>.overview{flex-shrink:0}
 .editor-information{display:grid;grid-template-columns:minmax(0,1fr) 420px;grid-template-rows:minmax(0,1fr);align-items:stretch;flex:1;min-height:0;overflow:hidden}
 .editor-information-left{grid-column:1;grid-row:1;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
-.editor-information-left>.measure-section{min-width:0}
+.editor-information-left>.measure-section,#mobile-navigation-panel>.measure-section{min-width:0;border-top:1px solid var(--line)}
 .editor-information>section.branch-context{grid-column:2;grid-row:1;width:420px;max-width:100%;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;align-self:stretch;align-content:start;border-top:1px solid var(--line);border-left:1px solid var(--line);border-bottom:0}
 @container(max-width:840px){.editor-information{grid-template-columns:minmax(0,1fr);grid-template-rows:auto;align-content:start;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}.editor-information-left{display:contents}.editor-information-left>.cell-inspector,.editor-information-left>.measure-section,.editor-information>section.branch-context{grid-column:1;grid-row:auto}.editor-information>section.branch-context{width:auto;overflow:visible;border-left:0}}
 .overview-caption{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;padding:4px 6px;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;pointer-events:none}

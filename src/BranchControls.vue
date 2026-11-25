@@ -1,6 +1,6 @@
 <script setup>
 import { computed, inject, reactive, ref, watch } from 'vue';
-import { GitBranch, X, Plus, Trash2 } from '@lucide/vue';
+import { GitBranch, X, Plus, Trash2, Copy } from '@lucide/vue';
 import { t } from './i18n.js';
 import { BRANCH_ROUTES, BRANCH_ROUTE_NAMES as names } from './chart.js';
 import SectionHeading from './SectionHeading.vue';
@@ -10,8 +10,8 @@ const studio = inject('studio'), { state, selectedTiming } = studio;
 const dialog = ref(null);
 const mode = ref(''), target = ref(null), error = ref(''), first = ref(null), last = ref(null), anchor = ref(null);
 const fields = reactive({ condition: 'p', lower: 50, upper: 80, route: 'N', source: 'shared', keep: '' });
-const actionTitle = computed(() => mode.value === 'create' || mode.value === 'route' ? t('创建分歧') : t('删除整个分歧'));
-const actionSubtitle = computed(() => mode.value === 'route' ? t(names[fields.route]) : '');
+const actionTitle = computed(() => mode.value === 'create' || mode.value === 'route' ? t('创建分歧') : mode.value === 'remove-route' ? t('删除路线') : t('删除整个分歧'));
+const actionSubtitle = computed(() => mode.value === 'route' || mode.value === 'remove-route' ? t(names[fields.route]) : '');
 const branches = computed(() => state.chart?.branches || []);
 const editedBranch = computed(() => branches.value.find(branch => branch.index === target.value));
 watch([() => state.activeId, () => state.course, () => Boolean(editedBranch.value)], ([document, course, exists], [previousDocument, previousCourse]) => {
@@ -37,6 +37,9 @@ function branchTitle(branch) {
 function routeNoteCount(branch, route) {
   return state.chart.allBars.filter(item => item.branchIndex === branch.index && item.route === route)
     .reduce((sum, item) => sum + [...item.notes].filter(note => note !== '0').length, 0);
+}
+function routeActionParts(key) {
+  return t(key, { p0: '{route}' }).split('{route}');
 }
 function conditionLabel(branch) {
   const { condition, lower, upper } = branchCondition(branch);
@@ -81,10 +84,7 @@ function edit(branch, action, route = 'N') {
   studio.pause(); dialog.value.showModal();
 }
 function removeRoute(branch, route) {
-  const prompt = branch.routes.length === 1 ? t('删除最后一条路线将同时删除分歧，原小节保留为空白共用小节。是否继续？') : t('删除路线 {p0} 及其内容？可撤销恢复。', { p0: t(names[route]) });
-  if (!confirm(prompt)) return;
-  error.value = '';
-  if (!studio.applyMeasureBranch({ type: 'route', route, clearLast: true }, branch.firstBarIndex)) error.value = state.notice;
+  edit(branch, branch.routes.length === 1 ? 'remove-last' : 'remove-route', route);
 }
 function submit() {
   error.value = '';
@@ -95,11 +95,26 @@ function submit() {
     operation = { type: 'create', last: last.value, route: fields.route, empty: fields.source === '', condition: fields.condition, lower: Number(fields.lower), upper: Number(fields.upper) };
   } else if (mode.value === 'route') {
     operation = { type: 'route', route: fields.route, source: fields.source || null };
-  } else if (mode.value === 'remove') {
+  } else if (mode.value === 'remove' || mode.value === 'remove-last') {
     operation = { type: 'remove', keep: fields.keep || null };
+  } else if (mode.value === 'remove-route') {
+    if (!editedBranch.value?.routes.includes(fields.route)) { close(); return; }
+    if (editedBranch.value.routes.length === 1) { mode.value = 'remove-last'; return; }
+    operation = { type: 'route', route: fields.route };
   } else return;
   if (studio.applyMeasureBranch(operation, measure)) close();
   else error.value = state.notice;
+}
+function createRoute(source) {
+  if (mode.value !== 'route') return;
+  fields.source = source;
+  submit();
+}
+function removeBranch(keep) {
+  if (mode.value !== 'remove' && mode.value !== 'remove-last') return;
+  if (keep && !editedBranch.value?.routes.includes(keep)) return;
+  fields.keep = keep;
+  submit();
 }
 function locate(branch) {
   studio.select(branch.firstBarIndex);
@@ -130,8 +145,8 @@ function keydown(event) {
       </div>
       <button type="button" class="icon message-dismiss" :title="t('关闭提示')" :aria-label="t('关闭提示')" @click="state.branchRouteWarning = null"><X aria-hidden="true" /></button>
     </div>
-    <dialog ref="dialog" class="branch-dialog branch-action-dialog" aria-labelledby="branch-action-title" :aria-describedby="mode === 'route' ? 'branch-action-subtitle' : undefined" @keydown="keydown" @cancel.prevent="close">
-      <div class="branch-dialog-heading"><div><h2 id="branch-action-title">{{ actionTitle }}</h2><p v-if="mode === 'route'" id="branch-action-subtitle" class="branch-route-text" :data-route="fields.route">{{ actionSubtitle }}</p></div><button type="button" class="icon" :title="t('关闭')" :aria-label="t('关闭')" @click="close"><X /></button></div>
+    <dialog ref="dialog" class="branch-dialog branch-action-dialog" aria-labelledby="branch-action-title" @keydown="keydown" @cancel.prevent="close">
+      <div class="branch-dialog-heading"><h2 id="branch-action-title">{{ actionTitle }}<template v-if="mode === 'route' || mode === 'remove-route'"> - <span id="branch-action-route" class="branch-route-text" :data-route="fields.route">{{ actionSubtitle }}</span></template></h2><button type="button" class="icon" :title="t('关闭')" :aria-label="t('关闭')" @click="close"><X /></button></div>
       <form v-if="mode" class="branch-form" @submit.prevent="submit">
         <fieldset :disabled="state.invalid">
           <template v-if="mode === 'create'">
@@ -139,21 +154,30 @@ function keydown(event) {
             <MeasureGrid class="branch-measure-grid" role="group" :aria-label="t('选择小节')" :bars="state.chart.bars" :selection="selection" :anchor-index="anchor" :disabled="state.invalid" :unavailable="item => item.branchIndex !== null" :measure-title="item => item.branchIndex === null ? t('第 {p0} 小节', { p0: item.index + 1 }) : branchLabel(branches[item.branchIndex])" @activate="chooseMeasure" @select="chooseRange" />
             <output class="branch-selection">{{ first === null ? t('请先选择有效的小节。') : t('已选小节：{p0}–{p1}', { p0: first + 1, p1: last + 1 }) }}</output>
           </template>
-          <div v-if="mode === 'create' || mode === 'route'" :class="{ 'branch-source-fields': mode === 'create' }">
-            <label v-if="mode === 'create'">{{ t('首条路线') }}<select id="branch-initial-route" v-model="fields.route"><option v-for="route in BRANCH_ROUTES" :key="route" :value="route">{{ route }} · {{ t(names[route]) }}</option></select></label>
-            <label>{{ t('音符来源') }}<select id="branch-source" v-model="fields.source"><option value="">{{ t('空白（保留小节和指令）') }}</option><option v-if="mode === 'create'" value="shared">{{ t('复制所选共用小节') }}</option><template v-else><option v-for="route in editedBranch.routes" :key="route" :value="route">{{ t('复制路线 {p0}', { p0: route }) }} · {{ t(names[route]) }}</option></template></select></label>
+          <div v-if="mode === 'create'" class="branch-source-fields">
+            <label>{{ t('首条路线') }}<select id="branch-initial-route" v-model="fields.route"><option v-for="route in BRANCH_ROUTES" :key="route" :value="route">{{ route }} · {{ t(names[route]) }}</option></select></label>
+            <label>{{ t('音符来源') }}<select id="branch-source" v-model="fields.source"><option value="">{{ t('空白（保留小节和指令）') }}</option><option value="shared">{{ t('复制所选共用小节') }}</option></select></label>
+          </div>
+          <div v-if="mode === 'route'" class="route-source-actions">
+            <button id="branch-source-empty" type="button" @click="createRoute('')"><Plus aria-hidden="true" />{{ t('创建空白路线') }}</button>
+            <button v-for="route in editedBranch.routes" :key="route" type="button" :data-source="route" @click="createRoute(route)"><Copy aria-hidden="true" /><span>{{ routeActionParts('复制路线 {p0}')[0] }}<span class="branch-route-text" :data-route="route">{{ t(names[route]) }}</span>{{ routeActionParts('复制路线 {p0}')[1] }}</span></button>
           </div>
           <div v-if="mode === 'create'" class="branch-condition-fields">
             <label>{{ t('分歧条件') }}<select id="branch-condition" v-model="fields.condition"><option value="p">{{ t('精度（p）') }}</option><option value="r">{{ t('连打数（r）') }}</option><option value="s">{{ t('分数（s）') }}</option></select></label>
             <label>{{ t('第一阈值') }}<input id="branch-lower" v-model.number="fields.lower" type="number" step="any" required></label>
             <label>{{ t('第二阈值') }}<input id="branch-upper" v-model.number="fields.upper" type="number" step="any" required></label>
           </div>
-          <template v-if="mode === 'remove'">
-            <p>{{ t('删除分歧后保留小节和指令，可选择保留一条路线的音符，或全部清空。') }}</p>
-            <label>{{ t('保留音符') }}<select id="branch-keep" v-model="fields.keep"><option value="">{{ t('不保留任何路线的音符') }}</option><option v-for="route in editedBranch.routes" :key="route" :value="route">{{ route }} · {{ t(names[route]) }}</option></select></label>
+          <p v-if="mode === 'remove-route'">{{ t('删除路线 {p0} 及其内容？可撤销恢复。', { p0: t(names[fields.route]) }) }}</p>
+          <template v-if="mode === 'remove' || mode === 'remove-last'">
+            <p v-if="mode === 'remove-last'">{{ t('删除最后一条路线将同时删除整个分歧，小节和指令保留。') }}</p>
+            <p v-else>{{ t('删除分歧后保留小节和指令，可选择保留一条路线的音符，或全部清空。') }}</p>
+            <div class="route-source-actions branch-delete-actions">
+              <button v-for="route in editedBranch.routes" :key="route" type="button" class="delete-action" :data-keep="route" @click="removeBranch(route)"><Trash2 aria-hidden="true" /><span>{{ routeActionParts('删除分歧并保留 {p0} 音符')[0] }}<span class="branch-route-text" :data-route="route">{{ t(names[route]) }}</span>{{ routeActionParts('删除分歧并保留 {p0} 音符')[1] }}</span></button>
+              <button id="branch-delete-empty" type="button" class="delete-action" @click="removeBranch('')"><Trash2 aria-hidden="true" />{{ t('删除分歧并清空音符') }}</button>
+            </div>
           </template>
           <p v-if="error || state.error" class="branch-route-error" role="alert">{{ error || state.notice }}</p>
-          <div class="branch-form-actions"><button type="button" @click="close">{{ t('取消') }}</button><button id="branch-apply" type="submit" :disabled="mode === 'create' && !selectedMeasures.length">{{ mode === 'remove' ? t('删除整个分歧') : t('确定') }}</button></div>
+          <div class="branch-form-actions"><button id="branch-cancel" type="button" @click="close">{{ t('取消') }}</button><button v-if="mode === 'create' || mode === 'remove-route'" id="branch-apply" type="submit" :class="{ 'delete-action': mode === 'remove-route' }" :disabled="mode === 'create' && !selectedMeasures.length"><Trash2 v-if="mode === 'remove-route'" aria-hidden="true" />{{ mode === 'remove-route' ? t('删除路线') : t('确定') }}</button></div>
         </fieldset>
       </form>
     </dialog>
@@ -181,7 +205,7 @@ function keydown(event) {
           </div>
           </div>
         </article>
-        <p v-if="!sortedBranches.length" class="no-branches">{{ t('暂无分歧') }}</p>
+        <p v-if="!sortedBranches.length" class="no-branches"><GitBranch aria-hidden="true" :stroke-width="1.5" /><span>{{ t('暂无分歧') }}</span></p>
       </div>
       <p v-if="!mode && (error || state.error)" class="branch-route-error" role="alert">{{ error || state.notice }}</p>
     </div>
@@ -194,12 +218,15 @@ function keydown(event) {
 .branch-manager .branch-route-row+.branch-route-row{border-top:1px solid var(--line)}
 .branch-manager .branch-row-heading{padding:6px 8px;border-bottom:1px solid var(--line);background:#f4f7f5}
 .branch-card-body{display:flex;flex-direction:column;gap:10px;padding:8px;min-width:0}
+.branch-manager .no-branches{display:flex;align-items:center;justify-content:center;gap:12px;min-height:88px;margin:0;padding:18px 12px;border:1px dashed var(--line);border-radius:8px;background:#f8faf9;color:#6c7c74;font-size:12px;text-align:left}
+.branch-manager .no-branches svg{width:28px;height:28px;color:#94a89d;flex-shrink:0}
+.branch-manager .no-branches span{min-width:0;overflow-wrap:anywhere}
 .branch-manager .branch-route-cards{grid-template-columns:repeat(3,minmax(0,1fr))}.branch-manager .branch-route-card strong{min-width:0}
 .branch-manager .branch-route-card{padding:6px 10px}
 .branch-manager .branch-route-row[aria-current=true]{box-shadow:none}
 .branch-manager .branch-jump,.branch-manager .branch-row-heading>.icon,.branch-route-card .route-select,.branch-route-card .route-remove{font-family:inherit;font-size:12px;font-weight:400;line-height:1.4;color:inherit;border:0;background:transparent;box-shadow:none}
 .branch-manager .branch-jump strong,.branch-route-card strong{font-family:inherit;font-weight:400}
-.branch-manager .branch-jump:hover:not(:disabled),.branch-manager .branch-row-heading>.icon:hover:not(:disabled),.branch-route-card .route-select:hover:not(:disabled),.branch-route-card .route-remove:hover:not(:disabled){background:#ffffff80}
+.branch-manager .branch-jump:hover:not(:disabled),.branch-manager .branch-row-heading>.icon:hover:not(:disabled){background:#ffffff80}
 .branch-manager .branch-row-heading>button{transition:background-color .12s,color .12s}
 .branch-manager .branch-row-heading>.branch-jump:is(:hover,:focus-visible):not(:disabled),.branch-manager .branch-row-heading>.icon:is(:hover,:focus-visible):not(:disabled){background:#e1ece5;color:var(--green)}
 .branch-actions{display:flex;flex-basis:100%;gap:8px}
@@ -212,7 +239,7 @@ function keydown(event) {
 .branch-route-filter button:focus-visible{outline:2px solid #2457d6;outline-offset:2px}
 .branch-route-message{display:flex;align-items:flex-start;gap:8px;flex-basis:100%;min-width:0;padding:10px;border:1px solid #ecd7ab;border-radius:4px;background:#fff7e6;color:#63543a}
 .branch-route-message-content{flex:1;min-width:0;max-height:160px;overflow:auto}
-.branch-route-message p{margin:0;font-size:12px;line-height:20px;overflow-wrap:anywhere}
+.branch-route-message p{margin:0;font-size:12px;line-height:20px;overflow-wrap:anywhere;transform:translateY(-.5px)}
 .branch-route-message p+p{margin-top:4px}
 .branch-route-message .message-dismiss{width:20px;height:20px;min-height:20px;padding:3px;border:0;background:transparent;box-shadow:none;color:inherit;flex-shrink:0}
 .branch-route-message .message-dismiss:hover{background:#63543a14}
@@ -223,6 +250,11 @@ function keydown(event) {
 .branch-dialog-heading>.icon{border:0}
 .branch-source-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .branch-source-fields select{box-sizing:border-box;max-width:none}
+.route-source-actions{display:grid;gap:6px;margin:12px 0}
+.route-source-actions button{justify-content:flex-start;min-height:38px;padding:8px 10px;font-size:12px;text-align:left;white-space:normal}
+.route-source-actions button.branch-route-text{color:var(--route-color)}
+.route-source-actions button:hover:not(:disabled){background:#f1f6f3;border-color:#abc4b7}
+.route-source-actions svg{width:15px;height:15px;flex-shrink:0}
 .branch-form .branch-route-error{color:#bd3b30}
 .branch-condition-fields select{max-width:none}
 .branch-action-dialog .branch-form{margin-top:12px}
@@ -232,21 +264,24 @@ function keydown(event) {
 .branch-route-tag[data-route=E],.branch-route-card[data-route=E],.branch-route-text[data-route=E],.branch-route-filter button[data-route=E]{--route-color:#245c91;--route-missing-border:#81a6cd;--route-hover-background:#eaf3fc}
 .branch-route-tag[data-route=M],.branch-route-card[data-route=M],.branch-route-text[data-route=M],.branch-route-filter button[data-route=M]{--route-color:#983968;--route-missing-border:#cb87aa;--route-hover-background:#fbeaf4}
 .branch-route-text{color:var(--route-color)}
-.branch-dialog-heading .branch-route-text{color:var(--route-color);margin:4px 0 0}
+.branch-dialog-heading .branch-route-text{color:var(--route-color)}
+.branch-dialog-heading h2:has(#branch-action-route){font-size:16px}
+.branch-dialog-heading:has(#branch-action-route){gap:8px}
 .route-subtitle{display:block;margin-top:4px;font-size:11px;font-weight:400}
 .branch-route-tag{display:inline-block;padding:0 5px;border-radius:4px;color:var(--route-color);background:var(--route-hover-background);font-weight:600}
 .branch-route-card[data-route=N]:not(.missing){background:#f1f2f3;border-color:#a3a8ae;color:var(--route-color)}
 .branch-route-card[data-route=E]:not(.missing){background:#eaf3fc;border-color:#96b9df;color:var(--route-color)}
 .branch-route-card[data-route=M]:not(.missing){background:#fbeaf4;border-color:#d99abd;color:var(--route-color)}
 .branch-route-card.missing{text-align:left}
-.branch-route-card.missing:is(:hover,:focus-visible):not(:disabled){background:var(--route-hover-background);border-color:var(--route-color)}
-.branch-route-card .route-remove{width:28px;min-height:28px;border:0;background:transparent;color:inherit}
-.branch-route-card .route-remove:hover:not(:disabled){background:#ffffff80}
+.branch-route-card:has(.route-select:not(:disabled)):is(:hover,:focus-within){background:color-mix(in srgb,var(--route-hover-background) 90%,var(--route-color));border-color:var(--route-color)}
+.branch-route-card .route-remove{width:28px;min-height:28px;border:0;background:transparent;color:var(--ink)}
+.branch-route-card .route-select{color:var(--ink)}
+.branch-route-card:not(.missing) .route-name,.route-subtitle{color:var(--route-color)}
+.branch-route-card .route-select:hover:not(:disabled),.branch-route-card .route-remove:hover:not(:disabled){background:transparent}
 .branch-route-card:not(.missing){border-style:solid}
 .branch-route-card[data-route].selected{border-color:var(--route-color);border-left-width:3px;border-right-width:3px;padding:6px 8px;box-shadow:none}
 .route-name{display:flex;align-items:center;gap:3px}
-.branch-route-card .route-select{flex:1;align-self:stretch;min-width:0;justify-content:space-between;gap:4px;border:0;background:transparent;color:inherit;padding:0;text-align:left;white-space:normal}
-.branch-route-card:has(.route-select:hover:not(:disabled)){border-color:var(--route-color)}
+.branch-route-card .route-select{flex:1;align-self:stretch;min-width:0;justify-content:space-between;gap:4px;border:0;background:transparent;color:var(--ink);padding:0;text-align:left;white-space:normal}
 .route-note-count,.route-status{display:block;margin-top:4px;font-size:10px;font-weight:400}
 .branch-uniform{border:0;padding:0;margin:0 0 16px;min-width:0}.branch-uniform legend{font-size:12px;font-weight:600;margin-bottom:8px}.branch-uniform .route-segments span{min-width:0}.branch-row-heading{flex-wrap:wrap}.branch-row-heading>.branch-jump{min-width:130px}
 .branch-route-row{flex-direction:column;align-items:stretch!important}.branch-row-heading{display:flex;align-items:center;gap:6px;min-width:0}.branch-row-heading>.icon{flex-shrink:0}.branch-route-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:8px}.branch-route-card{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;padding:10px;border:1px solid var(--line);border-radius:8px;background:#fff}.branch-route-card.missing{border-style:dashed;background:#fdfdfd;border-color:var(--route-missing-border);color:var(--route-color)}.branch-route-card.missing strong{font-weight:400}.branch-route-card strong{font-size:12px;overflow-wrap:anywhere}.branch-route-card button{flex-shrink:0;font-size:11px;padding:5px}.branch-route-card svg,.branch-create svg{width:14px;height:14px}.branch-jump .branch-measures{display:flex;flex-wrap:wrap;gap:4px 12px}.branch-measures>span{white-space:nowrap}.branch-create{margin-bottom:12px}.branch-form fieldset{border:0;padding:0;margin:0;min-width:0}.branch-form legend{font-weight:600;margin-bottom:12px}.branch-form label{display:flex;flex-direction:column;gap:6px;font-size:12px;margin:12px 0;min-width:0}.branch-form input,.branch-form select{width:100%;min-width:0;height:34px}.branch-form p{font-size:12px;line-height:1.6;color:var(--muted)}.branch-condition-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.branch-measure-grid{max-height:32vh;overflow:auto;padding:4px;border:1px solid var(--line);border-radius:8px}.branch-selection{display:block;font-size:12px;margin-top:10px;color:var(--green)}.branch-form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}

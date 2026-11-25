@@ -1105,7 +1105,7 @@ test('global navigation keeps viewing, looping and double-click toggles outside 
 
 test('navigation marks only measures intersecting the viewport independently of the selected point', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
-  const source = descriptor.scriptSetup.content.slice(descriptor.scriptSetup.content.indexOf('const visibleMeasureIndices ='), descriptor.scriptSetup.content.indexOf('const balloonHits ='));
+  const source = descriptor.scriptSetup.content.slice(descriptor.scriptSetup.content.indexOf('const visibleMeasureIndices ='), descriptor.scriptSetup.content.indexOf('const deleteDialog ='));
   const bars = Array.from({ length: 4 }, (_, index) => ({ index, start: index * 2, end: (index + 1) * 2 }));
   const visible = ref(null);
   const indices = runInNewContext(`${source}; visibleMeasureIndices`, { computed, visible, measureStart: item => item.start, measureEnd: item => item.end });
@@ -1737,26 +1737,48 @@ test('branch manager submits explicit route sources and retained notes to the ta
   const source = descriptor.scriptSetup.content.replace(/^import .*;\n/gm, '');
   const branch = { index: 1, firstBarIndex: 6, route: 'N', routes: ['N', 'E'], value: 's,10,20' };
   const writes = [], state = reactive({ chart: { branches: [branch] }, notice: 'failed' });
-  let success = true, confirmed = false;
-  const manager = runInNewContext(`${source}; ({ edit, submit, removeRoute, fields, mode, error, dialog, close })`, {
+  let success = true;
+  const manager = runInNewContext(`${source}; ({ edit, submit, createRoute, removeBranch, removeRoute, fields, mode, error, dialog, close })`, {
     ref, reactive, computed, watch, inject: () => ({ state, bar: ref(null), pause() {}, applyMeasureBranch: (operation, measure) => { writes.push({ operation, measure }); return success; } }),
-    confirm: () => confirmed, t, names: { N: '普通', E: '玄人' }
+    t, names: { N: '普通', E: '玄人' }
   });
   let opened = 0, closed = 0;
   manager.dialog.value = { showModal() { opened++; }, close() { closed++; } };
-  manager.edit(branch, 'route', 'M'); manager.fields.source = 'E'; manager.submit();
+  manager.edit(branch, 'route', 'M'); manager.createRoute('E');
   assert.equal(writes[0].operation.source, 'E'); assert.equal(writes[0].operation.route, 'M'); assert.equal(writes[0].measure, 6);
-  manager.edit(branch, 'route', 'M'); manager.fields.source = ''; manager.submit();
+  manager.edit(branch, 'route', 'M'); manager.createRoute('');
   assert.equal(writes[1].operation.source, null);
-  manager.edit(branch, 'remove'); manager.fields.keep = 'E'; manager.submit();
+  manager.edit(branch, 'remove'); manager.removeBranch('E');
   assert.equal(writes[2].operation.keep, 'E');
   success = false;
-  manager.edit(branch, 'remove'); manager.fields.keep = ''; manager.submit();
+  manager.edit(branch, 'remove'); manager.removeBranch('');
   assert.equal(writes[3].operation.keep, null); assert.equal(manager.error.value, 'failed'); assert.equal(manager.mode.value, 'remove');
   manager.removeRoute(branch, 'E'); assert.equal(writes.length, 4);
-  confirmed = true; manager.removeRoute(branch, 'E');
-  assert.equal(writes.length, 5); assert.equal(writes[4].operation.clearLast, true);
+  assert.equal(manager.mode.value, 'remove-route');
+  manager.close(); assert.equal(writes.length, 4);
+  manager.removeRoute(branch, 'E'); manager.submit();
+  assert.equal(writes.length, 5); assert.equal(writes[4].operation.route, 'E');
+  assert.equal(writes[4].operation.clearLast, undefined);
+  assert.equal(manager.mode.value, 'remove-route'); assert.equal(manager.error.value, 'failed');
   assert.equal(writes[4].measure, 6);
+  manager.edit(branch, 'route', 'M'); manager.createRoute('N');
+  assert.equal(manager.mode.value, 'route'); assert.equal(manager.error.value, 'failed');
+  assert.equal(writes[5].operation.source, 'N');
+  success = true; manager.createRoute('');
+  assert.equal(writes[6].operation.source, null); assert.equal(manager.mode.value, '');
+  manager.createRoute('E'); assert.equal(writes.length, 7);
+  const onlyRoute = { ...branch, routes: ['N'] };
+  state.chart.branches = [onlyRoute];
+  manager.removeRoute(onlyRoute, 'N');
+  assert.equal(manager.mode.value, 'remove-last'); assert.equal(writes.length, 7);
+  manager.close(); assert.equal(writes.length, 7);
+  manager.removeRoute(onlyRoute, 'N'); manager.removeBranch('N');
+  assert.equal(writes[7].operation.type, 'remove'); assert.equal(writes[7].operation.keep, 'N');
+  manager.removeRoute(onlyRoute, 'N'); manager.removeBranch('');
+  assert.equal(writes[8].operation.keep, null); assert.equal(writes[8].measure, 6);
+  manager.removeBranch('N'); assert.equal(writes.length, 9);
+  manager.edit(branch, 'remove-route', 'N'); manager.submit();
+  assert.equal(manager.mode.value, 'remove-last'); assert.equal(writes.length, 9);
   assert.ok(opened > 0 && closed > 0);
   state.activeId = 'another-document';
   assert.equal(manager.mode.value, ''); assert.equal(manager.error.value, '');
@@ -1885,17 +1907,43 @@ test('the timeline toolbar groups explicit before and after measure insertion ac
   assert.match(descriptor.styles[0].content, /\.measure-actions button\{[^}]*border:0;border-radius:4px/);
 });
 
-test('the timeline toolbar offers direct measure deletion with an icon and last-measure and invalid-source guards', () => {
+test('the timeline toolbar confirms measure deletion in a cancelable modal with context and availability guards', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'delete-measure' });
   const toolbar = descriptor.template.content.match(/<div class="editor-actions">[\s\S]*?<\/div><\/div>/)[0];
   const button = toolbar.match(/<button id="delete-bar"[\s\S]*?<\/button>/)[0];
   assert.match(button, /:disabled="!bar \|\| state.invalid \|\| state.chart.bars.length <= 1"/);
-  assert.match(button, /@click="studio.deleteBar"/);
+  assert.match(button, /@click="requestDeleteMeasure"/);
   assert.match(button, /<Trash2 aria-hidden="true" \/>/);
   assert.match(button, /t\('不能删除最后一个小节。'\)/);
   assert.match(button, /t\('删除小节'\)/);
   assert.equal(descriptor.template.content.split('id="delete-bar"').length - 1, 1);
+  assert.match(descriptor.template.content, /<dialog ref="deleteDialog"[^>]*aria-labelledby="delete-measure-title"[^>]*@cancel.prevent="closeDeleteMeasure"/);
+  assert.match(descriptor.template.content, /id="delete-measure-cancel" type="button" autofocus @click="closeDeleteMeasure"/);
+  assert.match(descriptor.template.content, /id="delete-measure-confirm" type="button" @click="confirmDeleteMeasure"/);
+  const state = reactive({ activeId: 1, course: 0, chart: { bars: [{}, {}] }, selected: 0, invalid: false, editorBlocked: false, notice: 'failed' });
+  let deleted = 0, paused = 0, succeeds = true, open = false;
+  const source = descriptor.scriptSetup.content.match(/const deleteDialog = ref\(null\)[\s\S]*?(?=const balloonHits)/)[0];
+  const modal = runInNewContext(`${source}; ({ deleteDialog, deleteTarget, deleteError, requestDeleteMeasure, confirmDeleteMeasure, closeDeleteMeasure })`, {
+    ref, watch, state, bar: computed(() => state.chart?.bars[state.selected]),
+    studio: { pause: () => paused++, deleteBar: () => { deleted++; return succeeds; } },
+    confirm: () => assert.fail('Measure deletion must not use native confirm'),
+  });
+  modal.deleteDialog.value = { showModal: () => { open = true; }, close: () => { open = false; } };
+  modal.requestDeleteMeasure(); assert.equal(open, true); assert.equal(deleted, 0); assert.equal(paused, 1);
+  modal.closeDeleteMeasure(); modal.confirmDeleteMeasure(); assert.equal(open, false); assert.equal(deleted, 0);
+  modal.requestDeleteMeasure(); modal.confirmDeleteMeasure(); assert.equal(deleted, 1); assert.equal(open, false);
+  succeeds = false; modal.requestDeleteMeasure(); modal.confirmDeleteMeasure();
+  assert.equal(open, true); assert.equal(modal.deleteError.value, 'failed');
+  succeeds = true; modal.confirmDeleteMeasure(); assert.equal(open, false); assert.equal(modal.deleteError.value, '');
+  for (const field of ['selected', 'course', 'activeId']) {
+    state.selected = 0; modal.requestDeleteMeasure(); state[field]++;
+    assert.equal(open, false, field); const count = deleted; modal.confirmDeleteMeasure(); assert.equal(deleted, count);
+  }
+  state.selected = 0; modal.requestDeleteMeasure(); state.chart = { bars: [{}, {}] }; assert.equal(open, false);
+  modal.requestDeleteMeasure(); state.invalid = true; assert.equal(open, false);
+  modal.requestDeleteMeasure(); assert.equal(open, false);
+  state.invalid = false; state.chart = { bars: [{}] }; modal.requestDeleteMeasure(); assert.equal(open, false);
 });
 
 test('measure statistics live in measure properties while snap remains in the toolbar', () => {
@@ -2038,7 +2086,7 @@ test('branch context follows selected point timing rather than playback or the v
 test('one single-line toolbar retains priority controls and collapses secondary controls above the timeline', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'inline-snap-controls' });
-  const tools = descriptor.template.content.match(/<div ref="toolbar" class="lane-head editor-tools editor-bar"[^>]*>[\s\S]*?(?=\s*<div class="timeline-frame">)/)[0];
+  const tools = descriptor.template.content.match(/<div ref="toolbar" class="lane-head editor-tools editor-bar"[^>]*>[\s\S]*?(?=\s*<Teleport to="body">\s*<dialog ref="deleteDialog")/)[0];
   assert.equal(descriptor.template.content.split('class="lane-head editor-tools editor-bar"').length - 1, 1);
   assert.doesNotMatch(tools, /音乐波形|振幅/);
   for (const id of ['bar-number', 'undo', 'redo', 'insert-bar-before', 'insert-bar-after', 'delete-bar', 'snap-division', 'custom-snap', 'follow-playback', 'view']) {
@@ -2247,6 +2295,7 @@ test('branch lists combine route filtering and condition editors while structura
   assert.doesNotMatch(descriptor.scriptSetup.content, /\bInfo\b/);
   assert.match(descriptor.styles[0].content, /\.branch-route-message\{[^}]*padding:10px;/);
   assert.match(descriptor.styles[0].content, /\.branch-route-message p\{[^}]*line-height:20px;/);
+  assert.match(descriptor.styles[0].content, /\.branch-route-message p\{[^}]*transform:translateY\(-\.5px\)/);
   assert.match(descriptor.styles[0].content, /\.branch-route-message \.message-dismiss\{width:20px;height:20px;min-height:20px;padding:3px;/);
   assert.match(descriptor.template.content, /v-for="item in state.branchRouteWarning.branches"/);
   assert.match(descriptor.template.content, /@click="state.branchRouteWarning = null"/);
@@ -2272,6 +2321,7 @@ test('branch lists combine route filtering and condition editors while structura
   assert.match(timeline.styles[0].content, /\.editor>\.editor-bar,\.editor>\.timeline-frame,\.editor>\.overview\{flex-shrink:0\}/);
   assert.match(descriptor.styles[0].content, /\.branch-manager \.branch-route-cards\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)\}/);
   assert.match(timeline.styles[0].content, /\.editor-information-left\{grid-column:1;grid-row:1;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin\}/);
+  assert.match(timeline.styles[0].content, /\.editor-information-left>\.measure-section,#mobile-navigation-panel>\.measure-section\{min-width:0;border-top:1px solid var\(--line\)\}/);
   assert.match(timeline.styles[0].content, /\.editor-information>section\.branch-context\{grid-column:2;grid-row:1;/);
   assert.match(timeline.styles[0].content, /\.editor-information>section\.branch-context\{[^}]*min-height:0;overflow:auto;overscroll-behavior:contain;/);
   assert.match(timeline.styles[0].content, /\.editor-information>section\.branch-context\{[^}]*width:420px;max-width:100%;min-width:0;/);
@@ -2310,9 +2360,13 @@ test('branch management keeps measure details in the title and places route acti
   assert.match(styles, /\.branch-route-card\.missing\{border-style:dashed;/);
   assert.match(styles, /\.branch-route-card\[data-route\]\.selected\{border-color:var\(--route-color\);border-left-width:3px;border-right-width:3px;padding:6px 8px;box-shadow:none\}/);
   assert.match(styles, /\.branch-manager \.branch-route-card\.selected\{padding:6px 3px\}/);
+  assert.match(styles, /\.branch-route-card:has\(\.route-select:not\(:disabled\)\):is\(:hover,:focus-within\)\{background:color-mix\(in srgb,var\(--route-hover-background\) 90%,var\(--route-color\)\);border-color:var\(--route-color\)\}/);
+  assert.match(styles, /\.branch-route-card \.route-select:hover:not\(:disabled\),\.branch-route-card \.route-remove:hover:not\(:disabled\)\{background:transparent\}/);
+  assert.doesNotMatch(styles, /\.branch-route-card \.route-(?:select|remove):hover[^}]*background:#ffffff80/);
   assert.doesNotMatch(descriptor.scriptSetup.content + cards, /route-check|\bCheck\b/);
   assert.match(cards, /<span v-else class="route-subtitle">\{\{ t\(names\[route\]\) \}\}<\/span>/);
-  assert.match(descriptor.template.content, /id="branch-action-subtitle" class="branch-route-text" :data-route="fields.route">\{\{ actionSubtitle \}\}/);
+  assert.match(descriptor.template.content, /<h2 id="branch-action-title">\{\{ actionTitle \}\}<template v-if="mode === 'route' \|\| mode === 'remove-route'"> - <span id="branch-action-route" class="branch-route-text" :data-route="fields.route">\{\{ actionSubtitle \}\}/);
+  assert.doesNotMatch(descriptor.template.content, /branch-action-subtitle/);
   assert.match(styles, /\.branch-manager \.branch-route-card\{padding:6px 10px\}/);
   assert.match(styles, /\.branch-manager \.branch-route-row\[aria-current=true\]\{box-shadow:none\}/);
   assert.match(styles, /\.branch-manager \.branch-jump,\.branch-manager \.branch-row-heading>\.icon,\.branch-route-card \.route-select,\.branch-route-card \.route-remove\{font-family:inherit;font-size:12px;font-weight:400;line-height:1\.4;color:inherit;border:0;background:transparent;box-shadow:none\}/);
@@ -2372,16 +2426,53 @@ test('branch creation groups equal-width route and source fields and displays er
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'branch-creation-layout' });
   const template = descriptor.template.content;
-  const fields = template.match(/<div v-if="mode === 'create' \|\| mode === 'route'"[\s\S]*?<\/div>/)[0];
+  const fields = template.match(/<div v-if="mode === 'create'" class="branch-source-fields">[\s\S]*?<\/div>/)[0];
   assert.match(fields, /id="branch-initial-route"/);
   assert.match(fields, /id="branch-source"/);
-  assert.match(fields, /'branch-source-fields': mode === 'create'/);
+  const routeSources = template.match(/<div v-if="mode === 'route'" class="route-source-actions">[\s\S]*?<\/div>/)[0];
+  assert.doesNotMatch(routeSources, /<select|type="submit"/);
+  assert.match(routeSources, /@click="createRoute\(''\)"/);
+  assert.match(routeSources, /@click="createRoute\(route\)"/);
+  assert.match(template, /class="branch-form-actions"><button id="branch-cancel" type="button" @click="close">\{\{ t\('取消'\) \}\}<\/button><button v-if="mode === 'create' \|\| mode === 'remove-route'" id="branch-apply"/);
+  const removal = template.match(/<template v-if="mode === 'remove' \|\| mode === 'remove-last'">[\s\S]*?<\/template>/)[0];
+  assert.doesNotMatch(removal, /<select|type="submit"/);
+  assert.match(removal, /@click="removeBranch\(route\)"/);
+  assert.match(removal, /@click="removeBranch\(''\)"/);
+  assert.match(removal, /v-if="mode === 'remove-last'"[\s\S]*删除最后一条路线将同时删除整个分歧，小节和指令保留。/);
+  assert.doesNotMatch(descriptor.scriptSetup.content, /\bconfirm\s*\(/);
   const form = template.match(/<form v-if="mode"[\s\S]*?<\/form>/)[0];
   assert.match(form, /class="branch-route-error" role="alert"[\s\S]*?<\/p>\s*<div class="branch-form-actions">/);
   assert.match(template, /v-if="!mode && \(error \|\| state.error\)" class="branch-route-error"/);
   assert.match(descriptor.styles[0].content, /\.branch-source-fields\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(descriptor.styles[0].content, /\.branch-source-fields select\{[^}]*max-width:none/);
   assert.match(descriptor.styles[0].content, /\.branch-form \.branch-route-error\{color:#bd3b30\}/);
+});
+
+test('modal deletion buttons use shared danger styling while route themes stay on names', () => {
+  const styles = readFileSync(new URL('style.css', import.meta.url), 'utf8');
+  assert.match(styles, /dialog button:is\(\.delete-action,\.danger,#delete-measure-confirm\)\{border:1px solid #bd3b30!important;background:#fff0ee;color:#b42318\}/);
+  assert.match(styles, /dialog button:is\([^}]+\):hover:not\(:disabled\)\{background:#ffe0db;color:#961b11;/);
+  assert.match(styles, /dialog button:is\([^}]+\):active:not\(:disabled\)\{background:#ffd0c8\}/);
+  assert.match(styles, /dialog button:is\([^}]+\):focus-visible\{outline:2px solid #b42318;/);
+  const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
+  const template = descriptor.template.content;
+  for (const attribute of ['data-source', 'data-keep']) {
+    assert.match(template, new RegExp(`<button[^>]*:${attribute}="route"[^>]*>[\\s\\S]*?<span class="branch-route-text" :data-route="route">`));
+    assert.doesNotMatch(template, new RegExp(`<button[^>]*class="branch-route-text"[^>]*:${attribute}=`));
+  }
+  assert.doesNotMatch(template.slice(template.indexOf('<div class="branch-manager"')), /class="[^\"]*delete-action/);
+});
+
+test('branch empty state groups a decorative icon and localized label without duplicate actions', () => {
+  const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'branch-empty-state' });
+  const empty = descriptor.template.content.match(/<p v-if="!sortedBranches.length" class="no-branches">[\s\S]*?<\/p>/)[0];
+  assert.match(empty, /<GitBranch aria-hidden="true" :stroke-width="1.5" \/>/);
+  assert.match(empty, /<span>\{\{ t\('暂无分歧'\) \}\}<\/span>/);
+  assert.doesNotMatch(empty, /<button|<a\b/);
+  assert.match(descriptor.styles[0].content, /\.branch-manager \.no-branches\{display:flex;align-items:center;justify-content:center;gap:12px;min-height:88px;/);
+  assert.match(descriptor.styles[0].content, /\.branch-manager \.no-branches\{[^}]*border:1px dashed var\(--line\);border-radius:8px;background:#f8faf9;/);
+  assert.match(descriptor.styles[0].content, /\.branch-manager \.no-branches svg\{width:28px;height:28px;/);
 });
 
 test('per-mode deletion confirms the target without changing selection and permits deleting the last chart', () => {
@@ -2497,7 +2588,8 @@ test('position editors expose preserved commands while branch editing lives in t
   assert.doesNotMatch(descriptor.template.content, /edit-branch-source|branch-source-dialog|editBranchAt/);
   const manager = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8')).descriptor;
   compileScript(manager, { id: 'global-branch-manager' });
-  for (const id of ['branch-create', 'branch-condition', 'branch-lower', 'branch-upper', 'branch-source', 'branch-keep']) assert.ok(manager.template.content.includes(`id="${id}"`));
+  for (const id of ['branch-create', 'branch-condition', 'branch-lower', 'branch-upper', 'branch-source', 'branch-delete-empty']) assert.ok(manager.template.content.includes(`id="${id}"`));
+  assert.doesNotMatch(manager.template.content, /id="branch-keep"/);
   assert.match(manager.template.content, /<MeasureGrid[^>]*:selection="selection"[^>]*:unavailable="item => item.branchIndex !== null"/);
   assert.match(manager.template.content, /@activate="chooseMeasure" @select="chooseRange"/);
 });
