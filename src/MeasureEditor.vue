@@ -22,12 +22,12 @@ const preserved = { lyric: 'LYRIC', section: 'SECTION', levelhold: 'LEVELHOLD', 
 const measureKeys = ['meter', 'barline', 'section', 'levelhold'];
 const divisions = computed(() => [...new Set([4, 8, 12, 16, 24, 32, 48, 64, 96, 192, bar.value?.notes.length].filter(Boolean))].sort((first, second) => first - second));
 const sectionSummaries = computed(() => ({
-  note: cell.value?.name ?? (bar.value ? t('空拍') : '—'),
-  position: command.value ? `${command.value.numerator}/${command.value.denominator} · ${formatTime(command.value.time)}` : '—',
-  measure: bar.value ? `${t('小节 {p0}', { p0: bar.value.index + 1 })} · ${t('音符数：{p0}', { p0: stats.value.total })}` : '—',
-  commands: command.value ? t('{p0} 条指令', { p0: command.value.commands.length }) : '—',
-  instructions: bar.value ? t('{p0} 条指令', { p0: bar.value.instructions.length }) : '—',
-  source: bar.value ? `${bar.value.notes.length} ${t('格')} · ${t(state.sourceState)}` : '—'
+  note: cell.value?.name ?? (bar.value ? t('空拍') : ''),
+  position: command.value ? `${command.value.numerator}/${command.value.denominator} · ${formatTime(command.value.time)}` : '',
+  measure: bar.value ? `${t('小节 {p0}', { p0: bar.value.index + 1 })} · ${t('音符数：{p0}', { p0: stats.value.total })}` : '',
+  commands: command.value ? t('{p0} 条指令', { p0: command.value.commands.length }) : '',
+  instructions: bar.value ? t('{p0} 条指令', { p0: bar.value.instructions.length }) : '',
+  source: bar.value ? `${bar.value.notes.length} ${t('格')} · ${t(state.sourceState)}` : ''
 }));
 watch([command, measureCommand], ([value, measure]) => {
   if (!value || !measure) {

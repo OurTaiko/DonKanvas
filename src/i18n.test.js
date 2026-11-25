@@ -1538,12 +1538,12 @@ test('section title summaries track selected notes, exact positions, measure cou
     assert.equal(summaries.value.commands, '0 commands');
     assert.equal(summaries.value.source, `16 ${t('格')} · ${t('编辑中')}`);
     command.value = null; bar.value = null;
-    assert.equal(summaries.value.position, '—');
-    assert.equal(summaries.value.note, '—');
-    assert.equal(summaries.value.measure, '—');
-    assert.equal(summaries.value.commands, '—');
-    assert.equal(summaries.value.instructions, '—');
-    assert.equal(summaries.value.source, '—');
+    assert.equal(summaries.value.position, '');
+    assert.equal(summaries.value.note, '');
+    assert.equal(summaries.value.measure, '');
+    assert.equal(summaries.value.commands, '');
+    assert.equal(summaries.value.instructions, '');
+    assert.equal(summaries.value.source, '');
     assert.match(descriptor.styles[0].content, /\.inspector-summary\{[^}]*min-width:0;[^}]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis/);
   } finally { reset(); }
 });
@@ -1570,7 +1570,7 @@ test('the editor remains visible with empty disabled bindings and clears stale f
     assert.ok(Object.values(editor.fields).every(value => value === ''));
     assert.ok(Object.values(editor.enabled).every(value => value === false));
     assert.equal(editor.position.numerator, ''); assert.equal(editor.position.denominator, '');
-    assert.ok(Object.values(editor.sectionSummaries.value).every(value => value === '—'));
+    assert.ok(Object.values(editor.sectionSummaries.value).every(value => value === ''));
   };
   assertEmpty();
   studio.selectedTiming.value = { bar: studio.bar.value };
