@@ -466,7 +466,7 @@ async function dropFiles(event) {
         <summary id="project-toggle" :title="t('关于')" :aria-label="t('关于')" aria-controls="project-menu"><Info aria-hidden="true" /><span>{{ t('关于') }}</span><ChevronDown aria-hidden="true" /></summary>
         <div id="project-menu" class="project-panel">
           <p v-if="draftUnavailable" id="save-state" role="alert" class="error">{{ t(state.saveState) }}</p>
-          <nav class="project-links" :aria-label="t('项目信息')"><a href="https://github.com/OurTaiko/web-tja-studio" target="_blank" rel="noopener noreferrer" :title="t('GitHub 仓库')">GitHub</a><a href="https://github.com/OurTaiko" target="_blank" rel="noopener noreferrer" :title="t('开源组织')">OurTaiko</a><a href="https://github.com/OurTaiko/web-tja-studio/blob/HEAD/LICENSE" target="_blank" rel="noopener noreferrer">{{ t('MIT 开源协议') }}</a></nav>
+          <nav class="project-links" :aria-label="t('项目信息')"><a href="https://github.com/OurTaiko/DonKanvas" target="_blank" rel="noopener noreferrer" :title="t('GitHub 仓库')">GitHub</a><a href="https://github.com/OurTaiko" target="_blank" rel="noopener noreferrer" :title="t('开源组织')">OurTaiko</a><a href="https://github.com/OurTaiko/DonKanvas/blob/HEAD/LICENSE" target="_blank" rel="noopener noreferrer">{{ t('MIT 开源协议') }}</a></nav>
           <small>© 2026 Dafrok</small>
         </div>
       </details>

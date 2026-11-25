@@ -2,7 +2,7 @@
 export const pageLocales = { 'zh-CN': 'zh_CN', en: 'en_US', ja: 'ja_JP', 'zh-TW': 'zh_TW', ko: 'ko_KR' };
 
 export function getPageURL(code) {
-  return new URL(code === 'zh-CN' ? './' : `index.${code}.html`, 'https://ourtaiko.github.io/web-tja-studio/').href;
+  return new URL(code === 'zh-CN' ? './' : `index.${code}.html`, 'https://ourtaiko.github.io/DonKanvas/').href;
 }
 
 export const pageMetadataKeys = {

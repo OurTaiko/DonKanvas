@@ -92,7 +92,7 @@ test('production PWA assets are installable and precached at root and subdirecto
       ...manifest.icons.map(icon => icon.src)
     ];
 
-    for (const base of ['https://example.com/', 'https://example.com/web-tja-studio/']) {
+    for (const base of ['https://example.com/', 'https://example.com/DonKanvas/', 'https://example.com/web-tja-studio/']) {
       const manifestURL = new URL('manifest.webmanifest', base);
       assert.equal(new URL(manifest.start_url, manifestURL).href, base);
       assert.equal(new URL(manifest.scope, manifestURL).href, base);
@@ -111,7 +111,7 @@ test('production PWA assets are installable and precached at root and subdirecto
     assert.match(html, /name="application-name" content="DonKanvas"/);
     assert.match(html, /name="description" content="DonKanvas[^"\n]+TJA[^"\n]+"/);
     assert.match(html, /name="robots" content="index, follow, max-image-preview:large"/);
-    const canonicalURL = 'https://ourtaiko.github.io/web-tja-studio/';
+    const canonicalURL = 'https://ourtaiko.github.io/DonKanvas/';
     assert.ok(html.includes(`rel="canonical" href="${canonicalURL}"`));
     assert.ok(html.includes(`property="og:url" content="${canonicalURL}"`));
     assert.ok(html.includes(`property="og:image" content="${canonicalURL}icons/icon-512.png"`));

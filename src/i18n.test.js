@@ -691,7 +691,7 @@ test('the project popover shows only draft failures and retains project links an
   assert.match(project, /© 2026 Dafrok/);
   const links = [...project.matchAll(/<a\b([^>]*)>/g)].map(match => match[1]);
   assert.equal(links.length, 3);
-  for (const [index, url] of ['https://github.com/OurTaiko/web-tja-studio', 'https://github.com/OurTaiko', 'https://github.com/OurTaiko/web-tja-studio/blob/HEAD/LICENSE'].entries()) {
+  for (const [index, url] of ['https://github.com/OurTaiko/DonKanvas', 'https://github.com/OurTaiko', 'https://github.com/OurTaiko/DonKanvas/blob/HEAD/LICENSE'].entries()) {
     assert.ok(links[index].includes(`href="${url}"`));
     assert.match(links[index], /target="_blank"/);
     assert.match(links[index], /rel="noopener noreferrer"/);

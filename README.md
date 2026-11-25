@@ -2,7 +2,7 @@
 
 基于 Vue 3 + Vite 的纯前端 TJA 波形与音符编辑器。谱面解析、编辑、历史与音频处理均在浏览器完成，无需后端接口，不上传文件。只有明确执行“保存”时才会写回关联的谱面文件，音频不会被修改。
 
-仓库：[OurTaiko/web-tja-studio](https://github.com/OurTaiko/web-tja-studio) · 组织：[OurTaiko](https://github.com/OurTaiko) · 开源协议：[MIT](./LICENSE)，Copyright © 2026 Dafrok。顶部“设置”提供独立的“检测更新”项；“设置 → 关于”提供仓库、组织和协议链接，外部链接在新标签页中打开，不影响当前编辑会话。
+仓库：[OurTaiko/DonKanvas](https://github.com/OurTaiko/DonKanvas) · 组织：[OurTaiko](https://github.com/OurTaiko) · 开源协议：[MIT](./LICENSE)，Copyright © 2026 Dafrok。顶部“设置”提供独立的“检测更新”项；“设置 → 关于”提供仓库、组织和协议链接，外部链接在新标签页中打开，不影响当前编辑会话。
 
 ## 启动
 
@@ -67,7 +67,7 @@ Actions 在 Node.js 设置和 `npm ci --registry=https://registry.npmjs.org/` �
 
 如果 **Settings → Environments → github-pages** 设置了部署分支限制，请允许 `main` 部署。
 
-默认访问地址为 https://ourtaiko.github.io/web-tja-studio/ 。现有 Vite 配置使用相对资源路径 `base: './'`，可直接在该项目子路径下运行。部署成功后也可在工作流的 `github-pages` 环境中查看实际网址；构建失败时不会发布新版本。
+默认访问地址为 https://ourtaiko.github.io/DonKanvas/ 。现有 Vite 配置使用相对资源路径 `base: './'`，可直接在该项目子路径下运行；部署工作流无需写死仓库名。部署成功后也可在工作流的 `github-pages` 环境中查看实际网址；构建失败时不会发布新版本。
 
 ## 谱面管理与历史
 
