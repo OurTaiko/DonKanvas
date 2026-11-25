@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { computed, nextTick, reactive, ref, watch } from 'vue';
-import { parse, compileScript } from 'vue/compiler-sfc';
+import { parse, compileScript, babelParse } from 'vue/compiler-sfc';
 import { TJAParser } from 'tja';
 import { parseChart } from './chart.js';
 import { translations, getPageMetadata, getPageURL } from './locales.js';
@@ -16,6 +16,20 @@ import { languages, locale, localePreference, matchLocale, detectLocale, initial
 
 const reset = () => { locale.value = 'zh-CN'; localePreference.value = 'auto'; };
 const placeholders = text => [...new Set(text.match(/\{\w+\}/g) || [])].sort();
+
+test('translation dictionaries contain no duplicate literal keys', () => {
+  const source = readFileSync(new URL('locales.js', import.meta.url), 'utf8');
+  const syntax = babelParse(source, { sourceType: 'module' });
+  const declaration = syntax.program.body.flatMap(statement => statement.declaration?.declarations || []).find(item => item.id.name === 'translations');
+  assert.equal(declaration.init.type, 'ObjectExpression');
+  const keys = new Set();
+  for (const property of declaration.init.properties) {
+    if (property.computed) continue;
+    const key = String(property.key.value ?? property.key.name);
+    assert.ok(!keys.has(key), `Duplicate translation key: ${key}`);
+    keys.add(key);
+  }
+});
 
 test('branch empty-state labels omit terminal punctuation in every language', () => {
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
@@ -2371,6 +2385,31 @@ test('landscape inspector tabs use only named icons while portrait tabs retain t
   const tabs = descriptor.template.content.match(/<div class="inspector-tabs"[\s\S]*?<\/div>/)[0];
   assert.match(tabs, /:aria-label="t\(label\)" :title="mobileLandscape \? t\(label\) : undefined"/);
   assert.match(tabs, /<component v-if="mobileLandscape" :is="inspectorIcons\[index\]" aria-hidden="true" \/><span v-else>\{\{ t\(label\) \}\}<\/span>/);
+});
+
+test('landscape keeps top menus and switches open charts through a single-line dropdown', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'landscape-chart-picker' });
+  const header = descriptor.template.content.match(/<header>[\s\S]*?<\/header>/)[0];
+  assert.match(header, /<select v-if="mobileLandscape" id="opened-chart-select" v-model="activeDocument"/);
+  assert.match(header, /:aria-label="t\('已打开谱面'\)"/);
+  assert.match(header, /:disabled="!state.documents.length"/);
+  assert.match(header, /<option v-for="document in state.documents"[^>]*:value="document.id"/);
+  assert.match(header, /document.dirty \|\| document.invalid/);
+  assert.ok(header.indexOf('id="opened-chart-select"') < header.indexOf('ref="settingsMenu"'));
+  assert.match(descriptor.styles[0].content, /\.file-actions:has\(~\.landscape-chart-picker\)\{flex-shrink:0\}/);
+  assert.match(descriptor.styles[0].content, /\.landscape-chart-picker\+\.settings-popover\{margin-left:0\}/);
+  assert.match(descriptor.template.content, /<nav class="chart-tabs" v-show="!mobileLandscape"/);
+  assert.doesNotMatch(descriptor.template.content, /mobile-menu-panel/);
+  assert.match(descriptor.styles[0].content, /\.landscape-chart-picker\{[^}]*min-width:0;[^}]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis/);
+  const calls = [], state = { activeId: 12 };
+  const studio = { switchChart(id) { calls.push(id); state.activeId = id; } };
+  const source = descriptor.scriptSetup.content.match(/const activeDocument = computed\([^\n]+;/)[0];
+  const activeDocument = runInNewContext(`${source}; activeDocument`, { computed, state, studio });
+  assert.equal(activeDocument.value, 12);
+  activeDocument.value = 24;
+  assert.deepEqual(calls, [24]);
+  assert.equal(state.activeId, 24);
 });
 
 test('mobile inspector keyboard navigation wraps, supports endpoints and leaves editing keys alone', () => {

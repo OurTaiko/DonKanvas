@@ -19,6 +19,7 @@ const studio = useStudio();
 provide('studio', studio);
 const { state, controls, range, duration } = studio;
 const chartFile = ref(null), audioFile = ref(null);
+const activeDocument = computed({ get: () => state.activeId, set: id => studio.switchChart(id) });
 const transportHost = ref(null), transportHeight = ref(0);
 const playbackMenu = ref(null), compactTransport = ref(true), playbackMenuOpen = ref(false);
 const inspectorTabs = ['谱面编辑', '落点信息', '全局导航', '谱面分歧'], inspectorTab = ref(0);
@@ -90,7 +91,7 @@ function positionMenus() {
   measureWorkspaceTop();
 }
 function measureWorkspaceTop() {
-  workspaceTop.value = Math.max(0, tabsViewport.value.closest('.chart-tabs').getBoundingClientRect().bottom);
+  workspaceTop.value = Math.max(0, mobileLandscape.value ? fileMenu.value.closest('header').getBoundingClientRect().bottom : tabsViewport.value.closest('.chart-tabs').getBoundingClientRect().bottom);
 }
 function resizeLayout() {
   const landscape = matchMedia(landscapeQuery).matches;
@@ -464,6 +465,10 @@ async function dropFiles(event) {
         </div>
       </details>
     </div>
+    <select v-if="mobileLandscape" id="opened-chart-select" v-model="activeDocument" class="landscape-chart-picker" :aria-label="t('已打开谱面')" :title="state.filename || t('已打开谱面')" :disabled="!state.documents.length">
+      <option v-if="!state.documents.length" :value="state.activeId">{{ t('已打开谱面') }}</option>
+      <option v-for="document in state.documents" :key="document.id" :value="document.id">{{ document.id === state.activeId ? state.filename : document.filename }}{{ (document.id === state.activeId ? state.dirty || state.invalid : document.dirty || document.invalid) ? ' *' : '' }}</option>
+    </select>
     <details ref="settingsMenu" class="settings-popover" @toggle="positionPopover($event.target)" @keydown="popoverKeydown($event, settingsMenu)">
       <summary id="settings-toggle" class="icon" :title="t('设置')" :aria-label="t('设置')" aria-controls="settings-panel"><Settings2 aria-hidden="true" /><span v-if="draftUnavailable" class="status-dot session-dot error" aria-hidden="true"></span></summary>
       <div id="settings-panel" class="settings-panel" role="group" :aria-label="t('设置')" tabindex="0">
@@ -540,7 +545,7 @@ async function dropFiles(event) {
   <input id="chart-file" ref="chartFile" type="file" multiple hidden @change="openFile($event)"><input id="audio-file" ref="audioFile" type="file" accept="audio/*,.mp3,.ogg,.wav,.flac,.m4a,.aac,.opus,.webm" hidden @change="openFile($event, true)">
   <main :style="{ '--transport-height': `${transportHeight}px` }">
     <section class="studio-panel" :aria-label="t('谱面编辑器')">
-    <nav class="chart-tabs" :class="{ dragging: scrollbarDrag }" :aria-label="t('已打开谱面')" @wheel="wheelTabs">
+    <nav class="chart-tabs" v-show="!mobileLandscape" :class="{ dragging: scrollbarDrag }" :aria-label="t('已打开谱面')" @wheel="wheelTabs">
       <div id="chart-tabs-viewport" ref="tabsViewport" class="chart-tabs-viewport" @scroll="measureTabs">
         <div ref="tabsContent" class="chart-tabs-content">
           <div v-for="document in state.documents" :key="document.id" class="chart-tab" :class="{ active: document.id === state.activeId }">
@@ -632,6 +637,9 @@ async function dropFiles(event) {
 #app{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
 header{position:relative;z-index:40;height:38px;min-height:38px;padding:3px 8px;gap:6px;flex-shrink:0;flex-wrap:nowrap;justify-content:flex-start;user-select:none}
 header :is(input,textarea){user-select:text}
+.file-actions:has(~.landscape-chart-picker){flex-shrink:0}
+.landscape-chart-picker{flex:0 1 280px;width:280px;max-width:280px;min-width:0;margin-left:auto;height:30px;padding:4px 8px;border:1px solid var(--line);border-radius:4px;background:#fff;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.landscape-chart-picker+.settings-popover{margin-left:0}
 .brand{flex-shrink:0}.product-icon{border-radius:5px;display:block}
 .workspace-section-summary{display:flex;align-items:center;gap:7px;padding:12px 14px;cursor:pointer;font-size:12px;list-style:none}.workspace-section-summary::-webkit-details-marker{display:none}.workspace-section-summary>svg{width:14px;height:14px;flex-shrink:0}.workspace-section-summary>svg:first-child{color:var(--green)}.workspace-section-summary>.workspace-section-chevron{width:12px;height:12px;margin-left:auto;transform:rotate(-90deg)}details[open]>.workspace-section-summary{color:var(--green)}details[open]>.workspace-section-summary>.workspace-section-chevron{transform:none}.workspace-section-summary:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
 .workspace-section-summary>b,.workspace-section-summary>h2{min-width:0;margin:0;font:inherit;font-weight:700;overflow-wrap:anywhere}
