@@ -53,7 +53,7 @@ defineExpose({ focusTree: () => courses.value.focusTree(), focusSection, focusTo
 </template>
 
 <style scoped>
-.song-workspace{display:block;padding:0;border-left:0;position:relative;height:100%;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;border-right:1px solid var(--line);background:#f5f7f5}
+.song-workspace{display:block;padding:0;border-top:0;border-left:0;position:relative;height:100%;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;border-right:1px solid var(--line);background:#f5f7f5}
 .workspace-heading{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;width:100%;min-height:40px;padding:0 14px;border:0;border-bottom:1px solid var(--line);border-radius:0;background:#f5f7f5;text-align:left}.workspace-heading b{font-size:12px}.workspace-collapse{margin-left:auto}.workspace-icons button{width:32px;min-width:32px;min-height:32px;padding:7px;border:0;background:transparent}.workspace-icons{display:grid;justify-items:center;gap:4px;padding:6px 0}.workspace-icons button:hover,.workspace-heading:hover{background:#e1ece5;color:var(--green)}.collapsed{width:44px;overflow:hidden}.collapsed .workspace-heading{justify-content:center;padding:0}
 .metadata-icon{color:var(--green)}
 .metadata-editor{border-bottom:1px solid var(--line)}.metadata-group>summary{display:flex;align-items:center;gap:7px;cursor:pointer;padding:8px 0;color:var(--muted);font-size:11px}.metadata-group>summary svg{width:14px;height:14px;flex-shrink:0}.metadata-group>summary:focus-visible{outline:2px solid var(--green);outline-offset:-2px}

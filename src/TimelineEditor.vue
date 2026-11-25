@@ -14,7 +14,7 @@ import { createTimelineViewport, TIMELINE_GUTTER } from './timeline.js';
 import { formatTime } from './useStudio.js';
 
 const studio = inject('studio');
-defineProps({ mobile: Boolean });
+const props = defineProps({ mobile: Boolean, landscape: Boolean });
 const toolbar = ref(null), toolsMenu = ref(null), compactTools = ref(true), toolsOpen = ref(false);
 const zoomMenu = ref(null), zoomOptions = ref(null), zoomOpen = ref(false), zoomPosition = ref({});
 const zoomChoices = computed(() => [{ value: 1, label: t('标准'), icon: Maximize2 }, ...zooms.map(value => ({ value, label: `${value}×`, icon: Ruler }))]);
@@ -230,11 +230,12 @@ function draw() {
   syncScroll();
   const { bars, start, end } = visible.value, { brush, height } = canvasContext(canvas);
   const scale = timelineScale.value, beats = viewBeats.value, width = viewportWidth.value;
-  const { x, timeAt } = createTimelineViewport(scale, visible.value, beats, width), noteY = height - 61;
-  const noteLaneHeight = height - 25 - (noteY - 30);
-  const waveformHeight = Math.max(0, height - 120);
+  const { x, timeAt } = createTimelineViewport(scale, visible.value, beats, width);
+  const noteLaneHeight = props.landscape ? Math.max(60, (height - 45) / 2) : 60;
+  const noteY = height - 16 - noteLaneHeight / 2;
+  const waveformHeight = Math.max(0, height - 45 - noteLaneHeight);
   brush.fillStyle = '#f3f7f2'; brush.fillRect(TIMELINE_GUTTER, 23, width, waveformHeight);
-  brush.fillStyle = '#f6f7f3'; brush.fillRect(TIMELINE_GUTTER, noteY - 30, width, noteLaneHeight);
+  brush.fillStyle = '#f6f7f3'; brush.fillRect(TIMELINE_GUTTER, noteY - noteLaneHeight / 2, width, noteLaneHeight);
   const waveformWidth = width + TIMELINE_GUTTER * 2;
   brush.save();
   if (!state.buffer) brush.translate(TIMELINE_GUTTER, 0);
@@ -243,11 +244,11 @@ function draw() {
   const eventLabelEnds = [];
   for (const item of bars) {
     brush.fillStyle = '#f46b3220';
-    for (const [start, end] of gogoIntervals(item)) brush.fillRect(x(start), noteY - 30, x(end) - x(start), noteLaneHeight);
+    for (const [start, end] of gogoIntervals(item)) brush.fillRect(x(start), noteY - noteLaneHeight / 2, x(end) - x(start), noteLaneHeight);
     if (item.delay) {
-      brush.fillStyle = '#d9a83b22'; brush.fillRect(x(measureStart(item)), 23, x(item.start) - x(measureStart(item)), height - 48);
+      brush.fillStyle = '#d9a83b22'; brush.fillRect(x(measureStart(item)), 23, x(item.start) - x(measureStart(item)), height - 39);
     }
-    for (const event of item.events.filter(event => event.name === 'DELAY')) { brush.fillStyle = '#d9a83b22'; brush.fillRect(x(event.time), 23, x(event.endTime) - x(event.time), height - 48); }
+    for (const event of item.events.filter(event => event.name === 'DELAY')) { brush.fillStyle = '#d9a83b22'; brush.fillRect(x(event.time), 23, x(event.endTime) - x(event.time), height - 39); }
     if (item.index === state.selected) { brush.fillStyle = '#16745b08'; brush.fillRect(x(measureStart(item)), 0, x(measureEnd(item)) - x(measureStart(item)), height); }
     if (measureSelected(item.index)) { brush.fillStyle = '#16745b'; brush.fillRect(x(measureStart(item)), 20, x(measureEnd(item)) - x(measureStart(item)), 3); }
     const guideDivisions = item.numerator;
@@ -255,19 +256,19 @@ function draw() {
     for (let step = 1; step < controls.snap; step++) {
       if (step * guideDivisions % controls.snap === 0) continue;
       const pos = x(barTimeAt(item, step / controls.snap));
-      brush.beginPath(); brush.moveTo(Math.round(pos) + .5, 23); brush.lineTo(Math.round(pos) + .5, height - 25); brush.stroke();
+      brush.beginPath(); brush.moveTo(Math.round(pos) + .5, 23); brush.lineTo(Math.round(pos) + .5, height - 16); brush.stroke();
     }
     brush.setLineDash([]);
     for (let step = 0; step < guideDivisions; step++) {
       if (step === 0 && !item.barline && !item.branchStart) continue;
       const pos = x(barTimeAt(item, step / guideDivisions));
-      brush.strokeStyle = step === 0 ? item.branchStart ? '#b88a24' : '#6d9480' : '#a4bcae'; brush.lineWidth = 1; brush.beginPath(); brush.moveTo(Math.round(pos) + .5, 23); brush.lineTo(Math.round(pos) + .5, height - 25); brush.stroke();
+      brush.strokeStyle = step === 0 ? item.branchStart ? '#b88a24' : '#6d9480' : '#a4bcae'; brush.lineWidth = 1; brush.beginPath(); brush.moveTo(Math.round(pos) + .5, 23); brush.lineTo(Math.round(pos) + .5, height - 16); brush.stroke();
     }
     brush.fillStyle = '#68776e'; brush.font = '11px Studio, sans-serif'; brush.fillText(`${String(item.index + 1).padStart(3, '0')}  ${item.route || ''}${item.gogo ? ' GOGO' : ''}`, x(item.start) + 8, 15);
     for (const event of item.instructions) {
       if (event.time < start || event.time > end) continue;
       const pos = x(event.time);
-      brush.strokeStyle = '#ad7e27'; brush.setLineDash([3, 3]); brush.beginPath(); brush.moveTo(pos, 23); brush.lineTo(pos, height - 25); brush.stroke(); brush.setLineDash([]);
+      brush.strokeStyle = '#ad7e27'; brush.setLineDash([3, 3]); brush.beginPath(); brush.moveTo(pos, 23); brush.lineTo(pos, height - 16); brush.stroke(); brush.setLineDash([]);
       brush.font = '10px Studio, sans-serif';
       const label = event.name === 'SCROLL' ? `×${event.value}` : event.name.startsWith('GOGO') ? event.name === 'GOGOSTART' ? 'GOGO ON' : 'GOGO OFF' : event.value ? `${event.name} ${event.value}` : event.name;
       const labelWidth = brush.measureText(label).width, left = Math.max(TIMELINE_GUTTER + 3, Math.min(pos + 3, TIMELINE_GUTTER + width - labelWidth - 3));
@@ -278,7 +279,7 @@ function draw() {
         brush.fillStyle = '#926b14'; brush.fillText(label, left, 36 + row * 14);
       }
     }
-    for (let beat = 0; beat < item.numerator; beat++) { const pos = x(barTimeAt(item, beat / item.numerator)); brush.fillStyle = '#859087'; brush.font = '9px Studio, sans-serif'; brush.fillText(String(beat + 1), pos + 4, height - 7); }
+    for (let beat = 0; beat < item.numerator; beat++) { const pos = x(barTimeAt(item, beat / item.numerator)); brush.fillStyle = '#859087'; brush.font = '9px Studio, sans-serif'; brush.fillText(String(beat + 1), pos + 4, height - 4); }
   }
   brush.strokeStyle = '#b7c8bc'; brush.lineWidth = 1; brush.beginPath(); brush.moveTo(TIMELINE_GUTTER, noteY); brush.lineTo(TIMELINE_GUTTER + width, noteY); brush.stroke();
   for (const span of spans.value) drawLongSpan(brush, span, x, noteY, start, end);
@@ -293,17 +294,17 @@ function draw() {
     const item = bars.find(item => item.index === hover.value.bar);
     if (item) {
       const pos = x(barTimeAt(item, hover.value.fraction));
-      brush.strokeStyle = '#16745b'; brush.lineWidth = 1.5; brush.setLineDash([4, 3]); brush.beginPath(); brush.moveTo(pos, 23); brush.lineTo(pos, height - 25); brush.stroke();
+      brush.strokeStyle = '#16745b'; brush.lineWidth = 1.5; brush.setLineDash([4, 3]); brush.beginPath(); brush.moveTo(pos, 23); brush.lineTo(pos, height - 16); brush.stroke();
       brush.setLineDash([]);
     }
   }
   const position = state.position;
-  if (position >= start && position <= end) { brush.fillStyle = '#c43e35'; brush.fillRect(x(position), 23, 1.5, height - 48); brush.beginPath(); brush.moveTo(x(position) - 4, 20); brush.lineTo(x(position) + 4, 20); brush.lineTo(x(position), 26); brush.fill(); }
+  if (position >= start && position <= end) { brush.fillStyle = '#c43e35'; brush.fillRect(x(position), 23, 1.5, height - 39); brush.beginPath(); brush.moveTo(x(position) - 4, 20); brush.lineTo(x(position) + 4, 20); brush.lineTo(x(position), 26); brush.fill(); }
   brush.fillStyle = '#b8b8b880';
   brush.fillRect(0, 23, TIMELINE_GUTTER, waveformHeight);
   brush.fillRect(TIMELINE_GUTTER + width, 23, TIMELINE_GUTTER, waveformHeight);
-  brush.fillRect(0, noteY - 30, TIMELINE_GUTTER, noteLaneHeight);
-  brush.fillRect(TIMELINE_GUTTER + width, noteY - 30, TIMELINE_GUTTER, noteLaneHeight);
+  brush.fillRect(0, noteY - noteLaneHeight / 2, TIMELINE_GUTTER, noteLaneHeight);
+  brush.fillRect(TIMELINE_GUTTER + width, noteY - noteLaneHeight / 2, TIMELINE_GUTTER, noteLaneHeight);
   const overviewContext = canvasContext(overview.value), bounds = timelineBounds.value, total = Math.max(.001, bounds.end - bounds.start);
   const overviewX = time => (time - bounds.start) / total * overviewContext.width;
   drawWave(overviewContext.brush, overviewContext.width, bounds.start, bounds.end, overviewContext.height / 2, overviewContext.height * .44);
@@ -404,7 +405,8 @@ function point(event) {
 }
 function isWaveformPoint(rect, clientY) {
   const height = Math.max(150, rect.height), y = (clientY - rect.top) * height / Math.max(1, rect.height);
-  return y >= 23 && y < height - 97;
+  const noteLaneHeight = props.landscape ? Math.max(60, (height - 45) / 2) : 60;
+  return y >= 23 && y < height - 22 - noteLaneHeight;
 }
 function pointerMove(event) {
   moveWaveformHold(event);
@@ -580,7 +582,7 @@ onUnmounted(() => {
       </Teleport>
       <div class="timeline-frame"><div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @pointerup="finishTouchSelection" @pointercancel="finishTouchSelection" @lostpointercapture="finishTouchSelection" @contextmenu.prevent></canvas></div></div><div v-if="touchGuide" class="touch-selection-guide" role="status" :aria-label="t('左右滑动微调选择')"><ChevronsLeft aria-hidden="true" /><ChevronsRight aria-hidden="true" /></div></div>
       <section class="overview">
-        <div class="overview-caption"><span class="overview-legend"><i class="gogo"></i>GOGOTIME <span v-for="route in BRANCH_ROUTES" :key="route" class="overview-route"><i :style="{ background: branchColor(route) }"></i>{{ t(BRANCH_ROUTE_NAMES[route]) }}</span></span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div>
+        <div class="overview-caption"><span class="overview-legend" :class="{ 'overview-legend-compact': !mobile || landscape }"><span class="overview-gogo" role="img" aria-label="GOGOTIME" title="GOGOTIME"><i class="gogo">{{ !mobile || landscape ? 'G' : '' }}</i><span class="overview-legend-label">GOGOTIME</span></span><span v-for="route in BRANCH_ROUTES" :key="route" class="overview-route" role="img" :aria-label="t(BRANCH_ROUTE_NAMES[route])" :title="t(BRANCH_ROUTE_NAMES[route])"><i :style="{ '--overview-legend-color': branchColor(route) }">{{ !mobile || landscape ? route : '' }}</i><span class="overview-legend-label">{{ t(BRANCH_ROUTE_NAMES[route]) }}</span></span></span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div>
         <div class="overview-wave">
           <svg v-if="overviewSelection !== null" class="overview-selection" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" :style="{ left: `${overviewSelection}%` }"><circle cx="12" cy="12" r="7" stroke-width="1" stroke-dasharray="4 2" stroke-linecap="butt" /><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" /></svg>
           <span v-if="overviewHover" id="overview-hover" role="tooltip" :style="{ left: `${overviewHover.x}px`, top: `${overviewHover.y}px`, transform: `translate(${-overviewHover.fraction * 100}%, calc(-100% - 12px))` }">{{ formatTime(overviewHover.time) }} · {{ t('小节 {p0}', { p0: overviewHover.measure ?? '—' }) }}</span>
@@ -652,8 +654,13 @@ onUnmounted(() => {
 .overview-caption>#overview-range{white-space:nowrap}
 .overview-wave{position:relative}
 .overview-selection{position:absolute;z-index:1;top:50%;width:24px;height:24px;transform:translate(-50%,-50%);color:#49638c;stroke-width:2;pointer-events:none}
-.overview-legend{display:flex;align-items:center;gap:4px;white-space:nowrap}
-.overview-legend i{width:10px;height:3px}.overview-legend .gogo{background:#f46b32}.overview-route{display:inline-flex;align-items:center;gap:4px;margin-left:4px}
+.overview-legend{display:flex;align-items:center;gap:4px;white-space:nowrap;pointer-events:auto}
+.overview-gogo{display:inline-flex;align-items:center;gap:4px}
+.overview-legend i{width:10px;height:3px;background:var(--overview-legend-color)}.overview-legend .gogo{--overview-legend-color:#f46b32}.overview-route{display:inline-flex;align-items:center;gap:4px;margin-left:4px}
+.overview-legend-compact{gap:6px}
+.overview-legend-compact i{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:3px;background:color-mix(in srgb,var(--overview-legend-color) 70%,#000);color:#fff;font-style:normal;font-size:11px;font-weight:700;line-height:1}
+.overview-legend-compact .overview-route{margin-left:0}
+.overview-legend-compact .overview-legend-label{display:none}
 .timeline-wrap{height:auto;padding:0;overscroll-behavior-x:contain}
 .timeline-frame{position:relative;isolation:isolate}
 .timeline-frame:focus-within::after{content:'';position:absolute;inset:0;z-index:1;border:2px solid var(--green);pointer-events:none}
@@ -672,12 +679,12 @@ onUnmounted(() => {
 .chart-statistics{display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;min-width:0;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.chart-statistics>span{white-space:nowrap}.chart-statistics b{font-weight:500;color:var(--ink)}
 .measure-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.measure-actions{display:inline-flex;max-width:100%;margin-right:6px;border:0;border-radius:5px;background:transparent}.measure-actions button{min-width:0;padding:4px 8px;gap:4px;border:0;border-radius:4px;font-size:11px}.measure-actions button svg{width:14px;height:14px}
 .timeline-content{min-width:100%}
-.timeline-frame #timeline{height:250px;position:sticky;left:0;touch-action:pan-y pinch-zoom}
-.touch-selection-guide{position:absolute;z-index:2;left:0;right:0;bottom:min(25px,16.666667%);height:min(66px,44%);display:flex;align-items:center;justify-content:space-between;padding:0 36px;background:#0006;color:var(--green);pointer-events:none}.touch-selection-guide>svg{width:40px;height:40px;max-height:100%;filter:drop-shadow(1px 0 0 #ccc) drop-shadow(-1px 0 0 #ccc) drop-shadow(0 1px 0 #ccc) drop-shadow(0 -1px 0 #ccc);animation:touch-selection-left .7s ease-in-out infinite alternate}.touch-selection-guide>svg:last-child{animation-name:touch-selection-right}
+.timeline-frame #timeline{height:235px;position:sticky;left:0;touch-action:pan-y pinch-zoom}
+.touch-selection-guide{position:absolute;z-index:2;left:0;right:0;bottom:min(16px,10.666667%);height:min(60px,40%);display:flex;align-items:center;justify-content:space-between;padding:0 36px;background:#0006;color:var(--green);pointer-events:none}.touch-selection-guide>svg{width:40px;height:40px;max-height:100%;filter:drop-shadow(1px 0 0 #ccc) drop-shadow(-1px 0 0 #ccc) drop-shadow(0 1px 0 #ccc) drop-shadow(0 -1px 0 #ccc);animation:touch-selection-left .7s ease-in-out infinite alternate}.touch-selection-guide>svg:last-child{animation-name:touch-selection-right}
 @keyframes touch-selection-left{to{transform:translateX(-4px)}}
 @keyframes touch-selection-right{to{transform:translateX(4px)}}
 @media(prefers-reduced-motion:reduce){.touch-selection-guide>svg{animation:none}}
-@media(max-width:900px){.workspace>.editor{display:flex;flex-direction:column;min-height:0}.editor>.editor-bar,.editor>.overview{flex-shrink:0}.editor>.overview{padding:0}.editor>.timeline-frame{flex:0 1 186px;height:186px;min-height:0}.timeline-frame>.timeline-wrap,.timeline-frame .timeline-content,.timeline-frame #timeline{height:100%}}
+@media(max-width:900px){.workspace>.editor{display:flex;flex-direction:column;min-height:0}.editor>.editor-bar,.editor>.overview{flex-shrink:0}.editor>.overview{padding:0}.editor>.timeline-frame{flex:0 1 171px;height:171px;min-height:0}.timeline-frame>.timeline-wrap,.timeline-frame .timeline-content,.timeline-frame #timeline{height:100%}}
 .editor-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .editor-history{display:flex;align-items:center;gap:4px;padding-right:6px;border-right:1px solid var(--line)}.editor-history>.icon{width:28px;min-width:28px;padding:4px}.editor-history svg{width:14px;height:14px}
 .desktop-zoom-tools{display:flex;align-items:center;flex-shrink:0}

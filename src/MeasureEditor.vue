@@ -1,10 +1,9 @@
 <script setup>
 import { t } from './i18n.js';
 import { computed, inject, reactive, watch } from 'vue';
-import { RotateCcw, Trash2, Headphones, Eraser, ChevronDown } from '@lucide/vue';
+import { Trash2, Headphones, Eraser, ChevronDown } from '@lucide/vue';
 import { formatTime } from './useStudio.js';
 import { measureStart, measureEnd } from './loop.js';
-import { EDITABLE_COMMANDS } from './chart.js';
 import { NOTE_TYPES } from './note-model.js';
 import { GRID_DIVISIONS } from './grid.js';
 
@@ -133,7 +132,6 @@ function locate(item) { studio.setCommandPosition(item.slot, bar.value.notes.len
           <div class="command-field"><label class="command-enable" @change="apply('levelhold', $event)"><input id="use-levelhold" v-model="enabled.levelhold" type="checkbox" :disabled="!bar || state.invalid">LEVELHOLD</label></div>
         </div>
       </fieldset>
-      <div class="aside-actions"><button id="settings-reset" type="button" class="icon" :title="t('清除当前落点的计时与显示指令')" :aria-label="t('清除当前落点的计时与显示指令')" :disabled="!command?.commands.some(item => EDITABLE_COMMANDS.includes(item.name)) || state.invalid" @click="studio.clearSettings"><RotateCcw /></button></div>
       </form>
     </details>
     <details class="inspector-section" open aria-labelledby="measure-command-list-title" @focusin="state.playing && studio.pause()">

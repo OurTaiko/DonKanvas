@@ -132,21 +132,28 @@ test('timeline waveform and note gutters have independent masks while audio boun
     beatAt: time => time <= 50 ? time : 50 + (time - 50) * 2,
     timeAt: beat => beat <= 50 ? beat : 50 + (beat - 50) / 2
   };
-  for (const height of [150, 250, 400]) for (const width of [80, 192]) for (const startBeat of [0, 45, 145]) {
+  for (const landscape of [false, true]) for (const height of [150, 250, 400]) for (const width of [80, 192]) for (const startBeat of [0, 45, 145]) {
     const timelineBrush = brush(), overviewBrush = brush(), beats = 20;
     const view = { bars: [], startBeat, start: scale.timeAt(startBeat), end: scale.timeAt(startBeat + beats) };
     const timeline = { value: { style: {} } }, overview = { value: {} };
     const state = { chart: { bars: [] }, buffer: { duration: 100 }, peaks: [...Array(500).fill(.25), ...Array(500).fill(.75)], position: -100 };
     const draw = runInNewContext(`${source}; draw`, {
-      state, timeline, overview, visible: { value: view }, viewportWidth: { value: width }, viewBeats: { value: beats },
+      props: { landscape }, state, timeline, overview, visible: { value: view }, viewportWidth: { value: width }, viewBeats: { value: beats },
       timelineScale: { value: scale }, timelineBounds: { value: { start: 0, end: 100 } },
       spans: { value: [] }, hover: { value: null }, TIMELINE_GUTTER, createTimelineViewport, syncScroll() {}, t: text => text,
       canvasContext: canvas => ({ brush: canvas === timeline.value ? timelineBrush : overviewBrush, width: width + TIMELINE_GUTTER * 2, height })
     });
     draw();
-    assert.match(descriptor.styles[0].content, /\.timeline-frame #timeline\{height:250px;/);
+    assert.match(descriptor.styles[0].content, /\.timeline-frame #timeline\{height:235px;/);
     const waveArea = timelineBrush.rectangles.find(rect => rect.color === '#f3f7f2');
     const noteArea = timelineBrush.rectangles.find(rect => rect.color === '#f6f7f3');
+    assert.equal(height - noteArea.y - noteArea.height, 16);
+    const expectedNoteHeight = landscape ? Math.max(60, (height - 45) / 2) : 60;
+    assert.equal(noteArea.height, expectedNoteHeight);
+    const center = height - 16 - expectedNoteHeight / 2;
+    assert.equal(center - noteArea.y, expectedNoteHeight / 2);
+    assert.equal(noteArea.y + noteArea.height - center, expectedNoteHeight / 2);
+    if (landscape) assert.ok(waveArea.height <= noteArea.height);
     assert.equal(noteArea.y - (waveArea.y + waveArea.height), 6);
     const waveform = timelineBrush.rectangles.filter(rect => rect.color === '#72a592');
     assert.ok(waveform.every(rect => rect.y >= waveArea.y && rect.y + rect.height <= waveArea.y + waveArea.height));
@@ -155,7 +162,7 @@ test('timeline waveform and note gutters have independent masks while audio boun
     assert.deepEqual(waveform.map(rect => rect.x), audiblePixels);
     if (startBeat === 45) {
       assert.equal(waveform[0].x, 0); assert.equal(waveform.at(-1).x, fullWidth - 1);
-      const amplitude = (height - 120) / 2 - 6;
+      const amplitude = waveArea.height / 2 - 6;
       assert.equal(waveform[0].height, .25 * amplitude * 2);
       assert.equal(waveform.at(-1).height, .75 * amplitude * 2);
     }
@@ -235,7 +242,11 @@ COURSE:Oni
     draw(brush, time => time, 40);
     assert.deepEqual(rectangles, []);
   }
-  assert.match(descriptor.template.content, /v-for="route in BRANCH_ROUTES"[^>]*class="overview-route"><i :style="\{ background: branchColor\(route\) \}"><\/i>\{\{ t\(BRANCH_ROUTE_NAMES\[route\]\) \}\}/);
+  assert.match(descriptor.template.content, /v-for="route in BRANCH_ROUTES"[^>]*class="overview-route"[^>]*:title="t\(BRANCH_ROUTE_NAMES\[route\]\)"><i :style="\{ '--overview-legend-color': branchColor\(route\) \}">\{\{ !mobile \|\| landscape \? route : '' \}\}<\/i><span class="overview-legend-label">\{\{ t\(BRANCH_ROUTE_NAMES\[route\]\) \}\}/);
+  assert.match(descriptor.template.content, /:class="\{ 'overview-legend-compact': !mobile \|\| landscape \}"/);
+  assert.match(descriptor.template.content, /class="gogo">\{\{ !mobile \|\| landscape \? 'G' : '' \}\}/);
+  assert.match(descriptor.styles[0].content, /\.overview-legend-compact i\{[^}]*width:18px;height:18px;[^}]*color:#fff;font-style:normal;/);
+  assert.match(descriptor.styles[0].content, /\.overview-legend-compact \.overview-legend-label\{display:none\}/);
   assert.doesNotMatch(descriptor.template.content, /t\('分歧段'\)/);
   assert.doesNotMatch(descriptor.scriptSetup.content + descriptor.styles[0].content, /#9270b5/);
 });
@@ -253,7 +264,7 @@ function touchSelectionHarness() {
     releasePointerCapture: id => captures.delete(id)
   };
   const handlers = runInNewContext(`${source}; ({ startTouchSelection, moveTouchSelection, finishTouchSelection, cancelTouchSelection, touchGuide, pointerDown, pointerMove, cancelWaveformHold })`, {
-    ref, watch, state, hover: ref(null),
+    props: { landscape: false }, ref, watch, state, hover: ref(null),
     studio: {
       moveCell: direction => moves.push(direction),
       seek: time => { state.position = time; playback.push(['seek', time]); },
@@ -597,7 +608,7 @@ test('overview dragging pans continuously without seeking or changing selections
   const overviewTemplate = descriptor.template.content.match(/<section class="overview">[\s\S]*?<\/section>/)[0];
   assert.doesNotMatch(overviewTemplate, /全曲总览|section-label/);
   assert.match(overviewTemplate, /<span id="overview-range">/);
-  assert.match(overviewTemplate, /<div class="overview-caption"><span class="overview-legend">[\s\S]*?<\/span><span id="overview-range">[\s\S]*?<\/span><\/div>\s*<div class="overview-wave">[\s\S]*?id="overview-hover"[\s\S]*?<canvas id="overview"/);
+  assert.match(overviewTemplate, /<div class="overview-caption"><span class="overview-legend"[^>]*>[\s\S]*?<\/span><span id="overview-range">[\s\S]*?<\/span><\/div>\s*<div class="overview-wave">[\s\S]*?id="overview-hover"[\s\S]*?<canvas id="overview"/);
   assert.match(descriptor.styles[0].content, /\.overview-caption\{[^}]*display:flex;[^}]*justify-content:space-between;[^}]*flex-wrap:wrap;/);
   assert.match(descriptor.styles[0].content, /\.overview-wave\{position:relative\}/);
   assert.doesNotMatch(descriptor.styles[0].content, /\.overview-(?:caption|legend)\{[^}]*position:absolute/);
@@ -1265,7 +1276,7 @@ test('the header keeps title and history while global navigation contains full-c
   const template = descriptor.template.content;
   assert.match(template, /<div class="editor-core" :inert="state.editorBlocked">\s*<section v-if="studio.bar.value" class="document-toolbar">/);
   const toolbar = template.match(/<section v-if="studio.bar.value" class="document-toolbar">[\s\S]*?<\/section>/)[0];
-  assert.match(toolbar, /<DocumentTitle v-if="!mobileWorkspace" \/>/);
+  assert.match(toolbar, /<DocumentTitle v-if="!mobileWorkspace \|\| mobileLandscape" \/>/);
   const title = parse(readFileSync(new URL('DocumentTitle.vue', import.meta.url), 'utf8')).descriptor;
   assert.match(title.template.content, /<div class="document-title">[\s\S]*<h1 id="song-title"[\s\S]*?<\/h1><span id="document-mode"[\s\S]*<span v-if="state.encoding" id="encoding">[\s\S]*?<\/span><\/div>/);
   const timeline = readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8');
@@ -1599,7 +1610,7 @@ test('editor sections collapse independently without unmounting fields or promot
   }
   const commandSection = sections.find(section => section.props.some(prop => prop.name === 'aria-labelledby' && prop.value?.content === 'command-editor-title'));
   const commandForm = commandSection.children.find(node => node.tag === 'form');
-  assert.match(commandForm.loc.source, /<button id="settings-reset" type="button"[^>]*:disabled="!command\?\.commands.some\(item => EDITABLE_COMMANDS.includes\(item.name\)\) \|\| state.invalid" @click="studio.clearSettings"/);
+  assert.doesNotMatch(commandForm.loc.source, /settings-reset|studio\.clearSettings/);
   assert.match(descriptor.template.content, /<form class="bar-settings inspector-content" @submit.prevent>/);
   assert.doesNotMatch(descriptor.template.content, /<label for="source">/);
   const styles = descriptor.styles[0].content;
@@ -1920,12 +1931,29 @@ test('command groups separate arbitrary positions from measure-start controls', 
   assert.match(position, /GOGO START/); assert.match(position, /GOGO END/);
 });
 
+test('landscape drawer outside clicks close it without consuming global controls or nested dialogs', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'drawer-outside-click' });
+  const source = descriptor.scriptSetup.content.match(/function dismissWorkspaceDrawer\(event\) \{[\s\S]*?\n\}/)[0];
+  const mobileLandscape = { value: true }, workspaceOpen = { value: true };
+  const dismiss = runInNewContext(`${source}; dismissWorkspaceDrawer`, { mobileLandscape, workspaceOpen });
+  dismiss({ target: { closest: () => ({}) } }); assert.equal(workspaceOpen.value, true);
+  mobileLandscape.value = false;
+  dismiss({ target: { closest: () => null } }); assert.equal(workspaceOpen.value, true);
+  mobileLandscape.value = true;
+  dismiss({ target: { closest: () => null } }); assert.equal(workspaceOpen.value, false);
+  assert.match(descriptor.template.content, /class="workspace-drawer-backdrop" :style="\{ top: `\$\{workspaceTop\}px` \}"/);
+  assert.match(descriptor.styles[0].content, /\.workspace-drawer-backdrop:hover\{position:fixed;left:0;right:0;bottom:0;[^}]*height:auto;/);
+  assert.match(descriptor.scriptSetup.content, /addEventListener\('pointerdown', dismissWorkspaceDrawer, true\)/);
+  assert.match(descriptor.scriptSetup.content, /removeEventListener\('pointerdown', dismissWorkspaceDrawer, true\)/);
+});
+
 test('workspace Escape closes the mobile overlay without dismissing nested dialogs or composition', () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   const source = descriptor.scriptSetup.content.match(/function workspaceKeydown\(event\) \{[\s\S]*?\n\}/)[0];
-  const mobileWorkspace = { value: true }, workspaceOpen = { value: true };
+  const mobileWorkspace = { value: true }, workspaceOpen = { value: true }, mobileLandscape = { value: false };
   let closed = 0, focused = 0;
-  const handle = runInNewContext(`${source}; workspaceKeydown`, { mobileWorkspace, workspaceOpen, closeWorkspace: () => closed++, workspaceSidebar: { value: { focusToggle: () => focused++ } } });
+  const handle = runInNewContext(`${source}; workspaceKeydown`, { mobileWorkspace, mobileLandscape, workspaceOpen, closeWorkspace: () => closed++, workspaceSidebar: { value: { focusToggle: () => focused++ } } });
   const native = extra => handle({ key: 'Escape', target: { closest: () => null }, preventDefault() { assert.fail('Native Escape must not be consumed'); }, ...extra });
   for (const extra of [{ isComposing: true }, { keyCode: 229 }, { ctrlKey: true }, { altKey: true }, { shiftKey: true }, { defaultPrevented: true }, { target: { closest: () => ({}) } }]) native(extra);
   mobileWorkspace.value = false; native({}); mobileWorkspace.value = true;
@@ -2259,8 +2287,8 @@ test('editor columns are siblings and mobile transport can leave the scrolling c
   compileScript(descriptor, { id: 'editor-columns' });
   const template = descriptor.template.content;
   assert.match(template, /<div class="editor-core" :inert="state.editorBlocked">\s*<section v-if="studio.bar.value" class="document-toolbar">[\s\S]*?<\/section>\s*<div class="editor-scroll">/);
-  assert.match(template, /<TimelineEditor v-if="studio.bar.value" :mobile="mobileWorkspace" \/>/);
-  assert.match(template, /<\/div>\s*<Teleport to="body" :disabled="!mobileWorkspace"><div ref="transportHost" class="transport-host">\s*<div v-if="messageBarError \|\| showAudioMessage"/);
+  assert.match(template, /<TimelineEditor v-if="studio.bar.value" :mobile="mobileWorkspace" :landscape="mobileLandscape" \/>/);
+  assert.match(template, /<\/div>\s*<Teleport to="body" :disabled="!mobileWorkspace \|\| mobileLandscape"><div ref="transportHost" class="transport-host" :class="\{ 'landscape-transport': mobileLandscape \}">\s*<div v-if="messageBarError \|\| showAudioMessage"/);
   assert.match(template, /<\/div><\/details><\/section>\s*<\/div><\/Teleport>/);
   assert.match(template, /<Teleport v-if="studio.bar.value" to="#mobile-edit-panel" :disabled="!mobileWorkspace" defer><MeasureEditor :inert="state.editorBlocked" \/><\/Teleport>/);
   assert.doesNotMatch(template, /id="preview-range"|id="loop-summary"|id="apply-loop"|id="loop-current"/);
@@ -2275,8 +2303,8 @@ test('editor columns are siblings and mobile transport can leave the scrolling c
 
 test('mobile song titles render directly in the workspace heading instead of an external teleport target', () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
-  assert.match(descriptor.template.content, /<template #title><DocumentTitle v-if="mobileWorkspace && studio.bar.value" class="workspace-document-title"/);
-  assert.match(descriptor.template.content, /<DocumentTitle v-if="!mobileWorkspace" \/>/);
+  assert.match(descriptor.template.content, /<template #title><DocumentTitle v-if="mobileWorkspace && !mobileLandscape && studio.bar.value" class="workspace-document-title"/);
+  assert.match(descriptor.template.content, /<DocumentTitle v-if="!mobileWorkspace \|\| mobileLandscape" \/>/);
   assert.doesNotMatch(descriptor.template.content, /mobile-document-title/);
   assert.match(descriptor.styles[0].content, /@media\(max-width:900px\)\{\.editor-core>\.document-toolbar\{display:none\}\}/);
   const sidebar = parse(readFileSync(new URL('SongWorkspace.vue', import.meta.url), 'utf8')).descriptor;
@@ -2285,6 +2313,64 @@ test('mobile song titles render directly in the workspace heading instead of an 
   assert.match(sidebar.styles[0].content, /\.workspace-heading-row:has\(\.workspace-document-title\):focus-within::after\{[^}]*position:absolute;inset:0;z-index:2;border:2px solid var\(--green\);pointer-events:none/);
   const timeline = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8')).descriptor;
   assert.match(timeline.styles[0].content, /\.editor \.editor-bar\{margin-left:0;/);
+});
+
+test('landscape transitions retain mobile inspector routing and restore the desktop workspace preference', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'landscape-layout' });
+  const source = descriptor.scriptSetup.content.match(/function resizeLayout\(\) \{[\s\S]*?\n\}/)[0];
+  const flags = { mobile: true, landscape: false };
+  const context = {
+    landscapeQuery: 'landscape', innerWidth: 390, desktopWorkspaceOpen: true,
+    matchMedia: query => ({ matches: query === 'landscape' ? flags.landscape : flags.mobile }),
+    mobileWorkspace: { value: false }, mobileLandscape: { value: false }, workspaceOpen: { value: true }, positionMenus() {}
+  };
+  const resize = runInNewContext(`${source}; resizeLayout`, context);
+  resize(); assert.equal(context.workspaceOpen.value, false);
+  flags.landscape = true; context.innerWidth = 844;
+  resize(); assert.equal(context.mobileLandscape.value, true); assert.equal(context.workspaceOpen.value, false);
+  flags.landscape = false; context.innerWidth = 390;
+  resize(); assert.equal(context.workspaceOpen.value, false);
+  flags.mobile = false;
+  resize(); assert.equal(context.mobileWorkspace.value, false); assert.equal(context.workspaceOpen.value, true);
+  flags.landscape = true; context.innerWidth = 667;
+  resize(); assert.equal(context.mobileWorkspace.value, true); assert.equal(context.workspaceOpen.value, false);
+  assert.match(descriptor.scriptSetup.content, /state.editorBlocked = mobile && expanded;/);
+  const styles = descriptor.styles[0].content;
+  assert.match(styles, /\.studio-panel-body\.mobile-landscape:has\(#timeline\)\{[^}]*grid-template-rows:minmax\(0,1fr\)\}/);
+  assert.match(styles, /grid-template-columns:44px minmax\(0,1fr\) minmax\(210px,28%\);grid-template-rows:minmax\(0,1fr\)/);
+  assert.match(descriptor.template.content, /v-if="mobileLandscape && workspaceOpen"[^>]*class="workspace-drawer-backdrop"[^>]*@click="closeWorkspace"/);
+  assert.match(styles, /\.song-workspace.workspace-drawer\{position:fixed;[^}]*z-index:60;/);
+  assert.match(styles, /\.mobile-landscape>\.mobile-inspector\{grid-column:3;grid-row:1;/);
+  assert.match(styles, /\.mobile-landscape \.inspector-tabs\{display:grid;grid-template-columns:repeat\(4,minmax\(0,1fr\)\)\}/);
+  assert.match(styles, /\.landscape-transport>\.playback-message-bar\{position:absolute;left:0;right:0;top:0;bottom:auto;/);
+  assert.match(styles, /\.mobile-landscape \.editor>\.timeline-frame\{flex:2 1 165px;height:auto;min-height:72px\}/);
+  assert.match(styles, /@container\(min-height:360px\)\{\.mobile-landscape \.document-toolbar\{display:flex\}\}/);
+  assert.match(styles, /main:has\(\.mobile-landscape\)\{padding-bottom:0\}/);
+  assert.match(styles, /\.landscape-transport\{position:relative;left:auto;right:auto;bottom:auto;/);
+  assert.match(styles, /\.mobile-landscape \.editor>\.overview\{[^}]*flex:0 0 auto;/);
+  assert.match(styles, /\.mobile-landscape \.overview-wave\{flex:0 0 40px;min-height:40px;max-height:40px\}/);
+  assert.match(styles, /\.mobile-landscape \.overview-caption\{flex:0 0 24px;min-height:24px;flex-wrap:nowrap;/);
+  assert.match(styles, /\.landscape-transport\{[^}]*padding-top:0\}/);
+  assert.match(styles, /\.landscape-transport:has\(>\.playback-message-bar\)\{padding-top:32px\}/);
+  assert.match(styles, /\.landscape-transport>\.playback-message-bar\{[^}]*top:0;bottom:auto;[^}]*height:32px;max-height:32px;/);
+  assert.match(styles, /@container\(max-width:480px\)\{\.mobile-landscape \.overview-legend-label\{display:none\}\}/);
+});
+
+test('short portrait layouts size the timeline row to its content instead of spare height', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'short-portrait-layout' });
+  assert.match(descriptor.styles[0].content, /@media\(max-width:900px\)\{\.studio-panel-body:has\(#timeline\)\{grid-template-rows:auto minmax\(0,max-content\) minmax\(0,1fr\)\}/);
+  assert.doesNotMatch(descriptor.styles[0].content, /grid-template-rows:auto minmax\(0,4fr\)/);
+});
+
+test('landscape inspector tabs use only named icons while portrait tabs retain text', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'landscape-icon-tabs' });
+  assert.match(descriptor.scriptSetup.content, /const inspectorIcons = \[FilePenLine, LocateFixed, ListMusic, GitBranch\]/);
+  const tabs = descriptor.template.content.match(/<div class="inspector-tabs"[\s\S]*?<\/div>/)[0];
+  assert.match(tabs, /:aria-label="t\(label\)" :title="mobileLandscape \? t\(label\) : undefined"/);
+  assert.match(tabs, /<component v-if="mobileLandscape" :is="inspectorIcons\[index\]" aria-hidden="true" \/><span v-else>\{\{ t\(label\) \}\}<\/span>/);
 });
 
 test('mobile inspector keyboard navigation wraps, supports endpoints and leaves editing keys alone', () => {
@@ -2359,7 +2445,7 @@ test('dismissible audio and error messages sit above playback with no legacy sta
   assert.doesNotMatch(template, /id="notice"|mobile-open-audio/);
   const scrolling = template.slice(template.indexOf('<div class="editor-scroll">'), template.indexOf('<Teleport to="body"'));
   assert.doesNotMatch(scrolling, /id="playback-message-bar"/);
-  const host = template.match(/<div ref="transportHost" class="transport-host">[\s\S]*?<\/Teleport>/)[0];
+  const host = template.match(/<div ref="transportHost" class="transport-host"[^>]*>[\s\S]*?<\/Teleport>/)[0];
   assert.match(host, /id="playback-message-bar"[\s\S]*:role="messageBarError \? 'alert' : 'status'"/);
   assert.match(host, /id="message-load-audio"[^>]*@click="audioFile.click\(\)"/);
   assert.match(host, /:aria-label="t\('关闭提示'\)" @click="dismissMessageBar"/);
@@ -2395,6 +2481,9 @@ test('branch lists combine route filtering and condition editors while structura
   assert.doesNotMatch(action, /mode === 'condition'|mode === 'removeRoute'/);
   assert.doesNotMatch(descriptor.template.content, /branch-manager-help|创建、删除分歧及路线，编辑判定条件。|BPM、拍号和延迟在所有路线的对应小节及落点同步/);
   assert.match(manager, /@click="removeRoute\(branch, route\)"/);
+  assert.match(descriptor.styles[0].content, /\.branch-route-card\{position:relative\}/);
+  assert.match(descriptor.styles[0].content, /\.branch-route-card \.route-select:not\(:disabled\)::after\{content:'';position:absolute;inset:0\}/);
+  assert.match(descriptor.styles[0].content, /\.branch-route-card \.route-remove\{position:relative;z-index:1\}/);
   assert.doesNotMatch(manager, /role="radiogroup"|studio.changeAllBranches/);
   for (const dialog of dialogs) {
     assert.doesNotMatch(dialog, /type="search"|v-model="query"/);
@@ -2423,10 +2512,12 @@ test('branch lists combine route filtering and condition editors while structura
   assert.match(descriptor.styles[0].content, /\.branch-manager \.branch-row-heading>\.branch-jump:is\(:hover,:focus-visible\):not\(:disabled\),\.branch-manager \.branch-row-heading>\.icon:is\(:hover,:focus-visible\):not\(:disabled\)\{background:#e1ece5;color:var\(--green\)\}/);
   assert.match(descriptor.styles[0].content, /\.branch-actions\{display:flex;flex-basis:100%;gap:8px\}/);
   assert.match(descriptor.styles[0].content, /\.branch-actions>\.manage-branches\{min-height:32px;padding:5px 10px\}/);
+  assert.match(descriptor.template.content, /id="branch-create"[^>]*:title="t\('创建分歧'\)" :aria-label="t\('创建分歧'\)"/);
+  assert.match(descriptor.template.content, /class="branch-create-label">\{\{ t\('创建分歧'\) \}\}<\/span>/);
   assert.doesNotMatch(descriptor.template.content, /<dialog[^>]*\bopen(?:\s|>)/);
   assert.match(descriptor.styles[0].content, /\.branch-context\{[^}]*margin:0;padding:16px 12px;border-bottom:1px solid var\(--line\);background:#fff/);
   const app = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8')).descriptor;
-  assert.match(app.template.content, /<div class="editor-scroll">\s*<TimelineEditor v-if="studio.bar.value" :mobile="mobileWorkspace" \/>/);
+  assert.match(app.template.content, /<div class="editor-scroll">\s*<TimelineEditor v-if="studio.bar.value" :mobile="mobileWorkspace" :landscape="mobileLandscape" \/>/);
   assert.doesNotMatch(app.template.content, /<BranchControls/);
   const timeline = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8')).descriptor;
   assert.match(timeline.template.content, /<div class="editor-information">\s*<div class="editor-information-left">\s*<Teleport to="#mobile-position-panel" :disabled="!mobile" defer>\s*<section class="cell-inspector"[\s\S]*?<\/dl>\s*<\/section>\s*<\/Teleport>\s*<Teleport to="#mobile-navigation-panel" :disabled="!mobile" defer>\s*<section class="measure-section">[\s\S]*?<\/section>\s*<\/Teleport>\s*<\/div>\s*<Teleport to="#mobile-branch-panel" :disabled="!mobile" defer><BranchControls \/><\/Teleport>\s*<\/div>/);
@@ -2435,6 +2526,7 @@ test('branch lists combine route filtering and condition editors while structura
   assert.match(timeline.styles[0].content, /\.workspace>\.editor\{display:flex;flex-direction:column;min-height:0;overflow:hidden\}/);
   assert.match(timeline.styles[0].content, /\.editor>\.editor-bar,\.editor>\.timeline-frame,\.editor>\.overview\{flex-shrink:0\}/);
   assert.match(descriptor.styles[0].content, /\.branch-manager \.branch-route-cards\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)\}/);
+  assert.match(app.styles[0].content, /\.mobile-landscape \.branch-manager \.branch-route-cards\{grid-template-columns:minmax\(0,1fr\)\}/);
   assert.match(timeline.styles[0].content, /\.editor-information-left\{grid-column:1;grid-row:1;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin\}/);
   assert.match(timeline.styles[0].content, /\.editor-information-left>\.measure-section,#mobile-navigation-panel>\.measure-section\{min-width:0;border-top:1px solid var\(--line\)\}/);
   assert.match(timeline.styles[0].content, /\.editor-information>section\.branch-context\{grid-column:2;grid-row:1;/);
@@ -2689,6 +2781,7 @@ test('the independent song sidebar edits metadata while empty songs expose creat
   const sidebar = parse(readFileSync(new URL('SongWorkspace.vue', import.meta.url), 'utf8')).descriptor;
   compileScript(sidebar, { id: 'song-workspace' });
   assert.match(sidebar.template.content, /<aside class="song-workspace"/);
+  assert.match(sidebar.styles[0].content, /\.song-workspace\{[^}]*border-top:0;/);
   assert.doesNotMatch(sidebar.template.content, /<h2/);
   assert.match(sidebar.styles[0].content, /\.metadata-icon\{color:var\(--green\)\}/);
   assert.match(sidebar.template.content, /:data-song-field="field.key"/);

@@ -134,7 +134,7 @@ function keydown(event) {
       <template #description><p class="branch-current"><template v-if="current"><span v-if="current.route" class="branch-route-tag" :data-route="current.route">{{ t(names[current.route]) }}</span> {{ branchLabel(current) }} · {{ conditionLabel(current) }}</template><template v-else-if="selectedTiming">{{ t('当前位于共用段') }}</template><template v-else>{{ t('未选取落点') }}</template></p></template>
     </SectionHeading>
     <div class="branch-actions">
-      <button id="branch-create" type="button" class="manage-branches" :disabled="state.invalid" @click="create"><Plus aria-hidden="true" />{{ t('创建分歧') }}</button>
+      <button id="branch-create" type="button" class="manage-branches" :title="t('创建分歧')" :aria-label="t('创建分歧')" :disabled="state.invalid" @click="create"><Plus aria-hidden="true" /><span class="branch-create-label">{{ t('创建分歧') }}</span></button>
       <div class="route-segments branch-route-filter" role="group" :aria-label="t('路线筛选')">
         <button v-for="route in BRANCH_ROUTES" :id="`branch-all-${route}`" :key="route" :data-route="route" type="button" :aria-pressed="uniform === route" :disabled="state.invalid || !available.includes(route)" @click="studio.changeAllBranches(route)">{{ t(names[route]) }}</button>
       </div>
@@ -258,6 +258,9 @@ function keydown(event) {
 .branch-condition-fields select{max-width:none}
 .inline-condition{border:0;padding:0;margin:0;min-width:0}.inline-condition label{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:12px}.inline-condition input,.inline-condition select{box-sizing:border-box;width:100%;min-width:0;height:34px}
 .branch-route-cards{border-top:1px solid var(--line);padding-top:12px}
+.branch-route-card{position:relative}
+.branch-route-card .route-select:not(:disabled)::after{content:'';position:absolute;inset:0}
+.branch-route-card .route-remove{position:relative;z-index:1}
 .branch-route-tag[data-route=N],.branch-route-card[data-route=N],.branch-route-text[data-route=N],.branch-route-filter button[data-route=N]{--route-color:#50565d;--route-missing-border:#9aa0a6;--route-hover-background:#f1f2f3}
 .branch-route-tag[data-route=E],.branch-route-card[data-route=E],.branch-route-text[data-route=E],.branch-route-filter button[data-route=E]{--route-color:#245c91;--route-missing-border:#81a6cd;--route-hover-background:#eaf3fc}
 .branch-route-tag[data-route=M],.branch-route-card[data-route=M],.branch-route-text[data-route=M],.branch-route-filter button[data-route=M]{--route-color:#983968;--route-missing-border:#cb87aa;--route-hover-background:#fbeaf4}

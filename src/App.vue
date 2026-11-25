@@ -2,6 +2,7 @@
 import { t, message, formatMessage, LocalizedError, languages, localePreference, initializeLocale, setLocale } from './i18n.js';
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, shallowRef, watch } from 'vue';
 import { Plus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser, ListMusic, SquareMousePointer, ListChecks, TextCursorInput, Flag, SquareDashed, ArrowLeftToLine, ArrowLeft, ArrowRight, LocateFixed, CircleOff } from '@lucide/vue';
+import { GitBranch } from '@lucide/vue';
 import { useStudio, formatTime } from './useStudio.js';
 import productIcon from './assets/icon.png';
 import TimelineEditor from './TimelineEditor.vue';
@@ -21,6 +22,7 @@ const chartFile = ref(null), audioFile = ref(null);
 const transportHost = ref(null), transportHeight = ref(0);
 const playbackMenu = ref(null), compactTransport = ref(true), playbackMenuOpen = ref(false);
 const inspectorTabs = ['谱面编辑', '落点信息', '全局导航', '谱面分歧'], inspectorTab = ref(0);
+const inspectorIcons = [FilePenLine, LocateFixed, ListMusic, GitBranch];
 function inspectorKeydown(event, index) {
   if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
   event.preventDefault(); event.stopPropagation();
@@ -34,7 +36,9 @@ function playbackKeydown(event) {
   playbackMenuOpen.value = false; playbackMenu.value.querySelector('summary').focus();
 }
 const fileMenu = ref(null), editMenu = ref(null), selectionMenu = ref(null), settingsMenu = ref(null), languageMenu = ref(null), shortcutMenu = ref(null), projectMenu = ref(null);
-const mobileWorkspace = ref(matchMedia('(max-width:900px)').matches), workspaceOpen = ref(!mobileWorkspace.value), workspaceSidebar = ref(null), workspaceTop = ref(0);
+const landscapeQuery = '(max-width:1100px) and (max-height:600px) and (orientation:landscape)';
+const mobileLandscape = ref(matchMedia(landscapeQuery).matches);
+const mobileWorkspace = ref(matchMedia('(max-width:900px)').matches || mobileLandscape.value), workspaceOpen = ref(!mobileWorkspace.value), workspaceSidebar = ref(null), workspaceTop = ref(0);
 const dismissedAudioMessages = ref(new Set()), errorMessageDismissed = ref(false);
 const showAudioMessage = computed(() => Boolean(state.chart && !state.buffer && !dismissedAudioMessages.value.has(state.activeId)));
 const messageBarError = computed(() => state.error && !errorMessageDismissed.value);
@@ -48,7 +52,15 @@ function toggleWorkspace() {
   workspaceOpen.value = !workspaceOpen.value;
   if (!mobileWorkspace.value) desktopWorkspaceOpen = workspaceOpen.value;
 }
-function closeWorkspace() { workspaceOpen.value = false; }
+function closeWorkspace() {
+  workspaceOpen.value = false;
+  if (mobileLandscape.value) nextTick(() => workspaceSidebar.value?.focusToggle());
+}
+function dismissWorkspaceDrawer(event) {
+  if (!mobileLandscape.value || !workspaceOpen.value || event.target.closest('.song-workspace, .workspace-drawer-backdrop, dialog')) return;
+  workspaceOpen.value = false;
+}
+onUnmounted(() => document.removeEventListener('pointerdown', dismissWorkspaceDrawer, true));
 async function showWorkspaceSection(section) {
   if (!workspaceOpen.value) toggleWorkspace();
   await nextTick();
@@ -81,8 +93,10 @@ function measureWorkspaceTop() {
   workspaceTop.value = Math.max(0, tabsViewport.value.closest('.chart-tabs').getBoundingClientRect().bottom);
 }
 function resizeLayout() {
-  const mobile = matchMedia('(max-width:900px)').matches;
-  if (mobile !== mobileWorkspace.value) {
+  const landscape = matchMedia(landscapeQuery).matches;
+  const mobile = matchMedia('(max-width:900px)').matches || landscape;
+  if (mobile !== mobileWorkspace.value || landscape !== mobileLandscape.value) {
+    mobileLandscape.value = landscape;
     mobileWorkspace.value = mobile;
     workspaceOpen.value = mobile ? false : desktopWorkspaceOpen;
   }
@@ -357,6 +371,7 @@ onMounted(() => {
   });
   transportObserver.observe(transportHost.value); transportHeight.value = transportHost.value.getBoundingClientRect().height;
   document.addEventListener('pointerdown', dismissPopovers);
+  document.addEventListener('pointerdown', dismissWorkspaceDrawer, true);
   document.addEventListener('focusin', dismissPopovers);
   document.addEventListener('keydown', fileKeydown);
   document.addEventListener('keydown', altMenuKeydown, true);
@@ -537,16 +552,17 @@ async function dropFiles(event) {
       </div>
       <div v-if="tabsScrollMax > 0" class="chart-tabs-scrollbar" role="scrollbar" tabindex="0" :aria-label="t('谱面标签横向滚动')" aria-orientation="horizontal" aria-controls="chart-tabs-viewport" :aria-valuemin="0" :aria-valuemax="tabsScrollMax" :aria-valuenow="Math.round(tabsScrollLeft)" @pointerdown="startScrollbar" @pointermove="moveScrollbar" @pointerup="stopScrollbar" @pointercancel="stopScrollbar" @lostpointercapture="stopScrollbar" @keydown="keydownScrollbar"><span class="chart-tabs-thumb" :style="scrollbarThumb"></span></div>
     </nav>
-    <div class="studio-panel-body" :class="{ 'workspace-collapsed': !workspaceOpen || mobileWorkspace }" :style="{ '--workspace-top': `${workspaceTop}px` }">
-    <SongWorkspace v-if="state.chart" ref="workspaceSidebar" :collapsed="!workspaceOpen" :class="{ 'workspace-overlay': mobileWorkspace && workspaceOpen }" @toggle="toggleWorkspace" @navigate="showWorkspaceSection" @keydown="workspaceKeydown">
-      <template #title><DocumentTitle v-if="mobileWorkspace && studio.bar.value" class="workspace-document-title" :class="{ expanded: workspaceOpen }" /></template>
+    <div class="studio-panel-body" :class="{ 'workspace-collapsed': !workspaceOpen || mobileWorkspace, 'mobile-landscape': mobileLandscape }" :style="{ '--workspace-top': `${workspaceTop}px` }">
+    <Teleport to="body"><button v-if="mobileLandscape && workspaceOpen" type="button" class="workspace-drawer-backdrop" :style="{ top: `${workspaceTop}px` }" :aria-label="t('收起歌曲工作区')" @click="closeWorkspace"></button></Teleport>
+    <SongWorkspace v-if="state.chart" ref="workspaceSidebar" :collapsed="!workspaceOpen" :class="{ 'workspace-overlay': mobileWorkspace && !mobileLandscape && workspaceOpen, 'workspace-drawer': mobileLandscape && workspaceOpen }" @toggle="toggleWorkspace" @navigate="showWorkspaceSection" @keydown="workspaceKeydown">
+      <template #title><DocumentTitle v-if="mobileWorkspace && !mobileLandscape && studio.bar.value" class="workspace-document-title" :class="{ expanded: workspaceOpen }" /></template>
     </SongWorkspace>
     <div class="editor-core" :inert="state.editorBlocked">
     <section v-if="studio.bar.value" class="document-toolbar">
-      <DocumentTitle v-if="!mobileWorkspace" />
+      <DocumentTitle v-if="!mobileWorkspace || mobileLandscape" />
     </section>
     <div class="editor-scroll">
-    <TimelineEditor v-if="studio.bar.value" :mobile="mobileWorkspace" />
+    <TimelineEditor v-if="studio.bar.value" :mobile="mobileWorkspace" :landscape="mobileLandscape" />
     <section v-else class="empty-editor" @keydown.space.stop>
       <FileMusic />
       <h2>{{ state.chart ? t('尚未创建谱面') : t('新建或打开一首歌曲') }}</h2>
@@ -555,7 +571,7 @@ async function dropFiles(event) {
       <button v-else id="empty-new-chart" type="button" class="primary" @click="studio.newChart"><Plus aria-hidden="true" />{{ t('新建谱面') }}</button>
     </section>
     </div>
-    <Teleport to="body" :disabled="!mobileWorkspace"><div ref="transportHost" class="transport-host">
+    <Teleport to="body" :disabled="!mobileWorkspace || mobileLandscape"><div ref="transportHost" class="transport-host" :class="{ 'landscape-transport': mobileLandscape }">
     <div v-if="messageBarError || showAudioMessage" id="playback-message-bar" class="playback-message-bar" :class="{ error: messageBarError }" :role="messageBarError ? 'alert' : 'status'">
       <Info aria-hidden="true" /><p>{{ messageBarError ? state.notice : t('尚未载入音频') }}</p>
       <button v-if="!messageBarError && showAudioMessage" id="message-load-audio" type="button" class="message-action" @click="audioFile.click()"><AudioLines aria-hidden="true" />{{ t('载入音频') }}</button>
@@ -586,7 +602,7 @@ async function dropFiles(event) {
     </div>
     <section v-show="studio.bar.value && mobileWorkspace" class="mobile-inspector" :inert="state.editorBlocked">
       <div class="inspector-tabs" role="tablist" :aria-label="t('编辑面板')" @keydown.space.stop @keyup.space.stop>
-        <button v-for="(label, index) in inspectorTabs" :id="`inspector-tab-${index}`" :key="label" type="button" role="tab" :aria-selected="inspectorTab === index" :aria-controls="['mobile-edit-panel', 'mobile-position-panel', 'mobile-navigation-panel', 'mobile-branch-panel'][index]" :tabindex="inspectorTab === index ? 0 : -1" @click="inspectorTab = index" @keydown="inspectorKeydown($event, index)">{{ t(label) }}</button>
+        <button v-for="(label, index) in inspectorTabs" :id="`inspector-tab-${index}`" :key="label" type="button" role="tab" :aria-label="t(label)" :title="mobileLandscape ? t(label) : undefined" :aria-selected="inspectorTab === index" :aria-controls="['mobile-edit-panel', 'mobile-position-panel', 'mobile-navigation-panel', 'mobile-branch-panel'][index]" :tabindex="inspectorTab === index ? 0 : -1" @click="inspectorTab = index" @keydown="inspectorKeydown($event, index)"><component v-if="mobileLandscape" :is="inspectorIcons[index]" aria-hidden="true" /><span v-else>{{ t(label) }}</span></button>
       </div>
       <div v-show="inspectorTab === 0" id="mobile-edit-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-0" tabindex="0"></div>
       <div v-show="inspectorTab === 1" id="mobile-position-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-1" tabindex="0"></div>
@@ -652,9 +668,43 @@ main{display:flex;flex:1;min-height:0;max-width:none;margin:0;padding:0}
 @media(max-width:900px){main{padding-bottom:var(--transport-height)}.studio-panel-body,.studio-panel-body:has(.measure-editor),.studio-panel-body.workspace-collapsed:has(>.song-workspace),.studio-panel-body.workspace-collapsed:has(.measure-editor){grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}.studio-panel-body:has(#timeline){grid-template-rows:auto minmax(0,1.2fr) minmax(0,1fr)}.studio-panel-body>.song-workspace{height:auto;grid-row:1}.studio-panel-body>.song-workspace.workspace-overlay{position:fixed;top:var(--workspace-top);left:0;right:0;z-index:20;width:100%;height:calc(100dvh - var(--workspace-top) - var(--transport-height));max-height:none}.editor-core{grid-row:2}.transport-host{position:fixed;left:0;right:0;bottom:0;z-index:25}.transport{padding-bottom:calc(7px + env(safe-area-inset-bottom,0px))}.empty-editor{min-height:100%;padding:20px}}
 .mobile-inspector{display:flex;flex-direction:column;grid-row:3;min-height:0;min-width:0;border-top:1px solid var(--line);overflow:hidden}
 @media(max-width:900px){.studio-panel-body:has(#timeline){grid-template-rows:auto minmax(0,max-content) minmax(0,1fr)}.editor-core:has(#timeline) .editor-scroll{display:flex;overflow:hidden}.editor-core:has(#timeline) .workspace{flex:1;min-width:0;min-height:0}}
-@media(max-width:900px) and (max-height:600px){.studio-panel-body:has(#timeline){grid-template-rows:auto minmax(0,4fr) minmax(0,1fr)}}
 .inspector-tabs{display:flex;flex-shrink:0;border-bottom:1px solid var(--line);background:var(--paper)}.inspector-tabs>[role=tab]{flex:1;min-width:0;min-height:34px;padding:4px;border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;font-size:12px}.inspector-tabs>[aria-selected=true]{border-bottom-color:var(--green);color:var(--green);background:#fff}
 .inspector-tab-panel{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}.inspector-tab-panel>.measure-editor{overflow:visible;border:0}.inspector-tab-panel>.cell-inspector,.inspector-tab-panel>.branch-context{border:0}
+.studio-panel-body.mobile-landscape,.studio-panel-body.mobile-landscape:has(.measure-editor),.studio-panel-body.mobile-landscape:has(#timeline){grid-template-columns:44px minmax(0,1fr) minmax(210px,28%);grid-template-rows:minmax(0,1fr)}
+main:has(.mobile-landscape){padding-bottom:0}
+.studio-panel-body.mobile-landscape.workspace-collapsed,.studio-panel-body.mobile-landscape.workspace-collapsed:has(.measure-editor){grid-template-columns:44px minmax(0,1fr) minmax(210px,28%)}
+.studio-panel-body.mobile-landscape>.song-workspace{grid-column:1;grid-row:1;width:100%;height:100%;border-right:1px solid var(--line);overflow-y:auto}
+.studio-panel-body.mobile-landscape>.song-workspace.collapsed{width:44px;overflow:hidden}
+.studio-panel-body.mobile-landscape>.song-workspace.workspace-drawer{position:fixed;top:var(--workspace-top);left:0;bottom:0;z-index:60;width:min(300px,calc(100vw - 44px));height:calc(100dvh - var(--workspace-top));box-shadow:6px 0 24px #202a2830}
+.workspace-drawer-backdrop,.workspace-drawer-backdrop:hover{position:fixed;left:0;right:0;bottom:0;z-index:55;width:100%;height:auto;padding:0;border:0;border-radius:0;background:#202a2870}
+.studio-panel-body.mobile-landscape .workspace-icons{display:grid}
+.studio-panel-body.mobile-landscape .song-workspace.collapsed .workspace-heading{justify-content:center;padding:0}
+.studio-panel-body.mobile-landscape>.editor-core{grid-column:2;grid-row:1;container-type:size}
+.studio-panel-body.mobile-landscape>.mobile-inspector{grid-column:3;grid-row:1;border-top:0;border-left:1px solid var(--line)}
+.mobile-landscape .inspector-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
+.mobile-landscape .inspector-tabs>[role=tab]{min-height:32px;padding:4px 2px;font-size:11px;line-height:16px;overflow-wrap:anywhere}
+.mobile-landscape #branch-create{width:32px;min-width:32px;height:32px;min-height:32px;padding:5px}
+.mobile-landscape #branch-create .branch-create-label{display:none}
+.mobile-landscape .branch-manager .branch-route-cards{grid-template-columns:minmax(0,1fr)}
+.mobile-landscape .editor-information{display:none}
+.mobile-landscape .document-toolbar{display:none}
+.mobile-landscape .editor>.timeline-frame{flex:2 1 165px;height:auto;min-height:72px}
+@container(min-height:360px){.mobile-landscape .document-toolbar{display:flex}}
+.mobile-landscape .timeline-frame>.timeline-wrap,.mobile-landscape .timeline-frame .timeline-content,.mobile-landscape .timeline-frame #timeline{height:100%}
+.mobile-landscape .touch-selection-guide{height:max(min(60px,40%),calc((100% - 45px)/2))}
+.mobile-landscape .editor>.overview{display:flex;flex-direction:column;flex:0 0 auto;min-height:0;overflow:hidden}
+.mobile-landscape .overview-caption{flex:0 0 24px;min-height:24px;flex-wrap:nowrap;gap:8px}
+.mobile-landscape .overview-caption>#overview-range{flex-shrink:0}
+.mobile-landscape .overview-legend{pointer-events:auto}
+.mobile-landscape .overview-gogo,.mobile-landscape .overview-route{min-height:14px}
+@container(max-width:480px){.mobile-landscape .overview-legend-label{display:none}}
+.mobile-landscape .overview-wave{flex:0 0 40px;min-height:40px;max-height:40px}
+.mobile-landscape .overview canvas{height:100%}
+.landscape-transport{position:relative;left:auto;right:auto;bottom:auto;z-index:25;padding-top:0}
+.landscape-transport:has(>.playback-message-bar){padding-top:32px}
+.landscape-transport>.playback-message-bar{position:absolute;left:0;right:0;top:0;bottom:auto;z-index:1;height:32px;max-height:32px;padding:3px 8px}
+.landscape-transport .playback-message-bar button{min-height:24px;padding:2px 6px}
+.landscape-transport>.transport{border-top:1px solid var(--line);padding-bottom:calc(7px + env(safe-area-inset-bottom,0px))}
 .chart-tabs{position:relative;flex-shrink:0;min-width:0;margin:0;border-bottom:1px solid var(--line);background:#edf1ee}
 .chart-tabs .new-chart-tab{width:30px;min-width:30px;min-height:30px;padding:4px;flex-shrink:0;align-self:stretch;border:0;border-right:1px solid var(--line);border-radius:0;background:transparent;color:var(--muted)}.chart-tabs .new-chart-tab:hover{background:#dfe8e2;color:var(--green)}
 .chart-tabs-viewport{overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain}
