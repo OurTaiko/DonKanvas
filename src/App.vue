@@ -20,7 +20,7 @@ const { state, controls, range, duration } = studio;
 const chartFile = ref(null), audioFile = ref(null);
 const transportHost = ref(null), transportHeight = ref(0);
 const playbackMenu = ref(null), compactTransport = ref(true), playbackMenuOpen = ref(false);
-const inspectorTabs = ['谱面编辑', '落点信息', '谱面分歧', '全局导航'], inspectorTab = ref(0);
+const inspectorTabs = ['谱面编辑', '落点信息', '全局导航', '谱面分歧'], inspectorTab = ref(0);
 function inspectorKeydown(event, index) {
   if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
   event.preventDefault(); event.stopPropagation();
@@ -572,12 +572,12 @@ async function dropFiles(event) {
     </div>
     <section v-show="studio.bar.value && mobileWorkspace" class="mobile-inspector" :inert="state.editorBlocked">
       <div class="inspector-tabs" role="tablist" :aria-label="t('编辑面板')" @keydown.space.stop @keyup.space.stop>
-        <button v-for="(label, index) in inspectorTabs" :id="`inspector-tab-${index}`" :key="label" type="button" role="tab" :aria-selected="inspectorTab === index" :aria-controls="['mobile-edit-panel', 'mobile-position-panel', 'mobile-branch-panel', 'mobile-navigation-panel'][index]" :tabindex="inspectorTab === index ? 0 : -1" @click="inspectorTab = index" @keydown="inspectorKeydown($event, index)">{{ t(label) }}</button>
+        <button v-for="(label, index) in inspectorTabs" :id="`inspector-tab-${index}`" :key="label" type="button" role="tab" :aria-selected="inspectorTab === index" :aria-controls="['mobile-edit-panel', 'mobile-position-panel', 'mobile-navigation-panel', 'mobile-branch-panel'][index]" :tabindex="inspectorTab === index ? 0 : -1" @click="inspectorTab = index" @keydown="inspectorKeydown($event, index)">{{ t(label) }}</button>
       </div>
       <div v-show="inspectorTab === 0" id="mobile-edit-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-0" tabindex="0"></div>
       <div v-show="inspectorTab === 1" id="mobile-position-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-1" tabindex="0"></div>
-      <div v-show="inspectorTab === 2" id="mobile-branch-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-2" tabindex="0"></div>
-      <div v-show="inspectorTab === 3" id="mobile-navigation-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-3" tabindex="0"></div>
+      <div v-show="inspectorTab === 2" id="mobile-navigation-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-2" tabindex="0"></div>
+      <div v-show="inspectorTab === 3" id="mobile-branch-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-3" tabindex="0"></div>
     </section>
     <Teleport v-if="studio.bar.value" to="#mobile-edit-panel" :disabled="!mobileWorkspace" defer><MeasureEditor :inert="state.editorBlocked" /></Teleport>
     </div>
@@ -639,20 +639,20 @@ main{display:flex;flex:1;min-height:0;max-width:none;margin:0;padding:0}
 .inspector-tabs{display:flex;flex-shrink:0;border-bottom:1px solid var(--line);background:var(--paper)}.inspector-tabs>[role=tab]{flex:1;min-width:0;min-height:34px;padding:4px;border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;font-size:12px}.inspector-tabs>[aria-selected=true]{border-bottom-color:var(--green);color:var(--green);background:#fff}
 .inspector-tab-panel{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}.inspector-tab-panel>.measure-editor{overflow:visible;border:0}.inspector-tab-panel>.cell-inspector,.inspector-tab-panel>.branch-context{border:0}
 .chart-tabs{position:relative;flex-shrink:0;min-width:0;margin:0;border-bottom:1px solid var(--line);background:#edf1ee}
-.chart-tabs .new-chart-tab{width:43px;min-width:43px;min-height:43px;flex-shrink:0;align-self:stretch;border:0;border-right:1px solid var(--line);border-radius:0;background:transparent;color:var(--muted)}.chart-tabs .new-chart-tab:hover{background:#dfe8e2;color:var(--green)}
+.chart-tabs .new-chart-tab{width:36px;min-width:36px;min-height:36px;flex-shrink:0;align-self:stretch;border:0;border-right:1px solid var(--line);border-radius:0;background:transparent;color:var(--muted)}.chart-tabs .new-chart-tab:hover{background:#dfe8e2;color:var(--green)}
 .chart-tabs-viewport{overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain}
 .chart-tabs-viewport::-webkit-scrollbar{display:none}
-.chart-tabs-content{display:flex;width:max-content;min-width:100%;min-height:43px}
+.chart-tabs-content{display:flex;width:max-content;min-width:100%;min-height:36px}
 .chart-tabs-scrollbar{position:absolute;left:0;right:0;bottom:0;height:7px;opacity:0;pointer-events:none;transition:opacity .15s;touch-action:none;user-select:none;outline-offset:1px}
 .chart-tabs:hover .chart-tabs-scrollbar,.chart-tabs-scrollbar:focus-visible,.chart-tabs.dragging .chart-tabs-scrollbar{opacity:1;pointer-events:auto}
 .chart-tabs-thumb{display:block;height:100%;border-radius:4px;background:rgba(80,90,85,.35);cursor:default}
 .chart-tabs-scrollbar:hover .chart-tabs-thumb,.chart-tabs.dragging .chart-tabs-thumb{background:rgba(80,90,85,.6)}
 @media(prefers-reduced-motion:reduce){.chart-tabs-scrollbar{transition:none}}
-.chart-tab{display:flex;flex-shrink:0;max-width:320px;min-height:43px;border-right:1px solid var(--line);border-top:2px solid transparent}
+.chart-tab{display:flex;flex-shrink:0;max-width:320px;min-height:36px;border-right:1px solid var(--line);border-top:2px solid transparent}
 .chart-tab.active{border-top-color:var(--green);background:#fff}
 .chart-tab:not(.active):hover{background:#dfe8e2}
 .chart-tab.active:hover{background:#f0f6f2}
-.chart-tab button{border:0;background:transparent;min-width:0;white-space:nowrap;overflow-wrap:normal}
+.chart-tab button{border:0;background:transparent;min-width:0;min-height:32px;padding:4px 10px;white-space:nowrap;overflow-wrap:normal}
 .chart-tab-select{flex:1}.chart-tab-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chart-tab-dirty{flex-shrink:0}
 .chart-tab.active button{color:var(--green)}
 .chart-tab .icon{flex-shrink:0;opacity:0;pointer-events:none}

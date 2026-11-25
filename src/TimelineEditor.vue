@@ -498,6 +498,7 @@ onUnmounted(() => {
         </div>
       </section>
       <div class="editor-information">
+      <div class="editor-information-left">
       <Teleport to="#mobile-position-panel" :disabled="!mobile" defer>
       <section class="cell-inspector" :aria-label="t('落点信息')">
         <SectionHeading class="position-caption" :icon="Grid2X2" :title="t('落点信息')">
@@ -515,10 +516,6 @@ onUnmounted(() => {
         </dl>
       </section>
       </Teleport>
-      <Teleport to="#mobile-branch-panel" :disabled="!mobile" defer><BranchControls /></Teleport>
-      </div>
-    </section>
-  </div>
   <Teleport to="#mobile-navigation-panel" :disabled="!mobile" defer>
   <section class="measure-section">
     <div class="measure-heading">
@@ -541,12 +538,23 @@ onUnmounted(() => {
     <MeasureGrid id="measures" :key="state.activeId" :bars="state.chart?.bars || []" :selection="range" :active-index="state.selected" :anchor-index="state.loopAnchor" :note-index="state.selectedCell?.bar" :disabled="state.invalid" @activate="studio.select" @select="studio.setLoop" @toggle="toggleMeasure" @preview="measurePreview = $event" />
   </section>
   </Teleport>
+      </div>
+      <Teleport to="#mobile-branch-panel" :disabled="!mobile" defer><BranchControls /></Teleport>
+      </div>
+    </section>
+  </div>
 </template>
 
 <style>
-.editor-information{display:grid;grid-template-columns:minmax(0,1fr)}
-.editor-information>section.branch-context{min-width:0;align-content:start;border-top:1px solid var(--line);border-bottom:0}
-@container(min-width:900px){.editor-information{grid-template-columns:repeat(2,minmax(0,1fr))}.editor-information>section.branch-context{border-left:1px solid var(--line)}}
+.editor-core:has(#timeline) .editor-scroll{display:flex;overflow:hidden}
+.editor-core:has(#timeline) .workspace{flex:1;min-width:0;min-height:0}
+.workspace>.editor{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.editor>.editor-bar,.editor>.timeline-frame,.editor>.overview{flex-shrink:0}
+.editor-information{display:grid;grid-template-columns:minmax(0,1fr) 420px;grid-template-rows:minmax(0,1fr);align-items:stretch;flex:1;min-height:0;overflow:hidden}
+.editor-information-left{grid-column:1;grid-row:1;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.editor-information-left>.measure-section{min-width:0}
+.editor-information>section.branch-context{grid-column:2;grid-row:1;width:420px;max-width:100%;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;align-self:stretch;align-content:start;border-top:1px solid var(--line);border-left:1px solid var(--line);border-bottom:0}
+@container(max-width:840px){.editor-information{grid-template-columns:minmax(0,1fr);grid-template-rows:auto;align-content:start;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}.editor-information-left{display:contents}.editor-information-left>.cell-inspector,.editor-information-left>.measure-section,.editor-information>section.branch-context{grid-column:1;grid-row:auto}.editor-information>section.branch-context{width:auto;overflow:visible;border-left:0}}
 .overview-caption{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;padding:4px 6px;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;pointer-events:none}
 .overview-caption>#overview-range{white-space:nowrap}
 .overview-wave{position:relative}

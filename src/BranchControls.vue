@@ -1,5 +1,5 @@
 <script setup>
-import { computed, inject, nextTick, reactive, ref } from 'vue';
+import { computed, inject, nextTick, reactive, ref, watch } from 'vue';
 import { GitBranch, ListFilter, X, LocateFixed, Plus, Trash2 } from '@lucide/vue';
 import { t } from './i18n.js';
 import { BRANCH_ROUTES, BRANCH_ROUTE_NAMES as names } from './chart.js';
@@ -7,12 +7,17 @@ import SectionHeading from './SectionHeading.vue';
 import MeasureGrid from './MeasureGrid.vue';
 
 const studio = inject('studio'), { state, currentTiming } = studio;
-const dialog = ref(null), list = ref(null);
-const filterDialog = ref(null), filterList = ref(null);
+const dialog = ref(null), filterDialog = ref(null), filterList = ref(null);
 const mode = ref(''), target = ref(null), error = ref(''), first = ref(null), last = ref(null), anchor = ref(null);
 const fields = reactive({ condition: 'p', lower: 50, upper: 80, route: 'N', source: 'shared', keep: '' });
+const actionTitle = computed(() => mode.value === 'create' ? t('创建分歧') : mode.value === 'route' ? t('创建路线 {p0}', { p0: fields.route }) : t('删除整个分歧'));
 const branches = computed(() => state.chart?.branches || []);
 const editedBranch = computed(() => branches.value.find(branch => branch.index === target.value));
+watch([() => state.activeId, () => state.course, () => Boolean(editedBranch.value)], ([document, course, exists], [previousDocument, previousCourse]) => {
+  if (document !== previousDocument || course !== previousCourse || (!exists && mode.value !== 'create')) {
+    close(); first.value = last.value = anchor.value = null;
+  }
+}, { flush: 'sync' });
 const selectedMeasures = computed(() => first.value === null ? [] : state.chart.bars.slice(first.value, last.value + 1));
 const selection = computed(() => first.value === null ? null : [first.value + 1, last.value + 1]);
 const current = computed(() => branches.value.find(branch => branch.index === currentTiming.value?.bar.branchIndex));
@@ -36,12 +41,6 @@ function conditionLabel(branch) {
   if (condition === 's') return t('分数：普通 < {p0} · 玄人 {p0}–<{p1} · 达人 ≥ {p1}', { p0: lower, p1: upper });
   return branch.value;
 }
-async function open() {
-  studio.pause(); mode.value = ''; error.value = ''; dialog.value.showModal();
-  await nextTick();
-  const row = list.value.querySelector('[aria-current="true"]');
-  if (row) list.value.scrollTop = row.offsetTop - list.value.offsetTop;
-}
 async function openFilter() {
   studio.pause(); filterDialog.value.showModal();
   await nextTick();
@@ -51,7 +50,9 @@ async function openFilter() {
 function create() {
   mode.value = 'create'; error.value = ''; first.value = last.value = anchor.value = null;
   Object.assign(fields, { condition: 'p', lower: 50, upper: 80, route: 'N', source: 'shared' });
+  studio.pause(); dialog.value.showModal();
 }
+function close() { dialog.value?.close(); mode.value = ''; error.value = ''; }
 function chooseMeasure(index) {
   error.value = '';
   if (anchor.value === null) {
@@ -79,6 +80,7 @@ function updateCondition(branch, field, value) {
 function edit(branch, action, route = 'N') {
   target.value = branch.index; mode.value = action; error.value = '';
   Object.assign(fields, branchCondition(branch), { route, source: branch.route, keep: branch.route ?? '' });
+  studio.pause(); dialog.value.showModal();
 }
 function removeRoute(branch, route) {
   const prompt = branch.routes.length === 1 ? t('删除最后一条路线将同时删除分歧，原小节保留为空白共用小节。是否继续？') : t('删除路线 {p0} 及其内容？可撤销恢复。', { p0: t(names[route]) });
@@ -98,7 +100,7 @@ function submit() {
   } else if (mode.value === 'remove') {
     operation = { type: 'remove', keep: fields.keep || null };
   } else return;
-  if (studio.applyMeasureBranch(operation, measure)) mode.value = '';
+  if (studio.applyMeasureBranch(operation, measure)) close();
   else error.value = state.notice;
 }
 function locate(branch, owner) {
@@ -108,8 +110,8 @@ function locate(branch, owner) {
 function keydown(event) {
   if (event.key === 'Escape' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
     event.preventDefault(); event.stopPropagation();
-    if (event.currentTarget === dialog.value && mode.value) { mode.value = ''; error.value = ''; }
-    else event.currentTarget.close();
+    if (event.currentTarget === filterDialog.value) event.currentTarget.close();
+    else close();
   }
 }
 </script>
@@ -121,8 +123,8 @@ function keydown(event) {
       <template #description><p class="branch-current"><template v-if="current"><span v-if="current.route" class="branch-route-tag" :data-route="current.route">{{ t(names[current.route]) }}</span> {{ branchLabel(current) }} · {{ conditionLabel(current) }}</template><template v-else>{{ t('当前位于共用段') }}</template></p></template>
     </SectionHeading>
     <div class="branch-actions">
+      <button id="branch-create" type="button" class="manage-branches" :disabled="state.invalid" @click="create"><Plus aria-hidden="true" />{{ t('创建分歧') }}</button>
       <button id="branch-filter" type="button" class="manage-branches" :disabled="state.invalid || !branches.length" @click="openFilter"><ListFilter aria-hidden="true" />{{ t('路线筛选') }}</button>
-      <button id="branch-manage" type="button" class="manage-branches" :disabled="state.invalid" @click="open"><GitBranch aria-hidden="true" />{{ t('全局分歧管理') }}</button>
     </div>
     <dialog ref="filterDialog" class="branch-dialog branch-filter-dialog" aria-labelledby="branch-filter-title" @keydown="keydown">
       <div class="branch-dialog-heading"><div><h2 id="branch-filter-title">{{ t('路线筛选') }}</h2><p>{{ t('仅切换显示和试听路线，不修改分歧结构。') }}</p></div><button type="button" class="icon" :title="t('关闭')" :aria-label="t('关闭')" @click="filterDialog.close()"><X /></button></div>
@@ -148,11 +150,10 @@ function keydown(event) {
       </div>
       <div class="branch-dialog-footer"><span>{{ t('手动选路，不模拟命中率或得分判定。') }}</span></div>
     </dialog>
-    <dialog ref="dialog" class="branch-dialog" aria-labelledby="branch-dialog-title" @keydown="keydown">
-      <div class="branch-dialog-heading"><div><h2 id="branch-dialog-title">{{ t('全局分歧管理') }}</h2><p>{{ t('创建、删除分歧及路线，编辑判定条件。') }} {{ t('BPM、拍号和延迟在所有路线的对应小节及落点同步；分歧小节数量与时长始终一致。') }}</p></div><button type="button" class="icon" :title="t('关闭')" :aria-label="t('关闭')" @click="dialog.close()"><X /></button></div>
+    <dialog ref="dialog" class="branch-dialog branch-action-dialog" aria-labelledby="branch-action-title" @keydown="keydown" @cancel.prevent="close">
+      <div class="branch-dialog-heading"><h2 id="branch-action-title">{{ actionTitle }}</h2><button type="button" class="icon" :title="t('关闭')" :aria-label="t('关闭')" @click="close"><X /></button></div>
       <form v-if="mode" class="branch-form" @submit.prevent="submit">
         <fieldset :disabled="state.invalid">
-          <legend>{{ mode === 'create' ? t('创建分歧') : mode === 'route' ? t('创建路线 {p0}', { p0: fields.route }) : t('删除整个分歧') }}</legend>
           <template v-if="mode === 'create'">
             <p class="selection-help">{{ t('点击首尾小节、拖动或 Shift+单击选择区间；已被分歧覆盖的小节不可选。') }}</p>
             <MeasureGrid class="branch-measure-grid" role="group" :aria-label="t('选择小节')" :bars="state.chart.bars" :selection="selection" :anchor-index="anchor" :disabled="state.invalid" :unavailable="item => item.branchIndex !== null" :measure-title="item => item.branchIndex === null ? t('第 {p0} 小节', { p0: item.index + 1 }) : branchLabel(branches[item.branchIndex])" @activate="chooseMeasure" @select="chooseRange" />
@@ -172,12 +173,12 @@ function keydown(event) {
             <label>{{ t('保留音符') }}<select id="branch-keep" v-model="fields.keep"><option value="">{{ t('不保留任何路线的音符') }}</option><option v-for="route in editedBranch.routes" :key="route" :value="route">{{ route }} · {{ t(names[route]) }}</option></select></label>
           </template>
           <p v-if="error || state.error" class="branch-route-error" role="alert">{{ error || state.notice }}</p>
-          <div class="branch-form-actions"><button type="button" @click="mode = ''; error = ''">{{ t('取消') }}</button><button id="branch-apply" type="submit" :disabled="mode === 'create' && !selectedMeasures.length">{{ mode === 'remove' ? t('删除整个分歧') : t('确定') }}</button></div>
+          <div class="branch-form-actions"><button type="button" @click="close">{{ t('取消') }}</button><button id="branch-apply" type="submit" :disabled="mode === 'create' && !selectedMeasures.length">{{ mode === 'remove' ? t('删除整个分歧') : t('确定') }}</button></div>
         </fieldset>
       </form>
-      <div v-show="!mode">
-      <button id="branch-create" type="button" class="branch-create" :disabled="state.invalid" @click="create"><Plus />{{ t('创建分歧') }}</button>
-      <div ref="list" class="branch-route-list">
+    </dialog>
+    <div class="branch-manager" role="group" :aria-label="t('全局分歧管理')" @focusin="state.playing && studio.pause()">
+      <div class="branch-route-list">
         <article v-for="branch in sortedBranches" :key="branch.index" class="branch-route-row" :aria-current="current?.index === branch.index ? 'true' : undefined">
           <div class="branch-row-heading">
           <button type="button" class="branch-jump" :aria-label="t('定位 {p0}', { p0: branchLabel(branch) })" @click="locate(branch)"><span><strong>{{ branchLabel(branch) }}</strong><small>{{ conditionLabel(branch) }}</small></span><LocateFixed /></button>
@@ -198,14 +199,15 @@ function keydown(event) {
         </article>
         <p v-if="!sortedBranches.length" class="no-branches">{{ t('暂无分歧。') }}</p>
       </div>
-      </div>
       <p v-if="!mode && (error || state.error)" class="branch-route-error" role="alert">{{ error || state.notice }}</p>
-    </dialog>
+    </div>
   </section>
 </template>
 
 <style scoped>
-.branch-actions{display:flex;flex-basis:100%;flex-wrap:wrap;gap:8px}
+.branch-manager{flex-basis:100%;min-width:0;max-width:100%}.branch-manager>.branch-route-error{margin-top:12px}.branch-manager .branch-route-list{max-height:none;overflow:visible}.branch-manager .branch-row-heading>.branch-jump{min-width:0}
+.branch-manager .branch-route-cards{grid-template-columns:repeat(3,minmax(0,1fr))}.branch-manager .branch-route-card strong{min-width:0}
+.branch-actions{display:flex;flex-basis:100%;gap:8px}
 .branch-actions>.manage-branches{min-height:32px;padding:5px 10px}
 .route-segments label:hover input:not(:disabled):not(:checked)+span{background:#d0e2d7;color:#125d49}
 .route-segments label:hover input:checked:not(:disabled)+span{background:#125d49}
@@ -215,6 +217,7 @@ function keydown(event) {
 .branch-source-fields select{box-sizing:border-box;max-width:none}
 .branch-form .branch-route-error{color:#bd3b30}
 .branch-condition-fields select{max-width:none}
+.branch-action-dialog .branch-form{margin-top:12px}
 .inline-condition{border:0;padding:0;margin:0;min-width:0}.inline-condition label{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:12px}.inline-condition input,.inline-condition select{box-sizing:border-box;width:100%;min-width:0;height:34px}
 .branch-route-cards{border-top:1px solid var(--line);padding-top:12px}
 .branch-route-tag[data-route=N],.branch-route-card[data-route=N]{--route-color:#50565d;--route-missing-border:#9aa0a6;--route-hover-background:#f1f2f3}

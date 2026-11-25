@@ -422,7 +422,7 @@ test('overview dragging pans continuously without seeking or changing selections
   ]) assert.ok(canvas.includes(`@${eventName}="${handler}"`));
   assert.doesNotMatch(canvas, /@click=/);
   assert.match(descriptor.template.content, /^\s*<div class="workspace">\s*<section class="editor">/);
-  assert.match(descriptor.template.content, /<\/canvas><\/div><\/div><div v-if="touchGuide" class="touch-selection-guide"[^>]*><ChevronsLeft[^>]*\/><ChevronsRight[^>]*\/><\/div><\/div>\s*<section class="overview">[\s\S]*?<\/section>\s*<div class="editor-information">\s*<Teleport[^>]*>\s*<section class="cell-inspector"/);
+  assert.match(descriptor.template.content, /<\/canvas><\/div><\/div><div v-if="touchGuide" class="touch-selection-guide"[^>]*><ChevronsLeft[^>]*\/><ChevronsRight[^>]*\/><\/div><\/div>\s*<section class="overview">[\s\S]*?<\/section>\s*<div class="editor-information">\s*<div class="editor-information-left">\s*<Teleport[^>]*>\s*<section class="cell-inspector"/);
   const styles = readFileSync(new URL('sound.css', import.meta.url), 'utf8');
   assert.match(styles, /\.timeline-wrap\{[^}]*overflow-x:auto;[^}]*scrollbar-width:none/);
   assert.match(styles, /\.timeline-wrap::-webkit-scrollbar\{display:none\}/);
@@ -453,7 +453,9 @@ test('the new-document tab follows the last file inside the left-aligned scrolli
   assert.doesNotMatch(tabs, /empty-session|尚未打开谱面/);
   assert.doesNotMatch(tabs, /chart-tabs-scroll-region/);
   assert.match(descriptor.styles[0].content, /\.chart-tabs \.new-chart-tab\{[^}]*flex-shrink:0/);
-  assert.match(descriptor.styles[0].content, /\.chart-tabs-content\{[^}]*min-height:43px/);
+  assert.match(descriptor.styles[0].content, /\.chart-tabs-content\{[^}]*min-height:36px/);
+  assert.match(descriptor.styles[0].content, /\.chart-tab button\{[^}]*min-height:32px;padding:4px 10px;/);
+  assert.match(descriptor.styles[0].content, /\.chart-tabs \.new-chart-tab\{width:36px;min-width:36px;min-height:36px;/);
   assert.match(descriptor.template.content, /<section v-if="studio.bar.value" class="document-toolbar">/);
   assert.doesNotMatch(descriptor.template.content, /id="notice"/);
 });
@@ -1390,9 +1392,10 @@ test('graphical branch selection supports reversed endpoints and rejects crossin
   const writes = [], loop = [2, 4], state = reactive({
     selected: 4, customLoop: loop, chart: { branches: [], bars: Array.from({ length: 6 }, (_, index) => ({ index, branchIndex: index === 3 ? 0 : null })) }
   });
-  const manager = runInNewContext(`${source}; ({ create, chooseMeasure, chooseRange, submit, first, last, anchor, error, fields, mode })`, {
-    ref, reactive, computed, inject: () => ({ state, bar: ref(null), applyMeasureBranch: (operation, measure) => { writes.push({ operation, measure }); return true; } }), t
+  const manager = runInNewContext(`${source}; ({ create, chooseMeasure, chooseRange, submit, first, last, anchor, error, fields, mode, dialog })`, {
+    ref, reactive, computed, watch, inject: () => ({ state, bar: ref(null), pause() {}, applyMeasureBranch: (operation, measure) => { writes.push({ operation, measure }); return true; } }), t
   });
+  manager.dialog.value = { showModal() {}, close() {} };
   manager.create(); manager.submit();
   assert.equal(writes.length, 0); assert.match(manager.error.value, /选择有效的小节/);
   manager.chooseMeasure(2); manager.chooseMeasure(0);
@@ -1418,7 +1421,7 @@ test('branch cards count each created route independently of the viewed route an
   const source = descriptor.scriptSetup.content.replace(/^import .*;\n/gm, '');
   const state = reactive({ chart: null });
   const manager = runInNewContext(`${source}; ({ routeNoteCount })`, {
-    ref, reactive, computed, inject: () => ({ state, bar: ref(null) }), t
+    ref, reactive, computed, watch, inject: () => ({ state, bar: ref(null) }), t
   });
   const text = 'TITLE:Route counts\nBPM:120\nCOURSE:Oni\n#START\n1111,\n#BRANCHSTART p,50,80\n#N\n1A00,\n7080,\n#E\n0000,\n0000,\n#M\n234B,\n9080,\n#BRANCHEND\n2222,\n#END\n';
   for (const route of ['N', 'E', 'M']) {
@@ -1437,7 +1440,7 @@ test('branch cards count each created route independently of the viewed route an
 test('branch titles use inclusive measure ranges and readable conditions with all branches sorted', () => {
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   const script = descriptor.scriptSetup.content;
-  const source = script.slice(script.indexOf('const sortedBranches ='), script.indexOf('async function open()'));
+  const source = script.slice(script.indexOf('const sortedBranches ='), script.indexOf('async function openFilter()'));
   const parser = script.slice(script.indexOf('function branchCondition('), script.indexOf('function updateCondition('));
   const branch = { index: 0, firstBarIndex: 6, barCount: 3, value: 'p,50,80' };
   const branches = ref([branch]);
@@ -1463,19 +1466,20 @@ test('branch titles use inclusive measure ranges and readable conditions with al
   } finally { reset(); }
 });
 
-test('inline branch conditions preserve other values, target the correct branch and surface rejected changes', () => {
+test('inline branch conditions preserve other values, target the correct branch and surface rejected changes without opening a dialog', () => {
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   const source = descriptor.scriptSetup.content.replace(/^import .*;\n/gm, '');
   const writes = [], branch = { firstBarIndex: 6, value: 'p,50,80' };
   const state = { notice: 'invalid condition' };
-  const controls = runInNewContext(`${source}; ({ updateCondition, mode, error })`, {
-    ref, reactive, computed, inject: () => ({
-      state, bar: ref(null), applyMeasureBranch(operation, measure) {
+  const controls = runInNewContext(`${source}; ({ updateCondition, mode, error, dialog })`, {
+    ref, reactive, computed, watch, inject: () => ({
+      state, bar: ref(null), pause() {}, applyMeasureBranch(operation, measure) {
         writes.push({ operation, measure });
         return Number.isFinite(operation.lower) && Number.isFinite(operation.upper);
       }
     })
   });
+  controls.dialog.value = { showModal() { assert.fail('Inline condition editing must not open a modal'); } };
   controls.updateCondition(branch, 'lower', '60');
   assert.equal(writes[0].measure, 6);
   assert.equal(writes[0].operation.type, 'condition');
@@ -1500,10 +1504,12 @@ test('branch manager submits explicit route sources and retained notes to the ta
   const branch = { index: 1, firstBarIndex: 6, route: 'N', routes: ['N', 'E'], value: 's,10,20' };
   const writes = [], state = reactive({ chart: { branches: [branch] }, notice: 'failed' });
   let success = true, confirmed = false;
-  const manager = runInNewContext(`${source}; ({ edit, submit, removeRoute, fields, mode, error })`, {
-    ref, reactive, computed, inject: () => ({ state, bar: ref(null), applyMeasureBranch: (operation, measure) => { writes.push({ operation, measure }); return success; } }),
+  const manager = runInNewContext(`${source}; ({ edit, submit, removeRoute, fields, mode, error, dialog, close })`, {
+    ref, reactive, computed, watch, inject: () => ({ state, bar: ref(null), pause() {}, applyMeasureBranch: (operation, measure) => { writes.push({ operation, measure }); return success; } }),
     confirm: () => confirmed, t, names: { N: '普通', E: '玄人' }
   });
+  let opened = 0, closed = 0;
+  manager.dialog.value = { showModal() { opened++; }, close() { closed++; } };
   manager.edit(branch, 'route', 'M'); manager.fields.source = 'E'; manager.submit();
   assert.equal(writes[0].operation.source, 'E'); assert.equal(writes[0].operation.route, 'M'); assert.equal(writes[0].measure, 6);
   manager.edit(branch, 'route', 'M'); manager.fields.source = ''; manager.submit();
@@ -1516,6 +1522,14 @@ test('branch manager submits explicit route sources and retained notes to the ta
   manager.removeRoute(branch, 'E'); assert.equal(writes.length, 4);
   confirmed = true; manager.removeRoute(branch, 'E');
   assert.equal(writes.length, 5); assert.equal(writes[4].operation.clearLast, true);
+  assert.equal(writes[4].measure, 6);
+  assert.ok(opened > 0 && closed > 0);
+  state.activeId = 'another-document';
+  assert.equal(manager.mode.value, ''); assert.equal(manager.error.value, '');
+  manager.edit(branch, 'route', 'M'); state.course = 1;
+  assert.equal(manager.mode.value, '');
+  manager.edit(branch, 'remove'); state.chart.branches = [];
+  assert.equal(manager.mode.value, '');
 });
 
 test('duet creation stays in the chart tree without an injected duplicate sidebar entry', () => {
@@ -1733,7 +1747,7 @@ test('branch context follows position timing rather than the viewed measure and 
   const bar = ref({ branchIndex: 1 }), currentTiming = ref(null);
   const state = reactive({ chart: { branches: [{ index: 0, route: 'N' }, { index: 1, route: 'M' }] } });
   const { current } = runInNewContext(`${source}; ({ current })`, {
-    ref, reactive, computed, inject: () => ({ state, bar, currentTiming }), t
+    ref, reactive, computed, watch, inject: () => ({ state, bar, currentTiming }), t
   });
   assert.match(descriptor.template.content, /class="branch-count">\{\{ branches.length \}\}<\/span>\s*<template #description>/);
   assert.doesNotMatch(descriptor.template.content, /mixed-route|自定义路线/);
@@ -1854,7 +1868,7 @@ test('mobile inspector keyboard navigation wraps, supports endpoints and leaves 
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   const source = descriptor.scriptSetup.content.match(/function inspectorKeydown\(event, index\) \{[\s\S]*?\n\}/)[0];
   const inspectorTabs = runInNewContext(descriptor.scriptSetup.content.match(/const inspectorTabs = (\[[^\n]*?\])/)[0] + '; inspectorTabs');
-  assert.deepEqual(Array.from(inspectorTabs), ['谱面编辑', '落点信息', '谱面分歧', '全局导航']);
+  assert.deepEqual(Array.from(inspectorTabs), ['谱面编辑', '落点信息', '全局导航', '谱面分歧']);
   const inspectorTab = { value: 0 }, focused = [];
   const handler = runInNewContext(`${source}; inspectorKeydown`, { inspectorTab, inspectorTabs });
   const children = inspectorTabs.map((_, index) => ({ focus() { focused.push(index); } }));
@@ -1869,11 +1883,11 @@ test('mobile inspector keyboard navigation wraps, supports endpoints and leaves 
   assert.equal(prevented, 4); assert.equal(stopped, 4);
   assert.match(descriptor.template.content, /<section v-show="studio.bar.value && mobileWorkspace" class="mobile-inspector"/);
   assert.equal([...descriptor.template.content.matchAll(/class="inspector-tab-panel" role="tabpanel"/g)].length, 4);
-  assert.match(descriptor.template.content, /:aria-controls="\['mobile-edit-panel', 'mobile-position-panel', 'mobile-branch-panel', 'mobile-navigation-panel'\]\[index\]"/);
-  for (const [index, panel] of ['edit', 'position', 'branch', 'navigation'].entries()) {
+  assert.match(descriptor.template.content, /:aria-controls="\['mobile-edit-panel', 'mobile-position-panel', 'mobile-navigation-panel', 'mobile-branch-panel'\]\[index\]"/);
+  for (const [index, panel] of ['edit', 'position', 'navigation', 'branch'].entries()) {
     assert.match(descriptor.template.content, new RegExp(`v-show="inspectorTab === ${index}" id="mobile-${panel}-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-${index}"`));
   }
-  assert.match(descriptor.template.content, /v-show="inspectorTab === 3" id="mobile-navigation-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-3"/);
+  assert.match(descriptor.template.content, /v-show="inspectorTab === 3" id="mobile-branch-panel" class="inspector-tab-panel" role="tabpanel" aria-labelledby="inspector-tab-3"/);
   const timeline = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8')).descriptor;
   assert.match(timeline.template.content, /<Teleport to="#mobile-navigation-panel" :disabled="!mobile" defer>\s*<section class="measure-section">[\s\S]*<MeasureGrid id="measures"[\s\S]*<\/section>\s*<\/Teleport>/);
   assert.match(descriptor.styles[0].content, /\.inspector-tab-panel\{[^}]*min-height:0;overflow:auto;overscroll-behavior:contain/);
@@ -1935,35 +1949,42 @@ test('dismissible audio and error messages sit above playback with no legacy sta
   assert.match(styles, /\.transport\{padding-bottom:calc\(7px \+ env\(safe-area-inset-bottom,0px\)\)\}/);
 });
 
-test('branch filtering and structural management have separate dialogs and actions without search inputs', () => {
+test('branch lists and condition editors stay in the panel while structural forms and filtering use dialogs', () => {
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'branch-controls' });
   const dialogs = [...descriptor.template.content.matchAll(/<dialog\b[\s\S]*?<\/dialog>/g)].map(match => match[0]);
   assert.equal(dialogs.length, 2);
-  const [filter, manager] = dialogs;
+  const [filter, action] = dialogs;
+  const manager = descriptor.template.content.slice(descriptor.template.content.indexOf('<div class="branch-manager"'));
   assert.match(filter, /aria-labelledby="branch-filter-title"/);
   assert.match(filter, /role="radiogroup"/);
   assert.match(filter, /studio.changeAllBranches\(route\)/);
   assert.match(filter, /studio.changeBranch\(branch.index, route\)/);
   assert.match(filter, /locate\(branch, filterDialog\)/);
   assert.doesNotMatch(filter, /branch-create|@click="edit\(|@click="removeRoute\(/);
-  assert.match(manager, /aria-labelledby="branch-dialog-title"/);
-  assert.match(manager, /id="branch-create"/);
+  assert.match(manager, /role="group" :aria-label="t\('全局分歧管理'\)"/);
+  assert.doesNotMatch(manager, /<form|id="branch-create"|edit\(branch, 'condition'\)/);
   assert.match(manager, /class="branch-condition-fields inline-condition"/);
   for (const field of ['condition', 'lower', 'upper']) assert.ok(manager.includes(`updateCondition(branch, '${field}', $event.target.value)`));
-  assert.doesNotMatch(manager, /edit\(branch, 'condition'\)/);
+  assert.match(action, /aria-labelledby="branch-action-title"/);
+  assert.match(action, /<form v-if="mode"/);
+  assert.match(action, /mode === 'create'/);
+  assert.match(action, /mode === 'remove'/);
+  assert.doesNotMatch(action, /mode === 'condition'|mode === 'removeRoute'/);
+  assert.doesNotMatch(descriptor.template.content, /branch-manager-help|创建、删除分歧及路线，编辑判定条件。|BPM、拍号和延迟在所有路线的对应小节及落点同步/);
   assert.match(manager, /@click="removeRoute\(branch, route\)"/);
   assert.doesNotMatch(manager, /role="radiogroup"|studio.changeBranch|studio.changeAllBranches/);
   for (const dialog of dialogs) {
     assert.doesNotMatch(dialog, /type="search"|v-model="query"/);
-    assert.match(dialog, /v-for="branch in sortedBranches"/);
     assert.doesNotMatch(dialog, /t\('完成'\)/);
     assert.match(dialog, /:aria-label="t\('关闭'\)"/);
   }
+  assert.match(filter, /v-for="branch in sortedBranches"/);
   assert.match(descriptor.template.content, /id="branch-filter"[^>]*:disabled="state.invalid \|\| !branches.length"[^>]*@click="openFilter"/);
-  assert.match(descriptor.template.content, /id="branch-manage"[^>]*:disabled="state.invalid"[^>]*@click="open"/);
-  assert.match(descriptor.template.content, /<\/SectionHeading>\s*<div class="branch-actions">\s*<button id="branch-filter"[\s\S]*<button id="branch-manage"[\s\S]*<\/div>\s*<dialog/);
-  assert.match(descriptor.styles[0].content, /\.branch-actions\{display:flex;flex-basis:100%;flex-wrap:wrap;gap:8px\}/);
+  assert.doesNotMatch(descriptor.template.content, /id="branch-manage"/);
+  assert.match(descriptor.template.content, /<\/SectionHeading>\s*<div class="branch-actions">\s*<button id="branch-create"[^>]*@click="create"[\s\S]*?<button id="branch-filter"[\s\S]*?<\/div>\s*<dialog/);
+  assert.match(descriptor.styles[0].content, /\.branch-manager \.branch-route-list\{max-height:none;overflow:visible\}/);
+  assert.match(descriptor.styles[0].content, /\.branch-actions\{display:flex;flex-basis:100%;gap:8px\}/);
   assert.match(descriptor.styles[0].content, /\.branch-actions>\.manage-branches\{min-height:32px;padding:5px 10px\}/);
   assert.doesNotMatch(descriptor.template.content, /<dialog[^>]*\bopen(?:\s|>)/);
   assert.match(descriptor.styles[0].content, /\.branch-context\{[^}]*margin:0;padding:16px 12px;border-bottom:1px solid var\(--line\);background:#fff/);
@@ -1971,17 +1992,27 @@ test('branch filtering and structural management have separate dialogs and actio
   assert.match(app.template.content, /<div class="editor-scroll">\s*<TimelineEditor v-if="studio.bar.value" :mobile="mobileWorkspace" \/>/);
   assert.doesNotMatch(app.template.content, /<BranchControls/);
   const timeline = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8')).descriptor;
-  assert.match(timeline.template.content, /<div class="editor-information">\s*<Teleport to="#mobile-position-panel" :disabled="!mobile" defer>\s*<section class="cell-inspector"[\s\S]*?<\/dl>\s*<\/section>\s*<\/Teleport>\s*<Teleport to="#mobile-branch-panel" :disabled="!mobile" defer><BranchControls \/><\/Teleport>\s*<\/div>\s*<\/section>\s*<\/div>\s*<Teleport to="#mobile-navigation-panel" :disabled="!mobile" defer>\s*<section class="measure-section">/);
-  assert.match(timeline.styles[0].content, /\.editor-information\{display:grid;grid-template-columns:minmax\(0,1fr\)\}/);
+  assert.match(timeline.template.content, /<div class="editor-information">\s*<div class="editor-information-left">\s*<Teleport to="#mobile-position-panel" :disabled="!mobile" defer>\s*<section class="cell-inspector"[\s\S]*?<\/dl>\s*<\/section>\s*<\/Teleport>\s*<Teleport to="#mobile-navigation-panel" :disabled="!mobile" defer>\s*<section class="measure-section">[\s\S]*?<\/section>\s*<\/Teleport>\s*<\/div>\s*<Teleport to="#mobile-branch-panel" :disabled="!mobile" defer><BranchControls \/><\/Teleport>\s*<\/div>/);
+  assert.match(timeline.styles[0].content, /\.editor-information\{display:grid;grid-template-columns:minmax\(0,1fr\) 420px;grid-template-rows:minmax\(0,1fr\);align-items:stretch;flex:1;min-height:0;overflow:hidden\}/);
+  assert.match(timeline.styles[0].content, /\.editor-core:has\(#timeline\) \.editor-scroll\{display:flex;overflow:hidden\}/);
+  assert.match(timeline.styles[0].content, /\.workspace>\.editor\{display:flex;flex-direction:column;min-height:0;overflow:hidden\}/);
+  assert.match(timeline.styles[0].content, /\.editor>\.editor-bar,\.editor>\.timeline-frame,\.editor>\.overview\{flex-shrink:0\}/);
+  assert.match(descriptor.styles[0].content, /\.branch-manager \.branch-route-cards\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)\}/);
+  assert.match(timeline.styles[0].content, /\.editor-information-left\{grid-column:1;grid-row:1;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin\}/);
+  assert.match(timeline.styles[0].content, /\.editor-information>section\.branch-context\{grid-column:2;grid-row:1;/);
+  assert.match(timeline.styles[0].content, /\.editor-information>section\.branch-context\{[^}]*min-height:0;overflow:auto;overscroll-behavior:contain;/);
+  assert.match(timeline.styles[0].content, /\.editor-information>section\.branch-context\{[^}]*width:420px;max-width:100%;min-width:0;/);
+  assert.match(timeline.styles[0].content, /\.editor-information>section\.branch-context\{[^}]*align-self:stretch;align-content:start;/);
+  assert.match(timeline.styles[0].content, /@container\(max-width:840px\)\{\.editor-information\{grid-template-columns:minmax\(0,1fr\);grid-template-rows:auto;align-content:start;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin\}\.editor-information-left\{display:contents\}\.editor-information-left>\.cell-inspector,\.editor-information-left>\.measure-section,\.editor-information>section\.branch-context\{grid-column:1;grid-row:auto\}/);
+  assert.match(timeline.styles[0].content, /@container\(max-width:840px\)\{[^\n]*\.editor-information>section\.branch-context\{width:auto;overflow:visible;border-left:0\}/);
   assert.match(timeline.styles[0].content, /\.editor-information>section\.branch-context\{[^}]*border-bottom:0\}/);
-  assert.match(timeline.styles[0].content, /@container\(min-width:900px\)\{\.editor-information\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/);
   assert.doesNotMatch(app.styles[0].content, /\.chart-context/);
 });
 
 test('branch management keeps measure details in the title and places route actions beside names', () => {
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'branch-measure-summary' });
-  const manager = descriptor.template.content.match(/<dialog ref="dialog"[\s\S]*?<\/dialog>/)[0];
+  const manager = descriptor.template.content.slice(descriptor.template.content.indexOf('<div class="branch-manager"'));
   assert.match(manager, /<strong>\{\{ branchLabel\(branch\) \}\}<\/strong>/);
   assert.doesNotMatch(manager, /class="branch-measures"|t\('(?:起始小节|结束小节|小节数：)/);
   const cards = manager.match(/<div class="branch-route-cards">([\s\S]*?)<\/article>/)[1];
@@ -2016,36 +2047,34 @@ test('branch management keeps measure details in the title and places route acti
   assert.doesNotMatch(cards, /<Trash2|t\('删除'\)/);
 });
 
-test('branch dialogs scroll to the current branch, keep management open on locate and support Escape', async () => {
+test('branch dialogs support Escape and filtering scrolls to the current branch while panel location stays available', async () => {
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   const source = descriptor.scriptSetup.content.replace(/^import .*;\n/gm, '');
   const calls = [];
-  const controls = runInNewContext(`${source}; ({ open, openFilter, locate, keydown, dialog, filterDialog, list, filterList, mode, error })`, {
-    ref, reactive, computed, nextTick: async () => {}, inject: () => ({
+  const controls = runInNewContext(`${source}; ({ openFilter, locate, keydown, dialog, filterDialog, filterList, mode, error })`, {
+    ref, reactive, computed, watch, nextTick: async () => {}, inject: () => ({
       state: {}, bar: ref(null), pause: () => calls.push('pause'), select: index => calls.push(index)
     })
   });
   const owner = name => ({ showModal: () => calls.push(`open:${name}`), close: () => calls.push(`close:${name}`) });
-  controls.dialog.value = owner('manager'); controls.filterDialog.value = owner('filter');
-  controls.list.value = { offsetTop: 10, scrollTop: 0, querySelector: () => ({ offsetTop: 60 }) };
+  const manager = owner('action');
+  controls.dialog.value = manager;
+  controls.filterDialog.value = owner('filter');
   controls.filterList.value = { offsetTop: 20, scrollTop: 0, querySelector: () => ({ offsetTop: 100 }) };
   await controls.openFilter();
   assert.equal(controls.filterList.value.scrollTop, 80);
   assert.deepEqual(calls.splice(0), ['pause', 'open:filter']);
   controls.locate({ firstBarIndex: 4 }, controls.filterDialog.value);
   assert.deepEqual(calls.splice(0), [4, 'close:filter']);
-  await controls.open();
-  assert.equal(controls.list.value.scrollTop, 50);
-  assert.deepEqual(calls.splice(0), ['pause', 'open:manager']);
   controls.locate({ firstBarIndex: 6 });
   assert.deepEqual(calls.splice(0), [6]);
   const escape = currentTarget => controls.keydown({ key: 'Escape', currentTarget, preventDefault() {}, stopPropagation() {} });
   controls.mode.value = 'create'; controls.error.value = 'failed';
-  escape(controls.dialog.value);
+  escape(manager);
   assert.equal(controls.mode.value, ''); assert.equal(controls.error.value, '');
-  assert.deepEqual(calls, []);
-  escape(controls.dialog.value); escape(controls.filterDialog.value);
-  assert.deepEqual(calls, ['close:manager', 'close:filter']);
+  assert.deepEqual(calls.splice(0), ['close:action']);
+  escape(manager); escape(controls.filterDialog.value);
+  assert.deepEqual(calls, ['close:action', 'close:filter']);
 });
 
 test('branch creation groups equal-width route and source fields and displays errors next to actions', () => {
