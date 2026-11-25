@@ -300,8 +300,10 @@ function draw() {
   const position = state.position;
   if (position >= start && position <= end) { brush.fillStyle = '#c43e35'; brush.fillRect(x(position), 23, 1.5, height - 48); brush.beginPath(); brush.moveTo(x(position) - 4, 20); brush.lineTo(x(position) + 4, 20); brush.lineTo(x(position), 26); brush.fill(); }
   brush.fillStyle = '#b8b8b880';
-  brush.fillRect(0, 23, TIMELINE_GUTTER, height - 48);
-  brush.fillRect(TIMELINE_GUTTER + width, 23, TIMELINE_GUTTER, height - 48);
+  brush.fillRect(0, 23, TIMELINE_GUTTER, waveformHeight);
+  brush.fillRect(TIMELINE_GUTTER + width, 23, TIMELINE_GUTTER, waveformHeight);
+  brush.fillRect(0, noteY - 30, TIMELINE_GUTTER, noteLaneHeight);
+  brush.fillRect(TIMELINE_GUTTER + width, noteY - 30, TIMELINE_GUTTER, noteLaneHeight);
   const overviewContext = canvasContext(overview.value), bounds = timelineBounds.value, total = Math.max(.001, bounds.end - bounds.start);
   const overviewX = time => (time - bounds.start) / total * overviewContext.width;
   drawWave(overviewContext.brush, overviewContext.width, bounds.start, bounds.end, overviewContext.height / 2, overviewContext.height * .44);
@@ -333,6 +335,28 @@ function timelineCell(item, time, x) {
 }
 const touchGuide = ref(false);
 let touchGesture = null;
+let waveformHold = null;
+function cancelWaveformHold(event) {
+  const gesture = waveformHold;
+  if (!gesture || event && event.pointerId !== gesture.pointerId) return;
+  waveformHold = null;
+  clearTimeout(gesture.timer);
+  if (gesture.capture && gesture.target.hasPointerCapture(gesture.pointerId)) gesture.target.releasePointerCapture(gesture.pointerId);
+}
+function startWaveformHold(event, time) {
+  cancelWaveformHold();
+  const gesture = { pointerId: event.pointerId, target: event.currentTarget, x: event.clientX, y: event.clientY, time, capture: event.pointerType !== 'touch', timer: null };
+  waveformHold = gesture;
+  if (gesture.capture) gesture.target.setPointerCapture(gesture.pointerId);
+  gesture.timer = setTimeout(() => {
+    if (waveformHold !== gesture || !state.chart || state.invalid || state.editorBlocked) return;
+    void studio.play(gesture.time);
+  }, 450);
+}
+function moveWaveformHold(event) {
+  const gesture = waveformHold;
+  if (gesture && event.pointerId === gesture.pointerId && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) > 8) cancelWaveformHold();
+}
 function cancelTouchSelection() {
   const gesture = touchGesture;
   touchGesture = null; touchGuide.value = false;
@@ -370,26 +394,54 @@ function moveTouchSelection(event) {
 }
 function finishTouchSelection(event) {
   if (event.pointerId === touchGesture?.pointerId) cancelTouchSelection();
+  cancelWaveformHold(event);
 }
-watch(() => [state.activeId, state.chart, state.invalid, state.editorBlocked], cancelTouchSelection, { flush: 'sync' });
+watch(() => [state.activeId, state.course, state.chart, state.invalid, state.editorBlocked], () => { cancelTouchSelection(); cancelWaveformHold(); }, { flush: 'sync' });
 function point(event) {
   const rect = timeline.value.getBoundingClientRect();
   const projection = createTimelineViewport(timelineScale.value, visible.value, viewBeats.value, viewportWidth.value);
   return { rect, ...projection.hitTest(event.clientX - rect.left) };
 }
+function isWaveformPoint(rect, clientY) {
+  const height = Math.max(150, rect.height), y = (clientY - rect.top) * height / Math.max(1, rect.height);
+  return y >= 23 && y < height - 97;
+}
 function pointerMove(event) {
+  moveWaveformHold(event);
   if (moveTouchSelection(event) || event.pointerType === 'touch') return;
   if (!state.chart || state.invalid) return;
   const { rect, time, item, x } = point(event);
-  if (event.clientY - rect.top < rect.height * (1 - 100 / Math.max(150, rect.height)) || !item) { hover.value = null; return; }
+  const waveform = isWaveformPoint(rect, event.clientY);
+  timeline.value.style.cursor = waveform ? 'pointer' : 'crosshair';
+  if (waveform || event.clientY - rect.top < rect.height * 23 / Math.max(150, rect.height) || !item) { hover.value = null; return; }
   const selected = timelineCell(item, time, x);
   hover.value = { bar: item.index, fraction: selected.numerator / selected.denominator };
 }
 function pointerDown(event) {
   if (!state.chart || state.invalid || state.editorBlocked) return;
-  if (event.pointerType === 'touch' && (event.isPrimary === false || touchGesture)) { cancelTouchSelection(); return; }
+  if (event.pointerType === 'touch' && (event.isPrimary === false || touchGesture)) { cancelTouchSelection(); cancelWaveformHold(); return; }
   const { rect, time, item, x } = point(event);
-  if (event.clientY - rect.top < rect.height * (1 - 100 / Math.max(150, rect.height))) { studio.seek(Math.max(timelineBounds.value.start, Math.min(timelineBounds.value.end, time))); startTouchSelection(event, false); return; }
+  if (event.clientY - rect.top < rect.height * 23 / Math.max(150, rect.height)) {
+    studio.seek(Math.max(timelineBounds.value.start, Math.min(timelineBounds.value.end, time)));
+    startTouchSelection(event, false);
+    return;
+  }
+  if (isWaveformPoint(rect, event.clientY)) {
+    if (event.button !== 0 || event.isPrimary === false) return;
+    event.preventDefault();
+    studio.pause();
+    const pixel = event.clientX - rect.left;
+    if (pixel < TIMELINE_GUTTER || pixel >= TIMELINE_GUTTER + viewportWidth.value) {
+      studio.seekMeasure(pixel < TIMELINE_GUTTER ? -1 : 1);
+      startTouchSelection(event, false);
+      return;
+    }
+    const position = Math.max(timelineBounds.value.start, Math.min(timelineBounds.value.end, time));
+    studio.seek(position);
+    startTouchSelection(event, false);
+    startWaveformHold(event, position);
+    return;
+  }
   if (item) {
     event.preventDefault(); viewport.value.focus({ preventScroll: true });
     const pixel = event.clientX - rect.left;
@@ -473,6 +525,7 @@ onMounted(() => {
   document.addEventListener('focusin', dismissTools);
 });
 onUnmounted(() => {
+  cancelWaveformHold();
   cancelTouchSelection(); cancelOverviewDrag(); observer?.disconnect();
   document.removeEventListener('pointerdown', dismissTools);
   document.removeEventListener('focusin', dismissTools);

@@ -113,7 +113,7 @@ test('queued timeline scroll events after switching files cannot access an unmou
   assert.doesNotThrow(() => handle());
 });
 
-test('timeline waveforms extend beneath both gutter masks using the beat projection and leave audio boundaries blank', () => {
+test('timeline waveform and note gutters have independent masks while audio boundaries stay blank', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   const script = descriptor.scriptSetup.content;
   const source = script.slice(script.indexOf('function drawWave('), script.indexOf('function timelineCell('));
@@ -160,7 +160,8 @@ test('timeline waveforms extend beneath both gutter masks using the beat project
       assert.equal(waveform.at(-1).height, .75 * amplitude * 2);
     }
     const masks = timelineBrush.rectangles.filter(rect => rect.color === '#b8b8b880');
-    assert.deepEqual(masks.map(rect => [rect.x, rect.width]), [[0, 24], [width + 24, 24]]);
+    assert.deepEqual(masks.map(rect => [rect.x, rect.y, rect.width, rect.height]), [[0, waveArea.y, 24, waveArea.height], [width + 24, waveArea.y, 24, waveArea.height], [0, noteArea.y, 24, noteArea.height], [width + 24, noteArea.y, 24, noteArea.height]]);
+    assert.ok(masks.slice(0, 2).every(rect => rect.y + rect.height < noteArea.y));
     assert.ok(timelineBrush.rectangles.indexOf(masks[0]) > timelineBrush.rectangles.indexOf(waveform.at(-1)));
     state.buffer = null; draw();
     assert.deepEqual(timelineBrush.labels.at(-1), { text: '无伴奏 · 可播放谱面音符音', x: TIMELINE_GUTTER + 14 });
@@ -242,29 +243,108 @@ COURSE:Oni
 function touchSelectionHarness() {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   const script = descriptor.scriptSetup.content;
-  const source = script.slice(script.indexOf('const touchGuide = ref(false);'), script.indexOf('function point(event)'));
-  const timers = new Map(), moves = [], scrolls = [], captures = new Set();
-  const state = reactive({ selectedCell: { bar: 0 }, invalid: false, editorBlocked: false });
+  const source = script.slice(script.indexOf('const touchGuide = ref(false);'), script.indexOf('let overviewDrag = null;'));
+  const timers = new Map(), moves = [], scrolls = [], captures = new Set(), playback = [], selections = [];
+  const state = reactive({ chart: { bars: [] }, selectedCell: { bar: 0 }, invalid: false, editorBlocked: false, playing: false, position: 0 });
   let now = 0, timerId = 0;
   const target = {
     setPointerCapture: id => captures.add(id),
     hasPointerCapture: id => captures.has(id),
     releasePointerCapture: id => captures.delete(id)
   };
-  const handlers = runInNewContext(`${source}; ({ startTouchSelection, moveTouchSelection, finishTouchSelection, cancelTouchSelection, touchGuide })`, {
+  const handlers = runInNewContext(`${source}; ({ startTouchSelection, moveTouchSelection, finishTouchSelection, cancelTouchSelection, touchGuide, pointerDown, pointerMove, cancelWaveformHold })`, {
     ref, watch, state, hover: ref(null),
-    studio: { moveCell: direction => moves.push(direction) },
-    viewport: ref({ scrollLeft: 100, scrollTo: options => scrolls.push(options.left) }),
+    studio: {
+      moveCell: direction => moves.push(direction),
+      seek: time => { state.position = time; playback.push(['seek', time]); },
+      seekMeasure: direction => playback.push(['measure', direction]),
+      play: time => { state.position = time; state.playing = true; playback.push(['play', time]); },
+      pause: () => { state.playing = false; playback.push(['pause']); },
+      selectCell: position => selections.push(position)
+    },
+    timeline: ref({ style: {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 248, height: 250 }) }),
+    timelineScale: ref(null), visible: ref(null), viewBeats: ref(8), viewportWidth: ref(200), timelineBounds: ref({ start: 0, end: 20 }), TIMELINE_GUTTER,
+    createTimelineViewport: () => ({ hitTest: pixel => ({ time: pixel / 10, item: { index: 0 }, x: time => time * 10 }) }),
+    timelineCell: () => ({ numerator: 0, denominator: 4 }),
+    viewport: ref({ scrollLeft: 100, scrollTo: options => scrolls.push(options.left), focus() {} }),
     setTimeout: (callback, delay) => { timers.set(++timerId, { callback, at: now + delay }); return timerId; },
     clearTimeout: id => timers.delete(id)
   });
-  const event = (x = 100, extra = {}) => ({ pointerType: 'touch', pointerId: 1, currentTarget: target, clientX: x, clientY: 100, preventDefault() {}, ...extra });
+  const event = (x = 100, extra = {}) => ({ pointerType: 'touch', pointerId: 1, isPrimary: true, button: 0, currentTarget: target, clientX: x, clientY: 100, preventDefault() {}, ...extra });
   const advance = delay => {
     now += delay;
     for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
   };
-  return { ...handlers, event, advance, moves, scrolls, captures, state };
+  return { ...handlers, event, advance, moves, scrolls, captures, state, playback, selections };
 }
+
+test('waveform gutter clicks seek adjacent measures without activating note editing or long press', () => {
+  for (const pointerType of ['mouse', 'touch']) {
+    const gesture = touchSelectionHarness();
+    for (const [pixel, direction] of [[6, -1], [230, 1]]) {
+      const event = gesture.event(pixel, { pointerType });
+      gesture.pointerDown(event); gesture.advance(500); gesture.finishTouchSelection(event);
+      assert.deepEqual(gesture.playback.at(-1), ['measure', direction]);
+    }
+    assert.deepEqual(gesture.playback, [['pause'], ['measure', -1], ['pause'], ['measure', 1]]);
+    assert.equal(gesture.state.playing, false); assert.deepEqual(gesture.selections, []);
+    assert.equal(gesture.touchGuide.value, false); assert.equal(gesture.captures.size, 0);
+  }
+});
+
+test('timeline header clicks retain simple seeking without note selection or playback holds', () => {
+  const gesture = touchSelectionHarness(), event = gesture.event(100, { pointerType: 'mouse', clientY: 15 });
+  gesture.pointerDown(event); gesture.advance(500); gesture.finishTouchSelection(event);
+  assert.deepEqual(gesture.playback, [['seek', 10]]); assert.deepEqual(gesture.selections, []);
+  assert.equal(gesture.captures.size, 0);
+});
+
+test('waveform taps pause and seek without restarting playback', () => {
+  for (const pointerType of ['mouse', 'touch']) for (const playing of [false, true]) {
+    const gesture = touchSelectionHarness(), event = gesture.event(100, { pointerType });
+    gesture.state.playing = playing;
+    gesture.pointerDown(event); gesture.advance(200); gesture.finishTouchSelection(event); gesture.advance(500);
+    assert.deepEqual(gesture.playback, [['pause'], ['seek', 10]]);
+    assert.equal(gesture.state.playing, false); assert.equal(gesture.state.position, 10);
+    assert.deepEqual(gesture.selections, []); assert.equal(gesture.captures.size, 0);
+  }
+});
+
+test('waveform holds always start playback once at the pressed time for mouse and touch', () => {
+  for (const pointerType of ['mouse', 'touch']) for (const playing of [false, true]) {
+    const gesture = touchSelectionHarness(), event = gesture.event(100, { pointerType });
+    gesture.state.playing = playing;
+    gesture.pointerDown(event); assert.deepEqual(gesture.playback, [['pause'], ['seek', 10]]);
+    gesture.advance(449); assert.equal(gesture.state.playing, false);
+    gesture.advance(1); assert.deepEqual(gesture.playback.at(-1), ['play', 10]);
+    gesture.advance(1000); assert.equal(gesture.playback.length, 3);
+    gesture.finishTouchSelection(event);
+    gesture.pointerDown(gesture.event(120, { pointerType })); assert.equal(gesture.state.playing, false);
+    gesture.advance(450);
+    assert.deepEqual(gesture.playback.slice(-3), [['pause'], ['seek', 12], ['play', 12]]);
+    assert.equal(gesture.state.playing, true); assert.equal(gesture.state.position, 12);
+    gesture.finishTouchSelection(event); assert.equal(gesture.captures.size, 0);
+    assert.deepEqual(gesture.selections, []); assert.equal(gesture.touchGuide.value, false);
+  }
+});
+
+test('waveform holds cancel on release, drag, context changes and invalid editing states', () => {
+  for (const pointerType of ['mouse', 'touch']) {
+    for (const reason of ['release', 'drag', 'activeId', 'course', 'chart', 'invalid', 'editorBlocked']) {
+      const gesture = touchSelectionHarness(), event = gesture.event(100, { pointerType });
+      gesture.pointerDown(event);
+      if (reason === 'release') gesture.finishTouchSelection(event);
+      else if (reason === 'drag') gesture.pointerMove(gesture.event(120, { pointerType }));
+      else gesture.state[reason] = reason === 'chart' ? { bars: [] } : true;
+      gesture.advance(500); assert.deepEqual(gesture.playback, [['pause'], ['seek', 10]], `${pointerType}: ${reason}`);
+      if (reason === 'drag' && pointerType === 'touch') assert.deepEqual(gesture.scrolls, [80]);
+      gesture.finishTouchSelection(event); assert.equal(gesture.captures.size, 0);
+    }
+  }
+  const gesture = touchSelectionHarness();
+  gesture.pointerDown(gesture.event(100, { pointerType: 'mouse', button: 2 })); gesture.advance(500);
+  assert.deepEqual(gesture.playback, []);
+});
 
 test('touch long press guides selection and converts horizontal distance to reversible A/D steps', () => {
   const touch = touchSelectionHarness();
