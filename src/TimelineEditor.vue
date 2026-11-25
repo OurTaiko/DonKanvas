@@ -540,25 +540,31 @@ onUnmounted(() => {
         <input id="bar-number" type="number" min="1" :max="state.chart?.bars.length" step="1" :value="state.selected + 1" :disabled="!bar || state.invalid" @change="studio.select(Number($event.target.value) - 1); $event.target.value = state.selected + 1">
       </div>
         <label :title="t('吸附栅格')"><span class="tool-label">{{ t('吸附栅格') }}</span><select id="snap-division" v-model="controls.snapChoice" :aria-label="t('吸附栅格')" @change="snapChange"><option v-for="value in snaps" :key="value" :value="String(value)">{{ value }} {{ t('分') }}</option><option value="custom">{{ t('自定义') }}</option></select></label>
+        <div v-show="!mobile" id="desktop-zoom-tools" class="desktop-zoom-tools"></div>
         <div class="editor-history"><button id="undo" class="icon" :aria-label="t('撤销')" :title="t('撤销（Ctrl+Z）')" :disabled="!state.undo.length" @click="studio.history()"><Undo2 /></button><button id="redo" class="icon" :aria-label="t('重做')" :title="t('重做（Ctrl+Shift+Z）')" :disabled="!state.redo.length" @click="studio.history(true)"><Redo2 /></button></div>
+        <div v-show="mobile" id="mobile-measure-tools" class="mobile-measure-tools"></div>
         <details ref="toolsMenu" class="tools-menu" :open="!compactTools || toolsOpen" @keydown="dismissTools">
         <summary :aria-label="t('更多工具')" :title="t('更多工具')" @click.prevent="toolsOpen = !toolsOpen"><Ellipsis /></summary>
         <div class="tools-panel" @scroll="zoomOpen = false">
         <label v-show="controls.snapChoice === 'custom'" id="custom-snap-label"><Grid2X2 v-if="compactTools" aria-hidden="true" /><span class="menu-item-label">{{ t('每小节等分') }}</span><input id="custom-snap" ref="customSnap" v-model.number="controls.customSnap" type="number" min="1" max="768" step="1" @change="studio.setSnap(Number(controls.customSnap))"></label>
-        <details v-if="compactTools" ref="zoomMenu" class="zoom-menu" :open="zoomOpen">
+        <Teleport to="#desktop-zoom-tools" :disabled="mobile" defer>
+        <details v-if="mobile && compactTools" ref="zoomMenu" class="zoom-menu" :open="zoomOpen">
           <summary :title="t('以标准网格宽度为缩放参考')" aria-haspopup="menu" :aria-expanded="zoomOpen" @click.prevent="openZoom" @keydown.right.prevent="!zoomOpen && openZoom()" @keydown.esc="zoomOpen && zoomKeydown($event)"><ZoomIn aria-hidden="true" /><span class="menu-item-label">{{ t('缩放') }}</span><ChevronRight aria-hidden="true" /></summary>
           <Teleport to="body"><div v-if="zoomOpen" ref="zoomOptions" class="zoom-options" role="menu" :aria-label="t('时间轴缩放')" :style="zoomPosition" @keydown="zoomKeydown">
             <button v-for="choice in zoomChoices" :key="choice.value" type="button" role="menuitemradio" :aria-checked="controls.zoom === choice.value" @click="controls.zoom = choice.value; controls.view = 'auto'; closeZoom()"><component :is="choice.icon" aria-hidden="true" />{{ choice.label }}<span class="menu-check"><Check v-if="controls.zoom === choice.value" aria-hidden="true" /></span></button>
           </div></Teleport>
         </details>
         <label v-else :title="t('以标准网格宽度为缩放参考')">{{ t('缩放') }}<select id="view" v-model.number="controls.zoom" :aria-label="t('时间轴缩放')" @change="controls.view = 'auto'"><option :value="1">{{ t('标准') }}</option><option v-for="value in zooms" :key="value" :value="value">{{ value }}×</option></select></label>
+        </Teleport>
+      <Teleport to="#mobile-measure-tools" :disabled="!mobile" defer>
       <div class="editor-actions">
         <div class="measure-actions" role="group" :aria-label="t('插入小节')">
-          <button id="insert-bar-before" :title="t('在当前小节前插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('before')"><BetweenHorizontalStart aria-hidden="true" />{{ t('前插小节') }}</button>
-          <button id="insert-bar-after" :title="t('在当前小节后插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('after')"><BetweenHorizontalEnd aria-hidden="true" />{{ t('后插小节') }}</button>
+          <button id="insert-bar-before" :class="{ icon: mobile }" :aria-label="t('前插小节')" :title="t('在当前小节前插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('before')"><BetweenHorizontalStart aria-hidden="true" /><span v-if="!mobile">{{ t('前插小节') }}</span></button>
+          <button id="insert-bar-after" :class="{ icon: mobile }" :aria-label="t('后插小节')" :title="t('在当前小节后插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('after')"><BetweenHorizontalEnd aria-hidden="true" /><span v-if="!mobile">{{ t('后插小节') }}</span></button>
         </div>
-        <button id="delete-bar" class="delete-measure" :title="state.chart.bars.length <= 1 ? t('不能删除最后一个小节。') : t('删除当前小节及其音符和指令')" :disabled="!bar || state.invalid || state.chart.bars.length <= 1" @click="requestDeleteMeasure"><Trash2 aria-hidden="true" />{{ t('删除小节') }}</button>
+        <button id="delete-bar" class="delete-measure" :class="{ icon: mobile }" :aria-label="t('删除小节')" :title="state.chart.bars.length <= 1 ? t('不能删除最后一个小节。') : t('删除当前小节及其音符和指令')" :disabled="!bar || state.invalid || state.chart.bars.length <= 1" @click="requestDeleteMeasure"><Trash2 aria-hidden="true" /><span v-if="!mobile">{{ t('删除小节') }}</span></button>
       </div>
+      </Teleport>
         <button v-if="compactTools" id="follow-playback" type="button" role="menuitemcheckbox" :aria-checked="state.followPlayback" @click="state.followPlayback = !state.followPlayback"><Crosshair aria-hidden="true" />{{ t('跟随播放') }}<span class="menu-check"><Check v-if="state.followPlayback" aria-hidden="true" /></span></button>
         <label v-else class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span>{{ t('跟随播放') }}</label>
         </div></details>
@@ -631,13 +637,6 @@ onUnmounted(() => {
 </template>
 
 <style>
-.delete-measure-dialog{box-sizing:border-box;width:min(420px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;padding:20px;border:1px solid #bfd0c5;border-radius:8px;background:#fff;color:var(--ink)}
-.delete-measure-dialog::backdrop{background:#18271f66}
-.delete-measure-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.delete-measure-heading h2{margin:0;font-size:18px;line-height:1.4}
-.delete-measure-dialog p{margin:14px 0;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
-.delete-measure-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
-.delete-measure-actions button{font-size:12px;white-space:normal}
 .delete-measure-actions svg{width:15px;height:15px;flex-shrink:0}
 .delete-measure-error{color:#9e3434}
 .editor-core:has(#timeline) .editor-scroll{display:flex;overflow:hidden}
@@ -680,7 +679,9 @@ onUnmounted(() => {
 @media(prefers-reduced-motion:reduce){.touch-selection-guide>svg{animation:none}}
 @media(max-width:900px){.workspace>.editor{display:flex;flex-direction:column;min-height:0}.editor>.editor-bar,.editor>.overview{flex-shrink:0}.editor>.overview{padding:0}.editor>.timeline-frame{flex:0 1 186px;height:186px;min-height:0}.timeline-frame>.timeline-wrap,.timeline-frame .timeline-content,.timeline-frame #timeline{height:100%}}
 .editor-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.editor-history{display:flex;align-items:center;gap:4px}.editor-history>.icon{width:28px;min-width:28px;padding:4px}.editor-history svg{width:14px;height:14px}
+.editor-history{display:flex;align-items:center;gap:4px;padding-right:6px;border-right:1px solid var(--line)}.editor-history>.icon{width:28px;min-width:28px;padding:4px}.editor-history svg{width:14px;height:14px}
+.desktop-zoom-tools{display:flex;align-items:center;flex-shrink:0}
+.desktop-zoom-tools #view{width:78px}
 .editor-bar,.lane-head.editor-tools{background:var(--paper)}
 .editor .editor-bar{margin-left:0;padding:4px 12px}
 .lane-head.editor-tools{justify-content:flex-start;gap:6px;padding:4px 12px;border-bottom:1px solid var(--line);font:400 11px/normal system-ui,sans-serif;color:var(--muted)}
@@ -713,5 +714,11 @@ onUnmounted(() => {
 .compact-tools .tools-panel :is(button,label,input,summary),.zoom-options button{font:inherit;color:inherit}.compact-tools .menu-item-label{flex:1}
 @container(max-width:480px){.editor .editor-bar{padding-inline:6px;gap:4px}.measure-nav{gap:4px}.measure-nav input{width:42px;padding-inline:2px}.editor-tools>label{gap:4px}.editor-tools #snap-division{width:65px;padding-inline:2px}.editor-history{gap:0}}
 @container(max-width:480px){.tool-label,.measure-nav>label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}}
+.mobile-measure-tools{display:flex;align-items:center;flex-shrink:0}
+.mobile-measure-tools .editor-actions{display:flex;flex-wrap:nowrap;gap:2px}
+.mobile-measure-tools .measure-actions{display:flex;margin:0;gap:2px}
+.mobile-measure-tools button.icon{width:28px;min-width:28px;height:28px;min-height:28px;padding:4px;gap:0;border:0;background:transparent}
+.mobile-measure-tools button.icon:hover:not(:disabled){background:#e1ece5}
+.mobile-measure-tools .delete-measure:hover:not(:disabled){background:#fff2ef;color:#bd352b}
 @media(max-width:900px){.editor-information{display:none}}
 </style>

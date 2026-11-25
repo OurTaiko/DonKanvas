@@ -614,11 +614,23 @@ test('the new-document tab follows the last file inside the left-aligned scrolli
   assert.doesNotMatch(tabs, /empty-session|尚未打开谱面/);
   assert.doesNotMatch(tabs, /chart-tabs-scroll-region/);
   assert.match(descriptor.styles[0].content, /\.chart-tabs \.new-chart-tab\{[^}]*flex-shrink:0/);
-  assert.match(descriptor.styles[0].content, /\.chart-tabs-content\{[^}]*min-height:36px/);
-  assert.match(descriptor.styles[0].content, /\.chart-tab button\{[^}]*min-height:32px;padding:4px 10px;/);
-  assert.match(descriptor.styles[0].content, /\.chart-tabs \.new-chart-tab\{width:36px;min-width:36px;min-height:36px;/);
+  assert.match(descriptor.styles[0].content, /\.chart-tabs-content\{[^}]*min-height:30px/);
+  assert.match(descriptor.styles[0].content, /\.chart-tab button\{[^}]*min-height:28px;padding:3px 8px;font-size:11px;line-height:16px;/);
+  assert.match(descriptor.styles[0].content, /\.chart-tabs \.new-chart-tab\{width:30px;min-width:30px;min-height:30px;/);
   assert.match(descriptor.template.content, /<section v-if="studio.bar.value" class="document-toolbar">/);
   assert.doesNotMatch(descriptor.template.content, /id="notice"/);
+});
+
+test('unsaved chart closing uses a cancel-first modal with the shared close request', () => {
+  const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'close-chart-modal' });
+  const dialog = descriptor.template.content.match(/<dialog ref="closeChartDialog"[\s\S]*?<\/dialog>/)[0];
+  assert.match(dialog, /aria-labelledby="close-chart-title" aria-describedby="close-chart-message"/);
+  assert.match(dialog, /@close="state.closeRequest = null"/);
+  assert.match(dialog, /closeDialogOnEscape\(\$event, closeChartDialog\)/);
+  assert.match(dialog, /autofocus @click="closeChartDialog.close\(\)"/);
+  assert.match(dialog, /class="danger-action" @click="confirmCloseChart"/);
+  assert.match(descriptor.scriptSetup.content, /studio.closeChart\(state.closeRequest.id, true\)/);
 });
 
 test('the header file menu groups file actions and shortcuts without occupying the tab row', () => {
@@ -1970,7 +1982,7 @@ test('command changes auto-apply only their own field at the correct scope and v
 test('the timeline toolbar groups explicit before and after measure insertion actions with availability guards', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'insert-measures' });
-  const toolbar = descriptor.template.content.match(/<div class="editor-actions">[\s\S]*?<\/button>\s*<\/div>(?=\s*<button v-if="compactTools" id="follow-playback")/)[0];
+  const toolbar = descriptor.template.content.match(/<div class="editor-actions">[\s\S]*?<\/button>\s*<\/div>(?=\s*<\/Teleport>\s*<button v-if="compactTools" id="follow-playback")/)[0];
   assert.match(toolbar, /class="measure-actions" role="group" :aria-label="t\('插入小节'\)"/);
   for (const [id, side] of [['insert-bar-before', 'before'], ['insert-bar-after', 'after']]) {
     const button = toolbar.match(new RegExp(`<button id="${id}"[^>]*>[\\s\\S]*?<\\/button>`))[0];
@@ -2163,6 +2175,24 @@ test('branch context follows selected point timing rather than playback or the v
   assert.doesNotMatch(styles, /\.branch-context\[data-route/);
 });
 
+test('mobile measure actions use a single set of named icon buttons directly in the toolbar', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'mobile-measure-tools' });
+  const template = descriptor.template.content;
+  assert.match(template, /class="editor-history"[\s\S]*?<div v-show="mobile" id="mobile-measure-tools" class="mobile-measure-tools"><\/div>\s*<details ref="toolsMenu"/);
+  const actions = template.match(/<Teleport to="#mobile-measure-tools" :disabled="!mobile" defer>[\s\S]*?<\/Teleport>/)[0];
+  for (const id of ['insert-bar-before', 'insert-bar-after', 'delete-bar']) {
+    const button = actions.match(new RegExp(`<button id="${id}"[\\s\\S]*?<\\/button>`))[0];
+    assert.match(button, /:class="\{ icon: mobile \}"/);
+    assert.match(button, /:aria-label="t\('/);
+    assert.match(button, /:title=/);
+    assert.match(button, /aria-hidden="true" \/><span v-if="!mobile">/);
+    assert.equal(template.split(`id="${id}"`).length - 1, 1);
+  }
+  assert.match(actions, /@click="requestDeleteMeasure"/);
+  assert.match(descriptor.styles[0].content, /\.mobile-measure-tools button\.icon\{width:28px;min-width:28px;height:28px;min-height:28px;/);
+});
+
 test('one single-line toolbar retains priority controls and collapses secondary controls above the timeline', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'inline-snap-controls' });
@@ -2174,6 +2204,11 @@ test('one single-line toolbar retains priority controls and collapses secondary 
     assert.equal(descriptor.template.content.split(`id="${id}"`).length - 1, id === 'follow-playback' ? 2 : 1);
   }
   assert.match(tools, /@change="snapChange"/);
+  assert.match(tools, /<div v-show="!mobile" id="desktop-zoom-tools" class="desktop-zoom-tools"><\/div>\s*<div class="editor-history">/);
+  const zoom = tools.match(/<Teleport to="#desktop-zoom-tools" :disabled="mobile" defer>[\s\S]*?<\/Teleport>\s*<\/details>[\s\S]*?<\/Teleport>/)[0];
+  assert.match(zoom, /v-if="mobile && compactTools" ref="zoomMenu"/);
+  assert.match(zoom, /id="view" v-model.number="controls.zoom"/);
+  assert.match(descriptor.styles[0].content, /\.editor-history\{[^}]*padding-right:6px;border-right:1px solid var\(--line\)\}/);
   assert.match(tools, /id="bar-number"[\s\S]*id="snap-division"[\s\S]*id="undo"[\s\S]*id="redo"[\s\S]*<details ref="toolsMenu"[\s\S]*id="custom-snap"[\s\S]*id="view"[\s\S]*id="insert-bar-before"[\s\S]*id="insert-bar-after"[\s\S]*id="delete-bar"[\s\S]*id="follow-playback"/);
   assert.match(tools, /v-show="controls.snapChoice === 'custom'"/);
   assert.match(tools, /min="1" max="768"/);
@@ -2528,9 +2563,25 @@ test('branch creation groups equal-width route and source fields and displays er
   assert.match(descriptor.styles[0].content, /\.branch-form \.branch-route-error\{color:#bd3b30\}/);
 });
 
+test('all modal shells share typography, spacing, responsive geometry and action styling', () => {
+  const styles = readFileSync(new URL('style.css', import.meta.url), 'utf8');
+  assert.match(styles, /dialog\{--dialog-width:420px;[^}]*max-height:calc\(100dvh - 24px\);[^}]*padding:20px;[^}]*border-radius:8px;/);
+  assert.match(styles, /dialog h2\{margin:0 0 16px;font-size:16px;line-height:1.4;/);
+  assert.match(styles, /dialog p:not\(\.selection-help\)\{margin:0;font-size:12px;line-height:1.7;/);
+  assert.match(styles, /dialog::backdrop\{background:#202a2870\}/);
+  assert.match(styles, /\.selection-dialog-actions,\.course-dialog-actions,\.branch-form-actions,\.delete-measure-actions\)\{[^}]*flex-wrap:wrap;[^}]*margin-top:20px/);
+  assert.match(styles, /@media\(max-width:600px\)\{dialog\{padding:16px\}\}/);
+  for (const file of ['App.vue', 'CourseControls.vue', 'BranchControls.vue', 'TimelineEditor.vue']) {
+    const { descriptor } = parse(readFileSync(new URL(file, import.meta.url), 'utf8'));
+    compileScript(descriptor, { id: 'shared-modal-shell' });
+    assert.doesNotMatch(descriptor.styles[0].content, /\.(?:selection|course|branch|delete-measure)-dialog\{[^}]*border-radius:/);
+    assert.doesNotMatch(descriptor.styles[0].content, /\.(?:selection|course|branch|delete-measure)-dialog::backdrop/);
+  }
+});
+
 test('modal deletion buttons use shared danger styling while route themes stay on names', () => {
   const styles = readFileSync(new URL('style.css', import.meta.url), 'utf8');
-  assert.match(styles, /dialog button:is\(\.delete-action,\.danger,#delete-measure-confirm\)\{border:1px solid #bd3b30!important;background:#fff0ee;color:#b42318\}/);
+  assert.match(styles, /dialog button:is\(\.delete-action,\.danger,\.danger-action,#delete-measure-confirm\)\{border:1px solid #bd3b30!important;background:#fff0ee;color:#b42318\}/);
   assert.match(styles, /dialog button:is\([^}]+\):hover:not\(:disabled\)\{background:#ffe0db;color:#961b11;/);
   assert.match(styles, /dialog button:is\([^}]+\):active:not\(:disabled\)\{background:#ffd0c8\}/);
   assert.match(styles, /dialog button:is\([^}]+\):focus-visible\{outline:2px solid #b42318;/);

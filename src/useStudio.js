@@ -31,7 +31,7 @@ export const formatTime = value => {
 };
 
 export function useStudio() {
-  const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, playing: false, loopAnchor: null, copiedMeasures: null, pasteRequest: 0, editorBlocked: false, fileErrors: [], branchRouteWarning: null, saveState: '尚未打开谱面', noticeMessage: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', get notice() { return formatMessage(this.noticeMessage); }, error: false });
+  const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, playing: false, loopAnchor: null, copiedMeasures: null, pasteRequest: 0, closeRequest: null, editorBlocked: false, fileErrors: [], branchRouteWarning: null, saveState: '尚未打开谱面', noticeMessage: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', get notice() { return formatMessage(this.noticeMessage); }, error: false });
   let nextDocumentId = 1, viewAnimation = null, reloadApproved = false;
   const controls = reactive({ hits: true, rate: 1, volume: MIX_DEFAULTS.music, hitVolume: MIX_DEFAULTS.hits, view: 'auto', zoom: 1, snap: GRID_DIVISIONS, snapChoice: '16', customSnap: GRID_DIVISIONS });
   const bar = computed(() => state.chart?.bars[state.selected]);
@@ -595,13 +595,17 @@ export function useStudio() {
     leaveDocument(); activate(document);
     if (persist()) notice(state.invalid ? message('已切换谱面；请修正保留的小节源码。') : message('已切换谱面。'), state.invalid);
   }
-  function closeChart(id) {
+  function closeChart(id, confirmed = false) {
     const document = state.documents.find(item => item.id === id);
     if (!document) return;
     const active = id === state.activeId;
     if (document.saving) { notice(message('谱面正在保存，请完成后再关闭。'), true); return; }
     if (active) { pause(); flushSource(); snapshot(); }
-    if ((document.dirty || document.invalid) && !confirm(t('关闭 {p0} 将移除此谱面及其草稿和历史。请先保存需要的内容，是否继续？', { p0: document.filename }))) return;
+    if ((document.dirty || document.invalid) && !confirmed) {
+      state.closeRequest = { id, filename: document.filename };
+      return;
+    }
+    if (state.closeRequest?.id === id) state.closeRequest = null;
     const index = state.documents.indexOf(document);
     if (active) { viewAnimation = null; clearTimeout(sourceTimer); ++audioRequest; }
     state.documents = state.documents.filter(item => item.id !== id);

@@ -1820,9 +1820,10 @@ test('new, rename, close and legacy draft migration work without server APIs', a
     studio.renameChart('../bad'); assert.equal(studio.state.filename, 'new name.tja'); assert.equal(studio.state.error, true);
     mock('confirm', () => false);
     studio.closeChart(first); studio.closeChart(second); assert.equal(studio.state.documents.length, 2);
-    mock('confirm', () => true);
-    studio.closeChart(first); assert.equal(studio.state.activeId, second);
-    studio.closeChart(second); assert.equal(studio.state.chart, null); assert.equal(studio.state.activeId, null);
+    assert.deepEqual(studio.state.closeRequest, { id: second, filename: 'new name.tja' });
+    studio.closeChart(first, true); assert.equal(studio.state.activeId, second);
+    studio.closeChart(second, true); assert.equal(studio.state.chart, null); assert.equal(studio.state.activeId, null);
+    assert.equal(studio.state.closeRequest, null);
     assert.equal(studio.state.documents.length, 0); assert.deepEqual(workspace(saved).documents, []);
     await studio.openAudio(file('music.wav')); assert.equal(studio.state.fileErrors.length, 1);
     await studio.openChart(file('broken.tja', 'invalid')); assert.equal(studio.state.documents.length, 0);
@@ -1861,17 +1862,18 @@ test('untouched new charts stay clean across navigation, inactive closing and au
   } finally { restored.cleanup(); }
 });
 
-test('editing a chart prompts on close, undo clears dirty, and invalid source remains protected', async () => {
+test('editing a chart requests a close modal, undo clears dirty, and invalid source remains protected', async () => {
   const { studio, handlers, mock, cleanup } = mountStudio();
-  let confirmations = 0;
   try {
-    mock('confirm', () => { confirmations++; return false; });
+    mock('confirm', () => assert.fail('Closing charts must use a modal request, not confirm'));
     await studio.openChart(file());
     studio.selectCell({ bar: 0, numerator: 0, denominator: 4, divisions: 16 });
     studio.chooseNote('2');
     assert.equal(studio.state.dirty, true);
     studio.closeChart(studio.state.activeId);
-    assert.equal(confirmations, 1); assert.equal(studio.state.documents.length, 1);
+    assert.deepEqual(studio.state.closeRequest, { id: studio.state.activeId, filename: studio.state.filename });
+    assert.equal(studio.state.documents.length, 1);
+    studio.state.closeRequest = null;
     let warned = false;
     handlers.get('beforeunload')({ preventDefault() { warned = true; } });
     assert.equal(warned, true);
@@ -1881,12 +1883,15 @@ test('editing a chart prompts on close, undo clears dirty, and invalid source re
     studio.history(true);
     assert.equal(studio.state.dirty, true);
     studio.closeChart(studio.state.activeId);
-    assert.equal(confirmations, 2);
+    assert.equal(studio.state.closeRequest.id, studio.state.activeId);
+    studio.state.closeRequest = null;
     studio.history();
     studio.editSource('unfinished');
     assert.equal(studio.state.dirty, false); assert.equal(studio.state.invalid, true);
     studio.closeChart(studio.state.activeId);
-    assert.equal(confirmations, 3); assert.equal(studio.state.documents.length, 1);
+    assert.equal(studio.state.closeRequest.id, studio.state.activeId); assert.equal(studio.state.documents.length, 1);
+    studio.closeChart(studio.state.closeRequest.id, true);
+    assert.equal(studio.state.documents.length, 0); assert.equal(studio.state.closeRequest, null);
   } finally { cleanup(); }
 });
 
@@ -2945,26 +2950,29 @@ test('Ctrl+Alt+W closes only the active chart once per press, including from inp
 
 test('close shortcut protects pending edits and saving, and ignores dialogs and other key combinations', async () => {
   const { studio, handlers, mock, cleanup } = mountStudio();
-  let prevented = 0, confirmations = 0;
+  let prevented = 0;
   const press = overrides => handlers.get('keydown')({ key: 'w', code: 'KeyW', ctrlKey: true, altKey: true, preventDefault() { prevented++; }, ...overrides });
   try {
-    mock('confirm', () => { confirmations++; return false; });
+    mock('confirm', () => assert.fail('The close shortcut must request a modal'));
     await studio.openChart(file());
     document.activeElement = { tagName: 'INPUT', blur() { studio.renameChart('renamed'); } };
     press({});
     assert.equal(studio.state.filename, 'renamed.tja');
-    assert.equal(studio.state.dirty, true); assert.equal(confirmations, 1);
+    assert.equal(studio.state.dirty, true); assert.deepEqual(studio.state.closeRequest, { id: studio.state.activeId, filename: 'renamed.tja' });
+    studio.state.closeRequest = null;
     document.activeElement = { tagName: 'TEXTAREA' };
     studio.editSource('1000,');
     press({});
     assert.equal(studio.state.invalid, false); assert.equal(studio.state.chart.bars[0].notes, '1000');
-    assert.equal(confirmations, 2); assert.equal(studio.state.documents.length, 1);
+    assert.equal(studio.state.closeRequest.id, studio.state.activeId); assert.equal(studio.state.documents.length, 1);
+    studio.state.closeRequest = null;
     studio.editSource('unfinished');
     press({});
-    assert.equal(studio.state.invalid, true); assert.equal(confirmations, 3);
+    assert.equal(studio.state.invalid, true); assert.equal(studio.state.closeRequest.id, studio.state.activeId);
+    studio.state.closeRequest = null;
     studio.state.saving = true; studio.state.documents[0].saving = true;
     press({});
-    assert.match(studio.state.notice, /正在保存/); assert.equal(confirmations, 3);
+    assert.match(studio.state.notice, /正在保存/); assert.equal(studio.state.closeRequest, null);
     studio.state.saving = false; studio.state.documents[0].saving = false;
     document.activeElement = { tagName: 'BUTTON', closest: () => ({}) };
     press({});
@@ -2974,7 +2982,7 @@ test('close shortcut protects pending edits and saving, and ignores dialogs and 
       { shiftKey: true }, { metaKey: true }, { isComposing: true },
       { key: '\u0142', getModifierState: key => key === 'AltGraph' }, { key: 'q', code: 'KeyQ' }
     ]) press(overrides);
-    assert.equal(prevented, 4); assert.equal(confirmations, 3);
+    assert.equal(prevented, 4); assert.equal(studio.state.closeRequest, null);
     assert.equal(studio.state.documents.length, 1);
   } finally { cleanup(); }
 });

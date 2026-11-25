@@ -91,6 +91,15 @@ function resizeLayout() {
 watch(() => state.chart, chart => { if (!chart && mobileWorkspace.value && workspaceOpen.value) closeWorkspace(); });
 watch([mobileWorkspace, workspaceOpen], ([mobile, expanded]) => { state.editorBlocked = mobile && expanded; }, { immediate: true, flush: 'sync' });
 const pasteDialog = ref(null), pasteMode = ref('overwrite'), pasteError = ref(null);
+const closeChartDialog = ref(null);
+watch(() => state.closeRequest, request => {
+  if (request && !closeChartDialog.value.open) closeChartDialog.value.showModal();
+  else if (!request && closeChartDialog.value.open) closeChartDialog.value.close();
+}, { flush: 'post' });
+function confirmCloseChart() {
+  if (state.closeRequest) studio.closeChart(state.closeRequest.id, true);
+  closeChartDialog.value.close();
+}
 watch(() => state.pasteRequest, () => { pasteError.value = null; pasteDialog.value.showModal(); });
 function applyPaste() {
   if (studio.pasteMeasures(pasteMode.value)) pasteDialog.value.close();
@@ -489,6 +498,11 @@ async function dropFiles(event) {
       <div class="selection-dialog-actions"><button type="button" @click="selectionDialog.close()">{{ t('取消') }}</button><button type="submit" class="primary">{{ t('选择') }}</button></div>
     </form>
   </dialog>
+  <dialog ref="closeChartDialog" class="selection-dialog close-chart-dialog" aria-labelledby="close-chart-title" aria-describedby="close-chart-message" @close="state.closeRequest = null" @keydown.ctrl.s.prevent.stop @keydown.meta.s.prevent.stop @keydown.stop="closeDialogOnEscape($event, closeChartDialog)">
+    <h2 id="close-chart-title">{{ t('关闭谱面') }}</h2>
+    <p v-if="state.closeRequest" id="close-chart-message">{{ t('关闭 {p0} 将移除此谱面及其草稿和历史。请先保存需要的内容，是否继续？', { p0: state.closeRequest.filename }) }}</p>
+    <div class="selection-dialog-actions"><button type="button" autofocus @click="closeChartDialog.close()">{{ t('取消') }}</button><button type="button" class="danger-action" @click="confirmCloseChart">{{ t('关闭谱面') }}</button></div>
+  </dialog>
   <dialog ref="pasteDialog" class="selection-dialog paste-dialog" aria-labelledby="paste-dialog-title" @keydown.ctrl.s.prevent.stop @keydown.meta.s.prevent.stop @keydown.stop="closeDialogOnEscape($event, pasteDialog)">
     <form @submit.prevent="applyPaste">
       <h2 id="paste-dialog-title">{{ t('粘贴小节') }}</h2>
@@ -592,7 +606,7 @@ async function dropFiles(event) {
 .file-panel{position:fixed;z-index:30;width:300px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 54px);overflow:auto;overscroll-behavior:contain;padding:5px;border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 6px 24px #202a2820}
 .file-panel button{width:100%;border:0;background:transparent;text-align:left;white-space:normal;gap:8px}.file-actions .file-panel button span{display:inline;flex:1;min-width:0;overflow-wrap:anywhere}.file-panel button:not(:disabled):hover{background:#edf5ef}.file-panel kbd{font:11px ui-monospace,monospace;color:var(--muted);flex-shrink:0;max-width:48%;overflow-wrap:anywhere}.file-panel hr{margin:5px 0;border:0;border-top:1px solid var(--line)}.file-panel h3{margin:8px 10px 3px;font-size:11px}.file-actions .file-panel .choice-icon{display:grid;flex:0 0 17px;width:17px;height:17px}.file-actions .file-panel .choice-symbol{display:block;flex:none;transform:scale(.75)}.file-actions .file-panel .choice-symbol.large{transform:scale(.65)}.file-actions .file-panel .choice-symbol.roll{transform:scale(.45)}.file-actions .file-panel .choice-symbol.balloon{transform:scale(.55)}.file-actions .file-panel .choice-symbol.end{transform:rotate(45deg) scale(.75)}
 .file-actions>.file-popover>summary:focus-visible,.settings-popover>summary:focus-visible{background:#e1ece5}
-.selection-help{padding:8px;font-size:11px;line-height:1.6}.selection-dialog{width:min(420px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:auto;padding:20px;border:1px solid var(--line);border-radius:8px}.selection-dialog::backdrop{background:#202a2870}.selection-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}.selection-fields label{display:grid;gap:6px;font-size:12px}.selection-fields input{width:100%;min-width:0}.selection-dialog p{line-height:1.6;overflow-wrap:anywhere}.selection-dialog .error{color:#bd352b;margin-top:10px}.selection-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.selection-help{padding:8px;font-size:11px;line-height:1.6}.selection-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}.selection-fields label{display:grid;gap:6px;font-size:12px}.selection-fields input{width:100%;min-width:0}.selection-dialog .error{color:#bd352b;margin-top:10px}
 .update-toast{position:fixed;right:12px;top:46px;z-index:50;width:360px;max-width:calc(100% - 24px);max-height:calc(100dvh - 58px);overflow:auto;padding:14px;border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 6px 24px #202a2820}.update-toast p{line-height:1.6;overflow-wrap:anywhere}.update-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
 .language-panel{position:absolute;right:0;top:calc(100% + 6px);z-index:30;width:200px;max-width:calc(100vw - 24px);padding:5px;border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 6px 24px #202a2820}.language-panel button{display:flex;justify-content:space-between;width:100%;border:0;background:transparent;text-align:left}.language-panel button[aria-pressed=true]{color:var(--green);background:#edf5ef}.language-panel button:hover{background:#edf5ef}.language-panel svg{width:16px;height:16px}
 .project-panel{position:absolute;right:0;top:calc(100% + 6px);z-index:30;width:260px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 120px);overflow:auto;padding:14px;border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 6px 24px #202a2820;font-size:12px}.project-panel>p{margin:8px 0;overflow-wrap:anywhere;line-height:1.6}.project-panel>small{display:block;color:var(--muted);font-size:10px;margin-top:10px}.project-links{display:grid;border-block:1px solid var(--line);padding:5px 0}.project-links a{padding:7px 0;color:inherit;text-decoration:none}.project-links a:hover{color:var(--green);text-decoration:underline}.project-links a:focus-visible{outline:2px solid var(--green);outline-offset:3px;border-radius:2px}
@@ -642,20 +656,21 @@ main{display:flex;flex:1;min-height:0;max-width:none;margin:0;padding:0}
 .inspector-tabs{display:flex;flex-shrink:0;border-bottom:1px solid var(--line);background:var(--paper)}.inspector-tabs>[role=tab]{flex:1;min-width:0;min-height:34px;padding:4px;border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;font-size:12px}.inspector-tabs>[aria-selected=true]{border-bottom-color:var(--green);color:var(--green);background:#fff}
 .inspector-tab-panel{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}.inspector-tab-panel>.measure-editor{overflow:visible;border:0}.inspector-tab-panel>.cell-inspector,.inspector-tab-panel>.branch-context{border:0}
 .chart-tabs{position:relative;flex-shrink:0;min-width:0;margin:0;border-bottom:1px solid var(--line);background:#edf1ee}
-.chart-tabs .new-chart-tab{width:36px;min-width:36px;min-height:36px;flex-shrink:0;align-self:stretch;border:0;border-right:1px solid var(--line);border-radius:0;background:transparent;color:var(--muted)}.chart-tabs .new-chart-tab:hover{background:#dfe8e2;color:var(--green)}
+.chart-tabs .new-chart-tab{width:30px;min-width:30px;min-height:30px;padding:4px;flex-shrink:0;align-self:stretch;border:0;border-right:1px solid var(--line);border-radius:0;background:transparent;color:var(--muted)}.chart-tabs .new-chart-tab:hover{background:#dfe8e2;color:var(--green)}
 .chart-tabs-viewport{overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain}
 .chart-tabs-viewport::-webkit-scrollbar{display:none}
-.chart-tabs-content{display:flex;width:max-content;min-width:100%;min-height:36px}
+.chart-tabs-content{display:flex;width:max-content;min-width:100%;min-height:30px}
 .chart-tabs-scrollbar{position:absolute;left:0;right:0;bottom:0;height:7px;opacity:0;pointer-events:none;transition:opacity .15s;touch-action:none;user-select:none;outline-offset:1px}
 .chart-tabs:hover .chart-tabs-scrollbar,.chart-tabs-scrollbar:focus-visible,.chart-tabs.dragging .chart-tabs-scrollbar{opacity:1;pointer-events:auto}
 .chart-tabs-thumb{display:block;height:100%;border-radius:4px;background:rgba(80,90,85,.35);cursor:default}
 .chart-tabs-scrollbar:hover .chart-tabs-thumb,.chart-tabs.dragging .chart-tabs-thumb{background:rgba(80,90,85,.6)}
 @media(prefers-reduced-motion:reduce){.chart-tabs-scrollbar{transition:none}}
-.chart-tab{display:flex;flex-shrink:0;max-width:320px;min-height:36px;border-right:1px solid var(--line);border-top:2px solid transparent}
+.chart-tab{display:flex;flex-shrink:0;max-width:320px;min-height:30px;border-right:1px solid var(--line);border-top:2px solid transparent}
 .chart-tab.active{border-top-color:var(--green);background:#fff}
 .chart-tab:not(.active):hover{background:#dfe8e2}
 .chart-tab.active:hover{background:#f0f6f2}
-.chart-tab button{border:0;background:transparent;min-width:0;min-height:32px;padding:4px 10px;white-space:nowrap;overflow-wrap:normal}
+.chart-tab button{border:0;background:transparent;min-width:0;min-height:28px;padding:3px 8px;font-size:11px;line-height:16px;white-space:nowrap;overflow-wrap:normal}
+.chart-tab .icon{width:28px;min-width:28px;padding:4px}.chart-tabs .icon svg{width:14px;height:14px}
 .chart-tab-select{flex:1}.chart-tab-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chart-tab-dirty{flex-shrink:0}
 .chart-tab.active button{color:var(--green)}
 .chart-tab .icon{flex-shrink:0;opacity:0;pointer-events:none}
