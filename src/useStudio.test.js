@@ -3020,6 +3020,16 @@ test('automatic zoom packs sixteenth notes within ten percent of their rendered 
     studio.controls.view = 1.25; near(studio.viewBeats.value, 5);
     studio.timelineWidth.value = 305; near(studio.viewBeats.value, 5);
     studio.controls.view = 'auto'; near(studio.viewBeats.value, 305 / 72);
+    assert.equal(studio.controls.zoom, 1);
+    for (const width of [240, 305, 619, 980, 1600]) {
+      studio.timelineWidth.value = width;
+      for (const zoom of [1, 0.5, 0.75, 1.5, 2, 2.5, 3, 3.5, 4]) {
+        studio.controls.zoom = zoom;
+        near(studio.viewBeats.value, width / 72 / zoom);
+        near(width / studio.viewBeats.value / 4, 18 * zoom);
+      }
+    }
+    studio.controls.zoom = 1;
     assert.equal(studio.state.playing, false); assert.equal(studio.state.undo.length, 0);
   } finally { cleanup(); }
 });

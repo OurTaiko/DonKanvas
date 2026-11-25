@@ -17,7 +17,7 @@ const studio = inject('studio');
 defineProps({ mobile: Boolean });
 const toolbar = ref(null), toolsMenu = ref(null), compactTools = ref(true), toolsOpen = ref(false);
 const zoomMenu = ref(null), zoomOptions = ref(null), zoomOpen = ref(false), zoomPosition = ref({});
-const zoomChoices = computed(() => [{ value: 'auto', label: t('自动'), icon: Maximize2 }, ...zooms.map(([value, label]) => ({ value, label: `${label} ${t('小节宽')}`, icon: Ruler }))]);
+const zoomChoices = computed(() => [{ value: 1, label: t('标准'), icon: Maximize2 }, ...zooms.map(value => ({ value, label: `${value}×`, icon: Ruler }))]);
 async function openZoom() {
   zoomOpen.value = !zoomOpen.value;
   if (!zoomOpen.value) return;
@@ -100,7 +100,7 @@ function toggleMeasure(index) {
 }
 const viewport = ref(null), viewportWidth = studio.timelineWidth;
 const snaps = SNAP_DIVISIONS;
-const zooms = [[1 / 2, '1/2'], [1, '1'], [2, '2'], [3, '3'], [4, '4'], [6, '6'], [8, '8']];
+const zooms = [0.5, 0.75, 1.5, 2, 2.5, 3, 3.5, 4];
 const firstBeat = computed(() => timelineScale.value.beatAt(timelineScrollBounds.value.start));
 const totalBeats = computed(() => timelineScale.value.beatAt(timelineScrollBounds.value.end) - firstBeat.value);
 const scrollBeats = computed(() => Math.max(0, totalBeats.value - viewBeats.value));
@@ -474,12 +474,12 @@ onUnmounted(() => {
         <div class="tools-panel" @scroll="zoomOpen = false">
         <label v-show="controls.snapChoice === 'custom'" id="custom-snap-label"><Grid2X2 v-if="compactTools" aria-hidden="true" /><span class="menu-item-label">{{ t('每小节等分') }}</span><input id="custom-snap" ref="customSnap" v-model.number="controls.customSnap" type="number" min="1" max="768" step="1" @change="studio.setSnap(Number(controls.customSnap))"></label>
         <details v-if="compactTools" ref="zoomMenu" class="zoom-menu" :open="zoomOpen">
-          <summary :title="t('以 4/4 小节的拍数作为缩放参考')" aria-haspopup="menu" :aria-expanded="zoomOpen" @click.prevent="openZoom" @keydown.right.prevent="!zoomOpen && openZoom()" @keydown.esc="zoomOpen && zoomKeydown($event)"><ZoomIn aria-hidden="true" /><span class="menu-item-label">{{ t('缩放') }}</span><ChevronRight aria-hidden="true" /></summary>
+          <summary :title="t('以标准网格宽度为缩放参考')" aria-haspopup="menu" :aria-expanded="zoomOpen" @click.prevent="openZoom" @keydown.right.prevent="!zoomOpen && openZoom()" @keydown.esc="zoomOpen && zoomKeydown($event)"><ZoomIn aria-hidden="true" /><span class="menu-item-label">{{ t('缩放') }}</span><ChevronRight aria-hidden="true" /></summary>
           <Teleport to="body"><div v-if="zoomOpen" ref="zoomOptions" class="zoom-options" role="menu" :aria-label="t('时间轴缩放')" :style="zoomPosition" @keydown="zoomKeydown">
-            <button v-for="choice in zoomChoices" :key="choice.value" type="button" role="menuitemradio" :aria-checked="controls.view === choice.value" @click="controls.view = choice.value; closeZoom()"><component :is="choice.icon" aria-hidden="true" />{{ choice.label }}<span class="menu-check"><Check v-if="controls.view === choice.value" aria-hidden="true" /></span></button>
+            <button v-for="choice in zoomChoices" :key="choice.value" type="button" role="menuitemradio" :aria-checked="controls.zoom === choice.value" @click="controls.zoom = choice.value; controls.view = 'auto'; closeZoom()"><component :is="choice.icon" aria-hidden="true" />{{ choice.label }}<span class="menu-check"><Check v-if="controls.zoom === choice.value" aria-hidden="true" /></span></button>
           </div></Teleport>
         </details>
-        <label v-else :title="t('以 4/4 小节的拍数作为缩放参考')">{{ t('缩放') }}<select id="view" v-model.number="controls.view" :aria-label="t('时间轴缩放')"><option value="auto">{{ t('自动') }}</option><option v-for="[value, label] in zooms" :key="value" :value="value">{{ label }} {{ t('小节宽') }}</option></select></label>
+        <label v-else :title="t('以标准网格宽度为缩放参考')">{{ t('缩放') }}<select id="view" v-model.number="controls.zoom" :aria-label="t('时间轴缩放')" @change="controls.view = 'auto'"><option :value="1">{{ t('标准') }}</option><option v-for="value in zooms" :key="value" :value="value">{{ value }}×</option></select></label>
       <div class="editor-actions">
         <div class="measure-actions" role="group" :aria-label="t('插入小节')">
           <button id="insert-bar-before" :title="t('在当前小节前插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('before')"><BetweenHorizontalStart aria-hidden="true" />{{ t('前插小节') }}</button>

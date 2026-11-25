@@ -19,6 +19,8 @@ export function getPageMetadata(code = 'zh-CN') {
 }
 
 export const translations = {
+  '标准': ['Standard', '標準', '標準', '표준'],
+  '以标准网格宽度为缩放参考': ['Zoom relative to the standard grid width', '標準のグリッド幅を基準に拡大縮小', '以標準網格寬度為縮放參考', '표준 그리드 너비를 기준으로 확대/축소'],
   [pageMetadataKeys.title]: ['DonKanvas - Online TJA Chart Editor', 'DonKanvas - オンライン TJA 太鼓譜面エディター', 'DonKanvas - 線上 TJA 太鼓譜面編輯器', 'DonKanvas - 온라인 TJA 태고 채보 편집기'],
   [pageMetadataKeys.description]: ['DonKanvas is a free online TJA chart editor for Taiko no Tatsujin, with visual note editing, audio waveforms, branching and playback previews. Files stay in your browser; no uploads required.', 'DonKanvas は無料のオンライン TJA 太鼓譜面エディターです。音符の視覚的な編集、音声波形、譜面分岐、再生プレビューに対応。ファイルはブラウザー内で処理され、アップロードは不要です。', 'DonKanvas 是免費的線上 TJA 太鼓譜面編輯器，支援視覺化音符編輯、音訊波形、分歧編排與播放預覽。檔案在瀏覽器本機處理，無需上傳。', 'DonKanvas는 시각적 음표 편집, 오디오 파형, 채보 분기 및 재생 미리보기를 지원하는 무료 온라인 TJA 태고 채보 편집기입니다. 파일은 브라우저에서 처리되며 업로드할 필요가 없습니다.'],
   [pageMetadataKeys.socialDescription]: ['Edit TJA charts visually with audio waveforms, note and branch editing, and playback previews. Free to use; no file uploads required.', '音声波形を見ながら TJA 太鼓譜面の音符や分岐を視覚的に編集し、再生プレビューで確認。無料で利用でき、ファイルのアップロードは不要です。', '視覺化編輯 TJA 太鼓譜面，結合音訊波形編排音符與分歧，即時播放預覽。免費使用，檔案無需上傳。', '오디오 파형을 보며 TJA 태고 채보의 음표와 분기를 시각적으로 편집하고 재생 미리보기로 확인하세요. 무료이며 파일 업로드가 필요 없습니다.'],
@@ -274,7 +276,7 @@ export const translations = {
   '搜索编号或判定条件': ['Search number or condition', '番号または分岐条件を検索', '搜尋編號或判定條件', '번호 또는 판정 조건 검색'],
   '定位分歧 {p0}': ['Locate branch {p0}', '分岐 {p0} に移動', '定位分歧 {p0}', '분기 {p0}로 이동'],
   '从第 {p0} 小节开始': ['From measure {p0}', '第 {p0} 小節から', '從第 {p0} 小節開始', '{p0}번째 마디부터'],
-  '暂无分歧。': ['No branches yet.', '分岐はまだありません。', '暫無分歧。', '아직 분기가 없습니다.'],
+  '暂无分歧': ['No branches yet', '分岐はまだありません', '暫無分歧', '아직 분기가 없습니다'],
   '手动选路，不模拟命中率或得分判定。': ['Routes are manual; accuracy and score judgments are not simulated.', 'ルートは手動選択です。精度やスコアによる判定は再現しません。', '手動選路，不模擬命中率或得分判定。', '경로는 수동으로 선택하며 명중률이나 점수 판정은 시뮬레이션하지 않습니다.'],
   '完成': ['Done', '完了', '完成', '완료'],
   'STYLE 须为 Single 或 Double。': ['STYLE must be Single or Double.', 'STYLE は Single または Double にしてください。', 'STYLE 須為 Single 或 Double。', 'STYLE은 Single 또는 Double이어야 합니다.'],

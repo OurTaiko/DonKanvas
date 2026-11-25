@@ -146,7 +146,7 @@ function keydown(event) {
             </div>
           </div>
         </article>
-        <p v-if="!sortedBranches.length" class="no-branches">{{ t('暂无分歧。') }}</p>
+        <p v-if="!sortedBranches.length" class="no-branches">{{ t('暂无分歧') }}</p>
       </div>
       <div class="branch-dialog-footer"><span>{{ t('手动选路，不模拟命中率或得分判定。') }}</span></div>
     </dialog>
@@ -197,7 +197,7 @@ function keydown(event) {
             </component>
           </div>
         </article>
-        <p v-if="!sortedBranches.length" class="no-branches">{{ t('暂无分歧。') }}</p>
+        <p v-if="!sortedBranches.length" class="no-branches">{{ t('暂无分歧') }}</p>
       </div>
       <p v-if="!mode && (error || state.error)" class="branch-route-error" role="alert">{{ error || state.notice }}</p>
     </div>

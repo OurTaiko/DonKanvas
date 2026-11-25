@@ -33,7 +33,7 @@ export const formatTime = value => {
 export function useStudio() {
   const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, playing: false, loopAnchor: null, copiedMeasures: null, pasteRequest: 0, editorBlocked: false, fileErrors: [], saveState: '尚未打开谱面', noticeMessage: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', get notice() { return formatMessage(this.noticeMessage); }, error: false });
   let nextDocumentId = 1, viewAnimation = null, reloadApproved = false;
-  const controls = reactive({ hits: true, rate: 1, volume: MIX_DEFAULTS.music, hitVolume: MIX_DEFAULTS.hits, view: 'auto', snap: GRID_DIVISIONS, snapChoice: '16', customSnap: GRID_DIVISIONS });
+  const controls = reactive({ hits: true, rate: 1, volume: MIX_DEFAULTS.music, hitVolume: MIX_DEFAULTS.hits, view: 'auto', zoom: 1, snap: GRID_DIVISIONS, snapChoice: '16', customSnap: GRID_DIVISIONS });
   const bar = computed(() => state.chart?.bars[state.selected]);
   const spans = computed(() => state.chart ? longNoteSpans(state.chart.bars) : []);
   const range = computed(() => state.customLoop);
@@ -43,7 +43,7 @@ export function useStudio() {
   const timelineScale = computed(() => createBeatTimeline(state.chart));
   const timelineWidth = ref(1);
   const viewBeats = computed(() => controls.view === 'auto'
-    ? Math.max(1, timelineWidth.value) / (2 * noteHitRadius('1') * .9) / 4
+    ? Math.max(1, timelineWidth.value) / (2 * noteHitRadius('1') * .9) / 4 / controls.zoom
     : 4 * controls.view);
   const timelineScrollBounds = computed(() => {
     const bounds = timelineBounds.value, scale = timelineScale.value;

@@ -17,6 +17,18 @@ import { languages, locale, localePreference, matchLocale, detectLocale, initial
 const reset = () => { locale.value = 'zh-CN'; localePreference.value = 'auto'; };
 const placeholders = text => [...new Set(text.match(/\{\w+\}/g) || [])].sort();
 
+test('branch empty-state labels omit terminal punctuation in every language', () => {
+  const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
+  assert.equal([...descriptor.template.content.matchAll(/t\('暂无分歧'\)/g)].length, 2);
+  assert.doesNotMatch(descriptor.template.content, /暂无分歧。/);
+  try {
+    for (const language of languages) {
+      locale.value = language.code;
+      assert.doesNotMatch(t('暂无分歧'), /[.。]$/);
+    }
+  } finally { reset(); }
+});
+
 test('page titles and SEO metadata follow initialization and every language switch', () => {
   const elements = new Map();
   const structuredData = { textContent: JSON.stringify({ '@type': 'WebApplication', name: 'DonKanvas', url: 'https://ourtaiko.github.io/web-tja-studio/' }) };
@@ -421,6 +433,9 @@ test('overview hover reports music time and one-based measures including delays 
   assert.match(template, /formatTime\(overviewHover.time\)/);
   assert.match(template, /t\('小节 \{p0\}', \{ p0: overviewHover.measure \?\? '—' \}\)/);
   assert.match(template, /@pointerenter="hoverOverview" @pointerleave="overviewHover = null"/);
+  const { descriptor: app } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
+  assert.match(app.styles[0].content, /\.overview-wave>#overview-hover\{[^}]*width:max-content;max-width:100%/);
+  assert.match(app.styles[0].content, /\.overview-wave>#overview-hover\{[^}]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis/);
 });
 
 test('overview dragging pans continuously without seeking or changing selections, while a tap still navigates', () => {
@@ -1391,6 +1406,8 @@ test('toolbar commands use scoped transparent surfaces with hover, pressed, focu
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'compact-toolbar-commands' });
   const styles = descriptor.styles[0].content;
+  assert.match(styles, /\.transport\{[^}]*border-top:1px solid var\(--line\);border-bottom:0;box-shadow:none/);
+  assert.match(styles, /\.playback-message-bar\+\.transport\{border-top:0\}/);
   assert.match(styles, /header\{[^}]*user-select:none/);
   assert.match(styles, /header :is\(input,textarea\)\{user-select:text\}/);
   const rules = styles.slice(styles.indexOf(':is(.studio-panel,.transport-host) :is(.document-toolbar'));
@@ -2059,7 +2076,16 @@ test('zoom submenu keyboard navigation wraps and returns focus without closing t
   press('End'); assert.equal(document.activeElement, items[2]);
   press('Escape'); press('ArrowLeft'); assert.equal(closed, 2);
   press('Tab'); assert.equal(prevented, 6); assert.equal(stopped, 6);
-  assert.match(descriptor.template.content, /role="menuitemradio" :aria-checked="controls.view === choice.value"/);
+  assert.match(descriptor.template.content, /role="menuitemradio" :aria-checked="controls.zoom === choice.value"/);
+  const zooms = runInNewContext(`${descriptor.scriptSetup.content.match(/const zooms = [^;]+;/)[0]}; zooms`);
+  assert.deepEqual(Array.from(zooms), [0.5, 0.75, 1.5, 2, 2.5, 3, 3.5, 4]);
+  const choicesSource = descriptor.scriptSetup.content.match(/const zoomChoices = [^;]+;/)[0];
+  const choices = runInNewContext(`${choicesSource}; zoomChoices`, { computed, zooms, t, Maximize2: {}, Ruler: {} });
+  assert.deepEqual(Array.from(choices.value, choice => choice.value), [1, 0.5, 0.75, 1.5, 2, 2.5, 3, 3.5, 4]);
+  assert.equal(choices.value[0].label, t('标准'));
+  assert.deepEqual(Array.from(choices.value.slice(1), choice => choice.label), ['0.5×', '0.75×', '1.5×', '2×', '2.5×', '3×', '3.5×', '4×']);
+  assert.match(descriptor.template.content, /id="view" v-model.number="controls.zoom"/);
+  assert.match(descriptor.template.content, /controls.zoom = choice.value; controls.view = 'auto'; closeZoom\(\)/);
   assert.match(descriptor.template.content, /role="menuitemcheckbox" :aria-checked="state.followPlayback" @click="state.followPlayback = !state.followPlayback"/);
 });
 
