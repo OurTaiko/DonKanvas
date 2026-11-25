@@ -599,7 +599,7 @@ test('the header timing follows the selected command point, edits, source and un
   } finally { cleanup(); }
 });
 
-test('playback timing follows the playhead with follow disabled, while the edit point and current measure stay untouched', async () => {
+test('playback timing follows the playhead while selected timing stays fixed with follow enabled or disabled', async () => {
   const { studio, mock, ticks, cleanup } = mountStudio();
   const { context } = fakeAudio(mock);
   try {
@@ -607,16 +607,21 @@ test('playback timing follows the playhead with follow disabled, while the edit 
     await nextTick();
     studio.setCommandPosition(0, 1);
     await studio.play();
-    studio.state.followPlayback = false; await nextTick();
+    const selectedTiming = studio.selectedTiming.value;
     context.currentTime = .535; ticks.frame();
     assert.equal(studio.currentTiming.value.bpm, 120); assert.equal(studio.currentTiming.value.scroll, 1);
+    assert.deepEqual(studio.selectedTiming.value, selectedTiming);
     context.currentTime = 1.045; ticks.frame();
     assert.equal(studio.currentTiming.value.bpm, 240); assert.equal(studio.currentTiming.value.scroll, 2);
+    assert.deepEqual(studio.selectedTiming.value, selectedTiming);
     assert.equal(studio.command.value.timing.bpm, 120);
+    studio.state.followPlayback = false; await nextTick();
     context.currentTime = 1.735; ticks.frame();
     assert.equal(studio.currentTiming.value.bar.index, 1); assert.equal(studio.state.selected, 0);
+    assert.deepEqual(studio.selectedTiming.value, selectedTiming);
     assert.equal(studio.command.value.fraction, 0);
     studio.pause(); assert.equal(studio.currentTiming.value.bar.index, 0); assert.equal(studio.currentTiming.value.bpm, 120);
+    assert.deepEqual(studio.selectedTiming.value, selectedTiming);
   } finally { cleanup(); }
 });
 

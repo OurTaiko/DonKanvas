@@ -53,23 +53,23 @@ function dismissTools(event) {
   } else if (toolsMenu.value.contains(event.target) || zoomOptions.value?.contains(event.target)) return;
   toolsOpen.value = false;
 }
-const { state, controls, bar, spans, visible, viewBeats, timelineScale, timelineBounds, timelineScrollBounds, cell, command, stats, chartStats, currentTiming, range } = studio;
+const { state, controls, bar, spans, visible, viewBeats, timelineScale, timelineBounds, timelineScrollBounds, cell, command, stats, chartStats, selectedTiming, range } = studio;
 const balloonHits = computed(() => {
   const { balloon, special } = chartStats.value;
   return balloon === null || special === null ? null : balloon + special;
 });
 const positionSummary = computed(() => {
-  const timing = currentTiming.value;
+  const timing = selectedTiming.value;
   if (!timing) return null;
   const position = cell.value ?? command.value;
   return {
     measure: timing.bar.index + 1,
-    fraction: !state.playing && position ? `${position.numerator}/${position.denominator}` : null,
-    time: state.playing ? state.position : position.time
+    fraction: `${position.numerator}/${position.denominator}`,
+    time: position.time
   };
 });
 const cellAttributes = computed(() => {
-  const selected = cell.value, timing = currentTiming.value;
+  const selected = cell.value, timing = selectedTiming.value;
   return [
     { id: 'cell-bpm', label: 'BPM', value: String(timing.bpm) },
     { id: 'cell-scroll', label: '卷轴倍率', value: `${timing.scroll}×` },
@@ -501,7 +501,7 @@ onUnmounted(() => {
       <Teleport to="#mobile-position-panel" :disabled="!mobile" defer>
       <section class="cell-inspector" :aria-label="t('落点信息')">
         <SectionHeading class="position-caption" :icon="Grid2X2" :title="t('落点信息')">
-          <span class="position-source">{{ t(state.playing ? '播放位置' : '所选落点') }}</span>
+          <span class="position-source">{{ t('所选落点') }}</span>
           <template #description>
             <div v-if="positionSummary" class="position-summary">
               <span>{{ t('小节 {p0}', { p0: positionSummary.measure }) }}</span>
@@ -546,7 +546,7 @@ onUnmounted(() => {
 <style>
 .editor-information{display:grid;grid-template-columns:minmax(0,1fr)}
 .editor-information>section.branch-context{min-width:0;align-content:start;border-top:1px solid var(--line);border-bottom:0}
-@container(min-width:900px){.editor-information{grid-template-columns:repeat(2,minmax(0,1fr))}.editor-information>section.branch-context{border-left:1px solid var(--line);padding-block:15px}}
+@container(min-width:900px){.editor-information{grid-template-columns:repeat(2,minmax(0,1fr))}.editor-information>section.branch-context{border-left:1px solid var(--line)}}
 .overview-caption{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;padding:4px 6px;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;pointer-events:none}
 .overview-caption>#overview-range{white-space:nowrap}
 .overview-wave{position:relative}
@@ -560,7 +560,7 @@ onUnmounted(() => {
 #measure-loop-anchor{font-size:11px;color:var(--green);font-variant-numeric:tabular-nums}
 #selection-summary{font-size:11px;color:var(--green)}
 .clear-measure-selection{align-self:center;min-height:20px;padding:0 6px;gap:4px;border:0;background:transparent;font-size:11px}.clear-measure-selection svg{width:14px;height:14px}
-.position-caption{margin-bottom:8px}.position-source{font-size:11px;color:var(--muted)}
+.position-caption{margin-bottom:12px}.position-source{font-size:11px;color:var(--muted)}
 .position-summary{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--ink);font-variant-numeric:tabular-nums}.position-summary>span{white-space:nowrap}
 .measure-nav{display:flex;align-items:center;gap:6px;min-width:0}.measure-nav label{display:flex;align-items:center;gap:6px;font-size:11px;white-space:nowrap}.measure-nav input{width:64px;min-width:0;height:28px;min-height:28px;padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:#fff;text-align:center;font-size:11px}
 .chart-statistics{display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;min-width:0;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.chart-statistics>span{white-space:nowrap}.chart-statistics b{font-weight:500;color:var(--ink)}

@@ -11,6 +11,7 @@ import { SONG_FIELDS, setSongMetadata } from './metadata.js';
 import { NOTE_TYPES } from './note-model.js';
 import { createTimelineViewport, TIMELINE_GUTTER } from './timeline.js';
 import { measureStart, measureEnd } from './loop.js';
+import { formatTime } from './useStudio.js';
 import { languages, locale, localePreference, matchLocale, detectLocale, initializeLocale, setLocale, LOCALE_KEY, t, message, formatMessage, LocalizedError } from './i18n.js';
 
 const reset = () => { locale.value = 'zh-CN'; localePreference.value = 'auto'; };
@@ -1099,35 +1100,39 @@ test('position information separates its summary from aligned parameter columns'
   assert.doesNotMatch(readFileSync(new URL('SongWorkspace.vue', import.meta.url), 'utf8'), /离开输入框时自动应用/);
 });
 
-test('position summary follows the selected point or live playback, never the browsed measure', () => {
+test('position summary follows only the selected point, never playback or the browsed measure', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   const script = descriptor.scriptSetup.content;
   const source = script.slice(script.indexOf('const positionSummary ='), script.indexOf('const cellAttributes ='));
   const state = reactive({ playing: false, selected: 8, position: 0 });
   const cell = ref({ bar: 2, numerator: 3, denominator: 8, time: 4.75 });
   const command = ref({ bar: 8, numerator: 1, denominator: 4, time: 16.5 });
-  const currentTiming = ref({ bar: { index: 2 } });
-  const summary = runInNewContext(`${source}; positionSummary`, { computed, state, cell, command, currentTiming });
+  const selectedTiming = ref({ bar: { index: 2 } });
+  const summary = runInNewContext(`${source}; positionSummary`, { computed, state, cell, command, selectedTiming });
   assert.equal(summary.value.measure, 3);
   assert.equal(summary.value.fraction, '3/8');
   assert.equal(summary.value.time, 4.75);
   state.selected = 10;
   assert.equal(summary.value.measure, 3);
   assert.equal(summary.value.time, 4.75);
-  state.playing = true; state.position = 12.125; currentTiming.value = { bar: { index: 6 } };
-  assert.equal(summary.value.measure, 7);
-  assert.equal(summary.value.fraction, null);
-  assert.equal(summary.value.time, 12.125);
-  state.position = 12.25;
-  assert.equal(summary.value.time, 12.25);
-  state.playing = false; currentTiming.value = { bar: { index: 2 } };
+  state.playing = true; state.position = 12.125;
+  assert.equal(summary.value.measure, 3);
   assert.equal(summary.value.fraction, '3/8');
   assert.equal(summary.value.time, 4.75);
-  cell.value = null; currentTiming.value = { bar: { index: 8 } };
+  state.position = 12.25;
+  assert.equal(summary.value.time, 4.75);
+  state.playing = false;
+  assert.equal(summary.value.fraction, '3/8');
+  assert.equal(summary.value.time, 4.75);
+  cell.value = null; selectedTiming.value = { bar: { index: 8 } };
   assert.equal(summary.value.measure, 9);
   assert.equal(summary.value.fraction, '1/4');
   assert.equal(summary.value.time, 16.5);
-  currentTiming.value = null;
+  state.playing = true; state.position = 20;
+  assert.equal(summary.value.measure, 9);
+  assert.equal(summary.value.fraction, '1/4');
+  assert.equal(summary.value.time, 16.5);
+  selectedTiming.value = null;
   assert.equal(summary.value, null);
 });
 
@@ -1135,24 +1140,24 @@ test('position attributes omit branch information while preserving timing detail
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   const script = descriptor.scriptSetup.content;
   const source = script.slice(script.indexOf('const cellAttributes ='), script.indexOf('const timeline ='));
-  const currentTiming = ref({ bpm: 120, scroll: 1, numerator: 4, denominator: 4, delay: 0 });
+  const selectedTiming = ref({ bpm: 120, scroll: 1, numerator: 4, denominator: 4, delay: 0 });
   const cell = ref(null);
   const attributes = runInNewContext(`${source}; cellAttributes`, {
-    computed, cell, currentTiming, t, NOTE_TYPES
+    computed, cell, selectedTiming, t, NOTE_TYPES
   });
   assert.ok(!attributes.value.some(attribute => attribute.id === 'cell-branch' || attribute.label === '分歧路线'));
   assert.equal(attributes.value.find(attribute => attribute.id === 'cell-bpm').value, '120');
-  currentTiming.value.bpm = 180;
+  selectedTiming.value.bpm = 180;
   assert.equal(attributes.value.find(attribute => attribute.id === 'cell-bpm').value, '180');
   assert.equal(attributes.value.find(attribute => attribute.id === 'cell-delay').value, '0');
-  currentTiming.value.delay = .125;
+  selectedTiming.value.delay = .125;
   assert.equal(attributes.value.find(attribute => attribute.id === 'cell-delay').value, '0.125');
   reset();
   try {
     for (const [language, yes, no] of [['zh-CN', '是', '否'], ['en', 'Yes', 'No']]) {
       locale.value = language;
       for (const enabled of [false, true, false]) {
-        currentTiming.value.gogo = enabled;
+        selectedTiming.value.gogo = enabled;
         const attribute = attributes.value.find(attribute => attribute.id === 'cell-gogo');
         assert.equal(attribute.label, 'GOGOTIME');
         assert.equal(attribute.value, enabled ? yes : no);
@@ -1174,7 +1179,7 @@ test('position attributes omit branch information while preserving timing detail
 test('balloon and special roll counts are edited in the right note panel', () => {
   const { descriptor } = parse(readFileSync(new URL('MeasureEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'balloon-inspector' });
-  const section = descriptor.template.content.match(/<section[^>]*aria-labelledby="note-palette-title">[\s\S]*?<\/section>/)[0];
+  const section = descriptor.template.content.match(/<details[^>]*aria-labelledby="note-palette-title">[\s\S]*?<\/details>/)[0];
   assert.match(section, /id="balloon-count"/);
   assert.match(section, /v-if="cell && cell.ordinal >= 0" class="balloon-control command-field"/);
   assert.ok(section.includes('<label for="balloon-count">{{ t(\'气球 / 特殊连打（#{p0}）敲击次数\', { p0: cell.ordinal + 1 }) }}</label>'));
@@ -1211,7 +1216,7 @@ test('current position timing lives in note attributes and measure selection liv
   }
   assert.match(nav, /@change="studio.select\(Number\(\$event.target.value\) - 1\)/);
   assert.doesNotMatch(descriptor.template.content, /id="meter"|id="selection"/);
-  assert.match(descriptor.template.content, /t\(state.playing \? '播放位置' : '所选落点'\)/);
+  assert.match(descriptor.template.content, /class="position-source">{{ t\('所选落点'\) }}/);
 });
 
 test('toolbar commands use scoped transparent surfaces with hover, pressed, focus and playback states', () => {
@@ -1252,12 +1257,12 @@ test('the sidebar uses peer sections rather than nesting all editing under a mea
   const { descriptor } = parse(readFileSync(new URL('MeasureEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'inspector-hierarchy' });
   const aside = descriptor.template.ast.children.find(node => node.tag === 'aside');
-  const sections = aside.children.filter(node => ['section', 'form'].includes(node.tag));
+  const sections = aside.children.filter(node => node.tag === 'details');
   const attribute = (node, name) => node.props.find(prop => prop.name === name)?.value?.content;
   const ids = ['note-palette-title', 'selected-position-title', 'measure-properties-title', 'command-editor-title', 'measure-command-list-title', 'measure-source-title'];
   assert.deepEqual(sections.map(node => attribute(node, 'aria-labelledby')), ids);
   for (const [index, section] of sections.entries()) {
-    const header = section.children.find(node => node.tag === 'div' && attribute(node, 'class')?.includes('inspector-heading'));
+    const header = section.children.find(node => node.tag === 'summary' && attribute(node, 'class')?.includes('inspector-heading'));
     const heading = header.children.find(node => node.tag === 'h2');
     assert.equal(attribute(heading, 'id'), ids[index]);
   }
@@ -1275,7 +1280,8 @@ test('the sidebar uses peer sections rather than nesting all editing under a mea
   }
   assert.ok(selection.includes('@focusin="state.playing && studio.pause()"'));
   assert.equal(selection.split('@change="movePosition"').length - 1, 2);
-  assert.match(selection, /t\('当前选择的位置'\)/);
+  assert.match(selection, /t\('落点位置'\)/);
+  assert.match(descriptor.styles[0].content, /\.selection-position \.inspector-content>output\{[^}]*font-size:12px;line-height:18px;/);
   assert.doesNotMatch(selection, /指令位置分子|指令位置分母/);
   for (const id of ['bar-badge', 'bar-time', 'division']) assert.ok(properties.includes(`id="${id}"`), id);
   for (const id of ['position-commands', 'measure-commands']) assert.ok(commands.includes(`id="${id}"`), id);
@@ -1285,10 +1291,88 @@ test('the sidebar uses peer sections rather than nesting all editing under a mea
   assert.doesNotMatch(descriptor.template.content, /command-player-structure|插入双人谱结构/);
   assert.ok(list.includes('id="bar-commands"'));
   for (const section of [commands, list]) assert.ok(section.includes('@focusin="state.playing && studio.pause()"'));
-  assert.match(source, /<h2 id="measure-source-title"><label for="source">/);
+  assert.match(source, /<h2 id="measure-source-title">{{ t\('小节源码（含指令）'\) }}<\/h2>/);
   assert.ok(source.includes('id="source-state"')); assert.ok(source.includes('id="source"'));
-  assert.match(descriptor.styles[0].content, /\.inspector-heading h2\{[^}]*font-size:13px;font-weight:600/);
+  assert.match(descriptor.styles[0].content, /\.inspector-heading h2\{flex:0 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\}/);
   assert.match(descriptor.styles[0].content, /\.command-group legend\{[^}]*font-size:11px;font-weight:500/);
+});
+
+test('editor sections collapse independently without unmounting fields or promoting section headings', () => {
+  const { descriptor } = parse(readFileSync(new URL('MeasureEditor.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'collapsible-inspector-sections' });
+  const aside = descriptor.template.ast.children.find(node => node.tag === 'aside');
+  const sections = aside.children.filter(node => node.tag === 'details');
+  assert.equal(sections.length, 6);
+  for (const section of sections) {
+    assert.ok(section.props.some(prop => prop.name === 'open'));
+    assert.ok(!section.props.some(prop => prop.name === 'name'));
+    const summary = section.children.find(node => node.tag === 'summary');
+    assert.ok(summary);
+    assert.ok(summary.children.some(node => node.tag === 'h2'));
+    assert.doesNotMatch(summary.loc.source, /<button\b/);
+    assert.match(summary.loc.source, /class="inspector-heading workspace-section-summary"/);
+    assert.match(summary.loc.source, /class="inspector-summary" :title="sectionSummaries\.\w+">{{ sectionSummaries\.\w+ }}<\/span>/);
+    assert.match(summary.loc.source, /<ChevronDown class="workspace-section-chevron" aria-hidden="true" \/><\/summary>/);
+    const content = section.children.find(node => ['div', 'form'].includes(node.tag));
+    assert.ok(content);
+    assert.doesNotMatch(content.loc.source.split('>')[0], /v-if|v-show/);
+    assert.doesNotMatch(section.loc.source, /SectionHeading/);
+  }
+  const commandSection = sections.find(section => section.props.some(prop => prop.name === 'aria-labelledby' && prop.value?.content === 'command-editor-title'));
+  const commandForm = commandSection.children.find(node => node.tag === 'form');
+  assert.match(commandForm.loc.source, /<button id="settings-reset" type="button"[^>]*:disabled="!command\?\.commands.some\(item => EDITABLE_COMMANDS.includes\(item.name\)\) \|\| state.invalid" @click="studio.clearSettings"/);
+  assert.match(descriptor.template.content, /<form class="bar-settings inspector-content" @submit.prevent>/);
+  assert.doesNotMatch(descriptor.template.content, /<label for="source">/);
+  const styles = descriptor.styles[0].content;
+  assert.match(styles, /\.inspector-section\{[^}]*margin:0 0 16px;border:0\}/);
+  assert.match(styles, /\.inspector-content\{[^}]*padding:12px 14px 14px;border:0\}/);
+  assert.doesNotMatch(styles, /\.inspector-(?:section|heading)\{[^}]*border-radius/);
+  assert.match(styles, /\.inspector-heading\{background:var\(--paper\)\}/);
+  const app = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8')).descriptor;
+  assert.match(app.styles[0].content, /\.workspace-section-summary:focus-visible\{/);
+  assert.match(app.styles[0].content, /details\[open\]>\.workspace-section-summary>\.workspace-section-chevron\{transform:none\}/);
+});
+
+test('section title summaries track selected notes, exact positions, measure counts and source status', () => {
+  reset();
+  try {
+    const { descriptor } = parse(readFileSync(new URL('MeasureEditor.vue', import.meta.url), 'utf8'));
+    const script = descriptor.scriptSetup.content;
+    const source = script.slice(script.indexOf('const sectionSummaries ='), script.indexOf('watch([command, measureCommand]'));
+    const state = reactive({ selected: 2, sourceState: '已同步' });
+    const cell = ref({ name: t('咔') });
+    const command = ref({ numerator: 3, denominator: 8, time: 4.75, commands: [{ name: 'SCROLL' }, { name: 'LYRIC' }] });
+    const bar = ref({ notes: '10020000', instructions: [{}, {}, {}] });
+    const stats = ref({ total: 2 });
+    const summaries = runInNewContext(`${source}; sectionSummaries`, { computed, state, cell, command, bar, stats, t, formatTime });
+    assert.deepEqual({ ...summaries.value }, {
+      note: '咔', position: '3/8 · 00:04.750', measure: '小节 3 · 音符数：2',
+      commands: '2 条指令', instructions: '3 条指令', source: '8 格 · 已同步'
+    });
+    cell.value = null;
+    assert.equal(summaries.value.note, '空拍');
+    command.value = { numerator: 0, denominator: 1, time: 0, commands: [] };
+    assert.equal(summaries.value.position, '0/1 · 00:00.000');
+    assert.equal(summaries.value.commands, '0 条指令');
+    state.selected = 4;
+    stats.value.total = 5;
+    bar.value = { notes: '1000100010001000', instructions: [] };
+    state.sourceState = '编辑中';
+    assert.equal(summaries.value.measure, '小节 5 · 音符数：5');
+    assert.equal(summaries.value.instructions, '0 条指令');
+    assert.equal(summaries.value.source, '16 格 · 编辑中');
+    assert.equal(summaries.value.position, '0/1 · 00:00.000');
+    locale.value = 'en';
+    assert.equal(summaries.value.note, 'Rest');
+    assert.equal(summaries.value.commands, '0 commands');
+    assert.equal(summaries.value.source, `16 ${t('格')} · ${t('编辑中')}`);
+    command.value = null; bar.value = null;
+    assert.equal(summaries.value.position, '—');
+    assert.equal(summaries.value.commands, '0 commands');
+    assert.equal(summaries.value.instructions, '0 commands');
+    assert.equal(summaries.value.source, `0 ${t('格')} · ${t('编辑中')}`);
+    assert.match(descriptor.styles[0].content, /\.inspector-summary\{[^}]*min-width:0;[^}]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis/);
+  } finally { reset(); }
 });
 
 test('command inputs share full-column sizing and height without resizing checkboxes or losing paired fields', () => {
@@ -1572,7 +1656,7 @@ test('measure statistics live in measure properties while snap remains in the to
   assert.doesNotMatch(timeline.template.content, /editor-footer|position-info/);
   assert.doesNotMatch(timeline.template.content, /id="note-count"|id="bar-grid"|id="bar-snap"|id="bar-slots"/);
   assert.match(measure.scriptSetup.content, /import \{[^}]*\bGRID_DIVISIONS\b[^}]*\} from '\.\/grid.js'/);
-  const info = measure.template.content.match(/<section class="inspector-section" aria-labelledby="measure-properties-title">[\s\S]*?<\/section>/)[0];
+  const info = measure.template.content.match(/<details class="inspector-section" open aria-labelledby="measure-properties-title">[\s\S]*?<\/details>/)[0];
   assert.match(info, /id="note-count">.*stats.total/);
   assert.match(info, /id="bar-grid">.*GRID_DIVISIONS/);
   assert.match(timeline.template.content, /id="snap-division" v-model="controls.snapChoice"/);
@@ -1596,9 +1680,42 @@ test('navigation, position information and branches share an icon heading with i
   assert.match(timeline, /<SectionHeading class="position-caption" :icon="Grid2X2" :title="t\('落点信息'\)">[\s\S]*class="position-source"/);
   const branches = readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8');
   assert.match(branches, /<SectionHeading class="branch-caption" :icon="GitBranch" :title="t\('谱面分歧'\)">[\s\S]*class="branch-count"[\s\S]*<template #description>/);
-  assert.match(branches, /\.branch-context\{[^}]*padding:8px 12px/);
-  assert.match(readFileSync(new URL('sound.css', import.meta.url), 'utf8'), /\.cell-inspector\{[^}]*padding:15px 12px/);
-  assert.match(readFileSync(new URL('App.vue', import.meta.url), 'utf8'), /\.measure-section\{padding-inline:12px\}/);
+  assert.match(branches, /\.branch-context\{[^}]*padding:16px 12px/);
+  assert.match(readFileSync(new URL('sound.css', import.meta.url), 'utf8'), /\.cell-inspector\{[^}]*padding:16px 12px/);
+  assert.match(readFileSync(new URL('App.vue', import.meta.url), 'utf8'), /\.measure-section\{padding:16px 12px\}/);
+});
+
+test('mobile and desktop inspector panels retain their hierarchy and edit headings reuse sidebar typography without a top gap', () => {
+  const component = name => parse(readFileSync(new URL(name, import.meta.url), 'utf8')).descriptor;
+  const heading = component('SectionHeading.vue');
+  const measure = component('MeasureEditor.vue');
+  const app = component('App.vue');
+  const branch = component('BranchControls.vue');
+  const timeline = component('TimelineEditor.vue');
+  const sound = readFileSync(new URL('sound.css', import.meta.url), 'utf8');
+  assert.match(heading.styles[0].content, /\.section-caption\{display:flex;align-items:flex-start;/);
+  assert.match(measure.template.content, /<summary class="inspector-heading workspace-section-summary"><h2 id="note-palette-title">{{ t\('音符编辑'\) }}<\/h2><span class="inspector-summary" :title="sectionSummaries.note">{{ sectionSummaries.note }}<\/span><ChevronDown class="workspace-section-chevron" aria-hidden="true" \/><\/summary>/);
+  assert.doesNotMatch(measure.template.content, /<SectionHeading/);
+  assert.match(measure.styles[0].content, /\.measure-editor\{[^}]*padding:0;/);
+  assert.doesNotMatch(measure.styles[0].content, /\.inspector-heading(?: h2)?\{[^}]*(?:font|line-height|padding|margin|min-height):/);
+  assert.match(app.styles[0].content, /\.workspace-section-summary>b,\.workspace-section-summary>h2\{[^}]*margin:0;font:inherit;font-weight:700;/);
+  for (const [styles, selector] of [
+    [branch.styles[0].content, 'branch-context'],
+    [app.styles[0].content, 'measure-section'],
+    [sound, 'cell-inspector']
+  ]) {
+    const rules = [...styles.matchAll(new RegExp(`\\.${selector}\\{([^}]+)\\}`, 'g'))];
+    assert.ok(rules.length, selector);
+    for (const [, declarations] of rules) {
+      if (declarations.includes('padding')) assert.match(declarations, /(?:^|;)padding:16px 12px(?:;|$)/, selector);
+    }
+  }
+  assert.match(app.styles[0].content, /\.inspector-tab-panel>\.cell-inspector,\.inspector-tab-panel>\.branch-context\{border:0\}/);
+  assert.match(branch.styles[0].content, /\.branch-context\{[^}]*align-items:flex-start/);
+  assert.doesNotMatch(branch.styles[0].content, /\.branch-caption\{[^}]*align-items:center/);
+  assert.match(branch.styles[0].content, /\.branch-caption p\{[^}]*margin:0\}/);
+  assert.doesNotMatch(timeline.styles[0].content, /padding-block:15px/);
+  assert.match(timeline.styles[0].content, /\.position-caption\{margin-bottom:12px\}/);
 });
 
 test('branch information occupies the caption subtitle without instructional copy or a separate footer row', () => {
@@ -1848,7 +1965,7 @@ test('branch filtering and structural management have separate dialogs and actio
   assert.match(descriptor.styles[0].content, /\.branch-actions\{display:flex;flex-basis:100%;flex-wrap:wrap;gap:8px\}/);
   assert.match(descriptor.styles[0].content, /\.branch-actions>\.manage-branches\{min-height:32px;padding:5px 10px\}/);
   assert.doesNotMatch(descriptor.template.content, /<dialog[^>]*\bopen(?:\s|>)/);
-  assert.match(descriptor.styles[0].content, /\.branch-context\{[^}]*margin:0;padding:8px 12px;border-bottom:1px solid var\(--line\);background:#fff/);
+  assert.match(descriptor.styles[0].content, /\.branch-context\{[^}]*margin:0;padding:16px 12px;border-bottom:1px solid var\(--line\);background:#fff/);
   const app = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8')).descriptor;
   assert.match(app.template.content, /<div class="editor-scroll">\s*<TimelineEditor v-if="studio.bar.value" :mobile="mobileWorkspace" \/>/);
   assert.doesNotMatch(app.template.content, /<BranchControls/);

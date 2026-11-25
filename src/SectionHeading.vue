@@ -16,7 +16,7 @@ defineProps({
 </template>
 
 <style scoped>
-.section-caption{display:flex;align-items:center;gap:10px;min-width:0;min-height:34px}
+.section-caption{display:flex;align-items:flex-start;gap:10px;min-width:0;min-height:34px}
 .section-emblem{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;color:var(--green);background:#e2eee5;flex-shrink:0}
 .section-emblem :deep(svg){width:18px;height:18px}
 .section-caption-content{min-width:0}

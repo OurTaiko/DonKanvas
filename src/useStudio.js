@@ -94,15 +94,17 @@ export function useStudio() {
   }
   const command = computed(() => commandAt(state.commandCell || { bar: state.selected, numerator: 0, denominator: 1 }));
   const measureCommand = computed(() => commandAt({ bar: state.selected, numerator: 0, denominator: 1 }));
-  const currentTiming = computed(() => {
+  const selectedTiming = computed(() => {
     if (!state.chart?.bars.length) return null;
-    if (!state.playing) {
-      const selected = state.selectedCell ? commandAt(state.selectedCell) : command.value;
-      return {
-        bar: state.chart.bars[selected.bar], ...selected.timing,
-        delay: selected.commands.filter(event => event.name === 'DELAY').reduce((sum, event) => sum + Number(event.value), 0)
-      };
-    }
+    const selected = state.selectedCell ? commandAt(state.selectedCell) : command.value;
+    return {
+      bar: state.chart.bars[selected.bar], ...selected.timing,
+      delay: selected.commands.filter(event => event.name === 'DELAY').reduce((sum, event) => sum + Number(event.value), 0)
+    };
+  });
+  const currentTiming = computed(() => {
+    if (!state.playing) return selectedTiming.value;
+    if (!state.chart?.bars.length) return null;
     const bars = state.chart.bars, time = state.position;
     const item = bars.findLast(item => time >= measureStart(item) && time < measureEnd(item)) ??
       bars.findLast(item => measureStart(item) <= time) ?? bars[0];
@@ -936,5 +938,5 @@ export function useStudio() {
     pause(); void context?.close(); document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup);
     window.removeEventListener('blur', clearShortcutKeys); window.removeEventListener('beforeunload', beforeUnload);
   });
-  return { state, controls, bar, spans, visible, viewSpan, viewBeats, timelineWidth, timelineScale, timelineBounds, timelineScrollBounds, chartStats, stats, cell, command, measureCommand, currentTiming, range, duration, metadata, notice, reportFileError, pause, play, stop, seek, seekMeasure, panTimeline, select, selectCell, moveCell, selectNote, selectAdjacentNote, clearNoteSelection, setCommandPosition, applySettings, applyBranchSource, applyMeasureBranch, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, clearLoop, markLoop, loopCurrent, setSnap, changeCourse, createCourse, removeCourse, createPlayerCharts, setLevel, changeAllBranches, changeBranch, openChart, openCharts, openAudio, newChart, switchChart, closeChart, insertBar, deleteBar, copyMeasures, requestPaste, pasteMeasures, reloadForUpdate, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
+  return { state, controls, bar, spans, visible, viewSpan, viewBeats, timelineWidth, timelineScale, timelineBounds, timelineScrollBounds, chartStats, stats, cell, command, measureCommand, selectedTiming, currentTiming, range, duration, metadata, notice, reportFileError, pause, play, stop, seek, seekMeasure, panTimeline, select, selectCell, moveCell, selectNote, selectAdjacentNote, clearNoteSelection, setCommandPosition, applySettings, applyBranchSource, applyMeasureBranch, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, clearLoop, markLoop, loopCurrent, setSnap, changeCourse, createCourse, removeCourse, createPlayerCharts, setLevel, changeAllBranches, changeBranch, openChart, openCharts, openAudio, newChart, switchChart, closeChart, insertBar, deleteBar, copyMeasures, requestPaste, pasteMeasures, reloadForUpdate, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
 }
