@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { translations } from './locales.js';
+import { translations, getPageMetadata, getPageURL, pageLocales } from './locales.js';
 
 export const LOCALE_KEY = 'web-tja-studio-locale';
 export const languages = [
@@ -53,9 +53,10 @@ export class LocalizedError extends Error {
 export function initializeLocale(storage, browserLanguages = globalThis.navigator?.languages || [globalThis.navigator?.language], root = globalThis.document?.documentElement) {
   let saved, error;
   try { saved = (storage ?? globalThis.localStorage)?.getItem(LOCALE_KEY); } catch (cause) { error = cause; }
-  localePreference.value = languages.some(item => item.code === saved) ? saved : 'auto';
-  locale.value = localePreference.value === 'auto' ? detectLocale(browserLanguages) : saved;
-  if (root) root.lang = locale.value;
+  const pageLocale = languages.find(item => root?.ownerDocument?.location?.pathname.endsWith(`/index.${item.code}.html`))?.code;
+  localePreference.value = pageLocale ?? (languages.some(item => item.code === saved) ? saved : 'auto');
+  locale.value = localePreference.value === 'auto' ? detectLocale(browserLanguages) : localePreference.value;
+  if (root) { root.lang = locale.value; updateDocumentMetadata(root); }
   return error;
 }
 
@@ -63,6 +64,40 @@ export function setLocale(code, storage, root = globalThis.document?.documentEle
   if (code !== 'auto' && !languages.some(item => item.code === code)) throw new RangeError(`Unsupported locale: ${code}`);
   localePreference.value = code;
   locale.value = code === 'auto' ? detectLocale(globalThis.navigator?.languages || [globalThis.navigator?.language]) : code;
-  if (root) root.lang = locale.value;
+  if (root) { root.lang = locale.value; updateDocumentMetadata(root); }
   try { (storage ?? globalThis.localStorage)?.setItem(LOCALE_KEY, code); } catch (error) { return error; }
+}
+
+export function updateDocumentMetadata(root) {
+  const document = root?.ownerDocument;
+  if (!document) return;
+  const metadata = getPageMetadata(locale.value);
+  document.title = metadata.title;
+  for (const [selector, key] of Object.entries({
+    'meta[name="description"]': 'description',
+    'meta[property="og:title"]': 'title',
+    'meta[property="og:description"]': 'socialDescription',
+    'meta[property="og:image:alt"]': 'imageAlt',
+    'meta[name="twitter:title"]': 'title',
+    'meta[name="twitter:description"]': 'socialDescription',
+    'meta[name="twitter:image:alt"]': 'imageAlt'
+  })) document.querySelector(selector)?.setAttribute('content', metadata[key]);
+  document.querySelector('meta[property="og:locale"]')?.setAttribute('content', pageLocales[locale.value]);
+  const canonicalURL = getPageURL(locale.value);
+  document.querySelector('link[rel="canonical"]')?.setAttribute('href', canonicalURL);
+  document.querySelector('meta[property="og:url"]')?.setAttribute('content', canonicalURL);
+  const structuredData = document.querySelector('script[type="application/ld+json"]');
+  if (structuredData) {
+    const application = JSON.parse(structuredData.textContent);
+    application.description = metadata.applicationDescription;
+    application.inLanguage = locale.value;
+    application.url = canonicalURL;
+    structuredData.textContent = JSON.stringify(application);
+  }
+  if (document.defaultView && /\/(?:index(?:\.(?:en|ja|zh-TW|ko))?\.html)?$/.test(document.location.pathname)) {
+    const address = new URL(document.location.href);
+    const localized = new URL(localePreference.value === 'auto' || locale.value === 'zh-CN' ? './' : `index.${locale.value}.html`, address);
+    address.pathname = localized.pathname;
+    document.defaultView.history.replaceState(document.defaultView.history.state, '', address);
+  }
 }

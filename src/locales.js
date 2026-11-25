@@ -1,5 +1,29 @@
 // Translation order: English, Japanese, Traditional Chinese, Korean.
+export const pageLocales = { 'zh-CN': 'zh_CN', en: 'en_US', ja: 'ja_JP', 'zh-TW': 'zh_TW', ko: 'ko_KR' };
+
+export function getPageURL(code) {
+  return new URL(code === 'zh-CN' ? './' : `index.${code}.html`, 'https://ourtaiko.github.io/web-tja-studio/').href;
+}
+
+export const pageMetadataKeys = {
+  title: 'DonKanvas - 在线 TJA 太鼓谱面编辑器',
+  description: 'DonKanvas 是免费的在线 TJA 太鼓谱面编辑器，支持可视化音符编辑、音频波形、分歧编排与播放预览。文件在浏览器本地处理，无需上传。',
+  socialDescription: '可视化编辑 TJA 太鼓谱面，结合音频波形编排音符与分歧，实时播放预览。免费使用，文件无需上传。',
+  imageAlt: 'DonKanvas 红色太鼓音符图标',
+  applicationDescription: '免费的在线 TJA 太鼓谱面编辑器，支持可视化音符编辑、音频波形、分歧编排与播放预览，文件在浏览器本地处理。'
+};
+
+export function getPageMetadata(code = 'zh-CN') {
+  const index = ['en', 'ja', 'zh-TW', 'ko'].indexOf(code);
+  return Object.fromEntries(Object.entries(pageMetadataKeys).map(([name, key]) => [name, index < 0 ? key : translations[key][index]]));
+}
+
 export const translations = {
+  [pageMetadataKeys.title]: ['DonKanvas - Online TJA Chart Editor', 'DonKanvas - オンライン TJA 太鼓譜面エディター', 'DonKanvas - 線上 TJA 太鼓譜面編輯器', 'DonKanvas - 온라인 TJA 태고 채보 편집기'],
+  [pageMetadataKeys.description]: ['DonKanvas is a free online TJA chart editor for Taiko no Tatsujin, with visual note editing, audio waveforms, branching and playback previews. Files stay in your browser; no uploads required.', 'DonKanvas は無料のオンライン TJA 太鼓譜面エディターです。音符の視覚的な編集、音声波形、譜面分岐、再生プレビューに対応。ファイルはブラウザー内で処理され、アップロードは不要です。', 'DonKanvas 是免費的線上 TJA 太鼓譜面編輯器，支援視覺化音符編輯、音訊波形、分歧編排與播放預覽。檔案在瀏覽器本機處理，無需上傳。', 'DonKanvas는 시각적 음표 편집, 오디오 파형, 채보 분기 및 재생 미리보기를 지원하는 무료 온라인 TJA 태고 채보 편집기입니다. 파일은 브라우저에서 처리되며 업로드할 필요가 없습니다.'],
+  [pageMetadataKeys.socialDescription]: ['Edit TJA charts visually with audio waveforms, note and branch editing, and playback previews. Free to use; no file uploads required.', '音声波形を見ながら TJA 太鼓譜面の音符や分岐を視覚的に編集し、再生プレビューで確認。無料で利用でき、ファイルのアップロードは不要です。', '視覺化編輯 TJA 太鼓譜面，結合音訊波形編排音符與分歧，即時播放預覽。免費使用，檔案無需上傳。', '오디오 파형을 보며 TJA 태고 채보의 음표와 분기를 시각적으로 편집하고 재생 미리보기로 확인하세요. 무료이며 파일 업로드가 필요 없습니다.'],
+  [pageMetadataKeys.imageAlt]: ['DonKanvas red taiko note icon', 'DonKanvas の赤い太鼓音符アイコン', 'DonKanvas 紅色太鼓音符圖示', 'DonKanvas 빨간 태고 음표 아이콘'],
+  [pageMetadataKeys.applicationDescription]: ['A free online TJA chart editor with visual note editing, audio waveforms, branching and playback previews. Files are processed locally in your browser.', '音符の視覚的な編集、音声波形、譜面分岐、再生プレビューに対応した無料のオンライン TJA 太鼓譜面エディター。ファイルはブラウザー内で処理されます。', '免費的線上 TJA 太鼓譜面編輯器，支援視覺化音符編輯、音訊波形、分歧編排與播放預覽，檔案在瀏覽器本機處理。', '시각적 음표 편집, 오디오 파형, 채보 분기 및 재생 미리보기를 지원하는 무료 온라인 TJA 태고 채보 편집기입니다. 파일은 브라우저에서 로컬로 처리됩니다.'],
   '尚未载入音频': ['No audio loaded', '音声が読み込まれていません', '尚未載入音訊', '오디오가 로드되지 않았습니다'],
   '关闭提示': ['Dismiss message', 'メッセージを閉じる', '關閉提示', '메시지 닫기'],
   '左右滑动微调选择': ['Slide left or right to adjust selection', '左右にスライドして選択位置を微調整', '左右滑動微調選取', '좌우로 밀어 선택 위치 미세 조정'],
@@ -156,7 +180,7 @@ export const translations = {
   'macOS：打开、保存、另存为、撤销和重做也支持 Command 代替 Ctrl。Esc 可关闭菜单并返回入口。': ['macOS: Open, Save, Save As, Undo and Redo also support Command instead of Ctrl. Esc closes menus and returns focus to their trigger.', 'macOS：開く、保存、名前を付けて保存、元に戻す、やり直すは Ctrl の代わりに Command も使えます。Esc でメニューを閉じ、入口に戻ります。', 'macOS：開啟、儲存、另存新檔、復原和重做也支援以 Command 代替 Ctrl。Esc 可關閉選單並返回入口。', 'macOS: 열기, 저장, 다른 이름으로 저장, 실행 취소 및 다시 실행은 Ctrl 대신 Command도 지원합니다. Esc로 메뉴를 닫고 버튼으로 돌아갑니다.'],
   '位置': ['Position', '位置', '位置', '위치'],
   '播放 / 暂停': ['Play / Pause', '再生 / 一時停止', '播放 / 暫停', '재생 / 일시 정지'],
-  '取消选择': ['Clear selection', '選択を解除', '取消選取', '선택 해제'],
+  '取消选择': ['Deselect', '選択を解除', '取消選取', '선택 해제'],
   '文件': ['File', 'ファイル', '檔案', '파일'],
   '新建谱面（Ctrl+Alt+N）': ['New chart (Ctrl+Alt+N)', '譜面を新規作成（Ctrl+Alt+N）', '新增譜面（Ctrl+Alt+N）', '새 채보 (Ctrl+Alt+N)'],
   '打开谱面（Ctrl+O）': ['Open chart (Ctrl+O)', '譜面を開く（Ctrl+O）', '開啟譜面（Ctrl+O）', '채보 열기 (Ctrl+O)'],

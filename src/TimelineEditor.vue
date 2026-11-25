@@ -505,7 +505,7 @@ onUnmounted(() => {
       <Teleport to="#mobile-position-panel" :disabled="!mobile" defer>
       <section class="cell-inspector" :aria-label="t('落点信息')">
         <SectionHeading class="position-caption" :icon="Grid2X2" :title="t('落点信息')">
-          <span v-if="positionSummary" class="position-source">{{ t('所选落点') }}</span>
+          <template #actions><button v-if="positionSummary" id="clear-position-selection" type="button" class="clear-position-selection clear-selection" :title="t('取消选择')" :aria-label="t('取消选择')" @click="studio.clearNoteSelection"><X aria-hidden="true" />{{ t('取消选择') }}</button></template>
           <template #description>
             <div v-if="positionSummary" class="position-summary">
               <span>{{ t('小节') }} <b>{{ positionSummary.measure }}</b></span>
@@ -525,7 +525,7 @@ onUnmounted(() => {
     <div class="measure-heading">
       <SectionHeading :icon="Map" :title="t('全局导航')">
         <output v-if="range" id="selection-summary">{{ t('已选小节：{p0}–{p1}', { p0: range[0], p1: range[1] }) }}</output>
-        <button v-if="range || state.loopAnchor !== null" type="button" class="clear-measure-selection" @click="studio.clearLoop"><X aria-hidden="true" />{{ t('取消选择') }}</button>
+        <template #actions><button v-if="range || state.loopAnchor !== null" type="button" class="clear-measure-selection clear-selection" :title="t('取消选择')" :aria-label="t('取消选择')" @click="studio.clearLoop"><X aria-hidden="true" />{{ t('取消选择') }}</button></template>
         <template #description>
           <div class="chart-statistics" :aria-label="t('谱面统计')">
             <span class="bar-count"><b id="bar-count">{{ state.chart.bars.length }}</b> {{ t('小节') }}</span>
@@ -571,8 +571,11 @@ onUnmounted(() => {
 .timeline-frame .timeline-wrap:focus{outline:none}
 #measure-loop-anchor{font-size:11px;color:var(--green);font-variant-numeric:tabular-nums}
 #selection-summary{font-size:11px;color:var(--green)}
-.clear-measure-selection{align-self:center;min-height:20px;padding:0 6px;gap:4px;border:0;background:transparent;font-size:11px}.clear-measure-selection svg{width:14px;height:14px}
-.position-caption{margin-bottom:12px}.position-source{font-size:11px;color:var(--muted)}
+.clear-selection{height:20px;min-height:20px;padding:0 5px;gap:3px;flex-shrink:0;border:1px solid var(--line);border-radius:4px;background:#fff;color:#5f6e65;font-family:inherit;font-size:12px;font-weight:400;line-height:18px;white-space:nowrap;transform:translateY(-1px)}
+.clear-selection svg{width:12px;height:12px}
+.clear-selection:hover{border-color:#abc4b7;background:#f1f6f3;color:var(--green)}
+.clear-selection:active{background:#e7efe9}
+.position-caption{margin-bottom:12px}
 .position-summary{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.position-summary>span{white-space:nowrap}
 .position-summary b{font-weight:500;color:var(--ink)}
 .position-empty{margin:0;font:inherit;color:inherit}

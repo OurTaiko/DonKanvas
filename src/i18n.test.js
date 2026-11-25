@@ -6,7 +6,7 @@ import { computed, nextTick, reactive, ref, watch } from 'vue';
 import { parse, compileScript } from 'vue/compiler-sfc';
 import { TJAParser } from 'tja';
 import { parseChart } from './chart.js';
-import { translations } from './locales.js';
+import { translations, getPageMetadata, getPageURL } from './locales.js';
 import { SONG_FIELDS, setSongMetadata } from './metadata.js';
 import { NOTE_TYPES, longNoteSpans } from './note-model.js';
 import { createTimelineViewport, TIMELINE_GUTTER } from './timeline.js';
@@ -16,6 +16,72 @@ import { languages, locale, localePreference, matchLocale, detectLocale, initial
 
 const reset = () => { locale.value = 'zh-CN'; localePreference.value = 'auto'; };
 const placeholders = text => [...new Set(text.match(/\{\w+\}/g) || [])].sort();
+
+test('page titles and SEO metadata follow initialization and every language switch', () => {
+  const elements = new Map();
+  const structuredData = { textContent: JSON.stringify({ '@type': 'WebApplication', name: 'DonKanvas', url: 'https://ourtaiko.github.io/web-tja-studio/' }) };
+  const document = {
+    querySelector(selector) {
+      if (selector === 'script[type="application/ld+json"]') return structuredData;
+      if (!elements.has(selector)) elements.set(selector, { setAttribute(name, value) { this[name] = value; } });
+      return elements.get(selector);
+    }
+  };
+  const root = { ownerDocument: document };
+  const storage = { getItem: () => 'ja', setItem() {} };
+  try {
+    initializeLocale(storage, ['en'], root);
+    assert.equal(document.title, getPageMetadata('ja').title);
+    for (const language of languages) {
+      setLocale(language.code, storage, root);
+      const metadata = getPageMetadata(language.code);
+      assert.equal(root.lang, language.code);
+      assert.equal(document.title, metadata.title);
+      for (const [selector, value] of [
+        ['meta[name="description"]', metadata.description],
+        ['meta[property="og:title"]', metadata.title],
+        ['meta[property="og:description"]', metadata.socialDescription],
+        ['meta[property="og:image:alt"]', metadata.imageAlt],
+        ['meta[name="twitter:title"]', metadata.title],
+        ['meta[name="twitter:description"]', metadata.socialDescription],
+        ['meta[name="twitter:image:alt"]', metadata.imageAlt]
+      ]) assert.equal(elements.get(selector).content, value);
+      assert.equal(elements.get('meta[property="og:locale"]').content, { 'zh-CN': 'zh_CN', en: 'en_US', ja: 'ja_JP', 'zh-TW': 'zh_TW', ko: 'ko_KR' }[language.code]);
+      const application = JSON.parse(structuredData.textContent);
+      assert.equal(application.description, metadata.applicationDescription);
+      assert.equal(application.inLanguage, language.code);
+      assert.equal(application.name, 'DonKanvas');
+      assert.equal(application.url, getPageURL(language.code));
+      assert.equal(elements.get('link[rel="canonical"]').href, application.url);
+      assert.equal(elements.get('meta[property="og:url"]').content, application.url);
+    }
+    assert.equal(new Set(languages.map(language => getPageMetadata(language.code).title)).size, 5);
+    for (const language of languages.filter(item => item.code !== 'zh-CN')) {
+      document.location = { pathname: `/web-tja-studio/index.${language.code}.html` };
+      initializeLocale(storage, ['en'], root);
+      assert.equal(locale.value, language.code);
+      assert.equal(document.title, getPageMetadata(language.code).title);
+    }
+    document.location = { href: 'https://example.com/web-tja-studio/index.ko.html?keep=1#editor', pathname: '/web-tja-studio/index.ko.html' };
+    document.defaultView = { history: {
+      state: { editor: true },
+      replaceState(state, _title, address) {
+        assert.deepEqual(state, { editor: true });
+        document.location = { href: address.href, pathname: address.pathname };
+      }
+    } };
+    setLocale('ja', storage, root);
+    assert.equal(document.location.pathname, '/web-tja-studio/index.ja.html');
+    setLocale('auto', storage, root);
+    assert.equal(document.location.pathname, '/web-tja-studio/');
+    assert.equal(new URL(document.location.href).search, '?keep=1');
+    assert.equal(new URL(document.location.href).hash, '#editor');
+    initializeLocale({ getItem: () => 'auto' }, ['ja'], root);
+    assert.equal(localePreference.value, 'auto');
+    assert.equal(locale.value, 'ja');
+    assert.equal(document.location.pathname, '/web-tja-studio/');
+  } finally { reset(); }
+});
 
 test('file tabs ellipsize only the filename and retain the full title and separate dirty marker', () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
@@ -879,10 +945,15 @@ test('branch route controls use localized names while raw N/E/M identifiers rema
   assert.match(chart, /BRANCH_ROUTE_NAMES = \{ N: '普通', E: '玄人', M: '达人' \}/);
 });
 
-test('the selection menu owns measure and note operations; playback has no independent loop switch or range inputs', () => {
+test('the selection menu owns measure and note operations; playback has no independent loop switch or range inputs', async () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'clear-loop-action' });
   const menu = descriptor.template.content.match(/<details ref="selectionMenu"[\s\S]*?<\/details>/)[0];
+  const expectedIcons = ['SquareMousePointer', 'ListChecks', 'TextCursorInput', 'Flag', 'SquareDashed', 'ArrowLeftToLine', 'ArrowLeft', 'ArrowRight', 'LocateFixed', 'CircleOff'];
+  const buttons = [...menu.matchAll(/<button\b[\s\S]*?<\/button>/g)].map(match => match[0]);
+  assert.deepEqual(buttons.map(button => button.match(/<([A-Z]\w*) aria-hidden="true"\s*\/>/)[1]), expectedIcons);
+  const icons = await import('@lucide/vue');
+  for (const name of expectedIcons) assert.ok(icons[name], `${name} must be an available Lucide icon`);
   assert.match(menu, /studio.setLoop\(state.selected \+ 1, state.selected \+ 1\)/);
   assert.match(menu, /studio.setLoop\(1, state.chart.bars.length\)/);
   assert.match(menu, /runSelectionAction\(studio.markLoop\)[\s\S]*<kbd aria-hidden="true">F/);
@@ -1100,7 +1171,7 @@ test('the header keeps title and history while global navigation contains full-c
   assert.match(heading, /<output v-if="range" id="selection-summary">/);
   assert.doesNotMatch(heading, /音符所在小节|selected-note-label/);
   assert.match(timeline, /:aria-describedby="range \? 'selection-summary' : undefined"/);
-  assert.match(heading, /<button v-if="range \|\| state.loopAnchor !== null"[^>]*@click="studio.clearLoop"[\s\S]*t\('取消选择'\)/);
+  assert.match(heading, /<button v-if="range \|\| state.loopAnchor !== null"[^>]*:title="t\('取消选择'\)" :aria-label="t\('取消选择'\)" @click="studio.clearLoop"><X aria-hidden="true" \/>{{ t\('取消选择'\) }}<\/button>/);
   assert.doesNotMatch(heading, /id="total-notes"/);
   assert.match(navigation, /<div class="chart-statistics"[\s\S]*id="total-notes"[\s\S]*stats.all/);
   const ids = ['bar-count', 'total-notes', 'chart-don-count', 'chart-ka-count', 'chart-roll-seconds', 'chart-balloon-hits'];
@@ -1313,13 +1384,15 @@ test('current position timing lives in note attributes and measure selection liv
   }
   assert.match(nav, /@change="studio.select\(Number\(\$event.target.value\) - 1\)/);
   assert.doesNotMatch(descriptor.template.content, /id="meter"|id="selection"/);
-  assert.match(descriptor.template.content, /class="position-source">{{ t\('所选落点'\) }}/);
+  assert.doesNotMatch(descriptor.template.content, /position-source|t\('所选落点'\)/);
 });
 
 test('toolbar commands use scoped transparent surfaces with hover, pressed, focus and playback states', () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'compact-toolbar-commands' });
   const styles = descriptor.styles[0].content;
+  assert.match(styles, /header\{[^}]*user-select:none/);
+  assert.match(styles, /header :is\(input,textarea\)\{user-select:text\}/);
   const rules = styles.slice(styles.indexOf(':is(.studio-panel,.transport-host) :is(.document-toolbar'));
   for (const surface of ['document-toolbar', 'editor-bar', 'transport', 'inspector-heading']) {
     assert.ok(rules.includes(`.${surface}`));
@@ -1824,17 +1897,29 @@ test('navigation, position information and branches share an icon heading with i
   const { descriptor } = parse(readFileSync(new URL('SectionHeading.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'shared-section-heading' });
   assert.match(descriptor.template.content, /class="section-emblem" aria-hidden="true"><component :is="icon"/);
-  assert.match(descriptor.template.content, /<h2>{{ title }}<\/h2><slot \/>/);
+  assert.match(descriptor.template.content, /<h2>{{ title }}<\/h2><div v-if="\$slots.actions" class="section-caption-actions"><slot name="actions" \/><\/div><slot \/>/);
   assert.match(descriptor.styles[0].content, /\.section-caption\{[^}]*min-height:34px/);
   assert.match(descriptor.styles[0].content, /\.section-title-row\{[^}]*min-height:20px/);
   assert.match(descriptor.styles[0].content, /\.section-description\{margin-top:2px;/);
   assert.match(descriptor.styles[0].content, /\.section-title-row\{[^}]*align-items:baseline/);
   assert.match(descriptor.styles[0].content, /font-size:13px;font-weight:600;line-height:1.5/);
   const timeline = readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8');
-  assert.match(timeline, /\.clear-measure-selection\{align-self:center;min-height:20px;padding:0 6px;/);
+  assert.match(timeline, /\.clear-selection\{height:20px;min-height:20px;padding:0 5px;gap:3px;flex-shrink:0;border:1px solid var\(--line\);border-radius:4px;/);
+  assert.match(timeline, /\.clear-selection svg\{width:12px;height:12px\}/);
+  assert.match(timeline, /white-space:nowrap;transform:translateY\(-1px\)\}/);
+  assert.match(timeline, /background:#fff;color:#5f6e65;font-family:inherit;font-size:12px;font-weight:400;line-height:18px/);
+  assert.match(timeline, /\.clear-selection:hover\{border-color:#abc4b7;background:#f1f6f3;color:var\(--green\)\}/);
+  assert.match(timeline, /\.clear-selection:active\{background:#e7efe9\}/);
+  assert.match(descriptor.template.content, /:class="\{ 'has-actions': \$slots.actions \}"/);
+  assert.match(descriptor.styles[0].content, /\.section-title-row\.has-actions\{align-items:center\}/);
+  assert.match(descriptor.styles[0].content, /\.section-title-row\.has-actions h2\{line-height:20px\}/);
+  assert.match(descriptor.template.content, /<div v-if="\$slots.actions" class="section-caption-actions"><slot name="actions" \/><\/div>/);
+  assert.match(descriptor.styles[0].content, /\.section-caption-actions\{display:flex;align-self:center;align-items:center;flex:0 0 auto;height:20px\}/);
   assert.match(timeline, /<SectionHeading :icon="Map" :title="t\('全局导航'\)">[\s\S]*id="selection-summary"[\s\S]*@click="studio.clearLoop"[\s\S]*<\/SectionHeading>/);
   assert.match(timeline, /:title="t\('全局导航'\)">[\s\S]*<template #description>\s*<div class="chart-statistics"[\s\S]*id="total-notes"[\s\S]*<\/template>\s*<\/SectionHeading>/);
-  assert.match(timeline, /<SectionHeading class="position-caption" :icon="Grid2X2" :title="t\('落点信息'\)">[\s\S]*class="position-source"/);
+  assert.match(timeline, /<SectionHeading class="position-caption" :icon="Grid2X2" :title="t\('落点信息'\)">\s*<template #actions><button v-if="positionSummary" id="clear-position-selection" type="button" class="clear-position-selection clear-selection" :title="t\('取消选择'\)" :aria-label="t\('取消选择'\)" @click="studio.clearNoteSelection"><X aria-hidden="true" \/>{{ t\('取消选择'\) }}<\/button><\/template>/);
+  assert.match(timeline, /class="clear-measure-selection clear-selection"/);
+  assert.doesNotMatch(timeline, /position-source|t\('所选落点'\)/);
   const branches = readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8');
   assert.match(branches, /<SectionHeading class="branch-caption" :icon="GitBranch" :title="t\('谱面分歧'\)">[\s\S]*class="branch-count"[\s\S]*<template #description>/);
   assert.match(branches, /\.branch-context\{[^}]*padding:16px 12px/);

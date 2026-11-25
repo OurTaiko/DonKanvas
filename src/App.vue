@@ -1,7 +1,7 @@
 <script setup>
 import { t, message, formatMessage, LocalizedError, languages, localePreference, initializeLocale, setLocale } from './i18n.js';
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, shallowRef, watch } from 'vue';
-import { Plus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser, ListMusic } from '@lucide/vue';
+import { Plus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser, ListMusic, SquareMousePointer, ListChecks, TextCursorInput, Flag, SquareDashed, ArrowLeftToLine, ArrowLeft, ArrowRight, LocateFixed, CircleOff } from '@lucide/vue';
 import { useStudio, formatTime } from './useStudio.js';
 import productIcon from './assets/icon.png';
 import TimelineEditor from './TimelineEditor.vue';
@@ -393,7 +393,7 @@ async function dropFiles(event) {
 
 <template>
   <header>
-    <div class="brand"><img class="product-icon" :src="productIcon" alt="Web TJA Studio" width="24" height="24"></div>
+    <div class="brand"><img class="product-icon" :src="productIcon" alt="DonKanvas" width="24" height="24"></div>
     <div class="file-actions">
       <details ref="fileMenu" class="file-popover" @toggle="positionPopover($event.target)" @keydown="popoverKeydown($event, fileMenu)">
         <summary id="file-toggle" :title="t('文件')" :aria-label="t('文件')" aria-controls="file-menu"><span>{{ t('文件') }}</span></summary>
@@ -425,17 +425,17 @@ async function dropFiles(event) {
         <summary id="selection-toggle" :title="t('选择')" :aria-label="t('选择')" aria-controls="selection-menu">{{ t('选择') }}</summary>
         <div id="selection-menu" class="file-panel" role="group" :aria-label="t('选择')">
           <h3>{{ t('选择小节') }}</h3>
-          <button id="select-viewed" type="button" :disabled="!studio.bar.value || state.invalid" @click="runSelectionAction(() => studio.setLoop(state.selected + 1, state.selected + 1))"><Check aria-hidden="true" /><span>{{ t('选择正在查看的小节') }}</span><kbd aria-hidden="true">Ctrl+Shift+A</kbd></button>
-          <button id="select-all-measures" type="button" :disabled="!studio.bar.value || state.invalid" @click="runSelectionAction(() => studio.setLoop(1, state.chart.bars.length))"><Check aria-hidden="true" /><span>{{ t('选择全部小节') }}</span><kbd aria-hidden="true">Ctrl+A</kbd></button>
-          <button id="select-measure-range" type="button" :disabled="!studio.bar.value || state.invalid" @click="runSelectionAction(() => openSelectionDialog('measures'))"><Plus aria-hidden="true" /><span>{{ t('输入小节区间…') }}</span></button>
-          <button type="button" :disabled="!studio.bar.value || state.invalid" @click="runSelectionAction(studio.markLoop)"><Check aria-hidden="true" /><span>{{ t('标记区间端点') }}</span><kbd aria-hidden="true">F</kbd></button>
-          <button id="clear-measure-selection" type="button" :disabled="!range && state.loopAnchor === null" @click="runSelectionAction(studio.clearLoop)"><X aria-hidden="true" /><span>{{ t('取消小节选择') }}</span><kbd aria-hidden="true">Shift+F</kbd></button>
+          <button id="select-viewed" type="button" :disabled="!studio.bar.value || state.invalid" @click="runSelectionAction(() => studio.setLoop(state.selected + 1, state.selected + 1))"><SquareMousePointer aria-hidden="true" /><span>{{ t('选择正在查看的小节') }}</span><kbd aria-hidden="true">Ctrl+Shift+A</kbd></button>
+          <button id="select-all-measures" type="button" :disabled="!studio.bar.value || state.invalid" @click="runSelectionAction(() => studio.setLoop(1, state.chart.bars.length))"><ListChecks aria-hidden="true" /><span>{{ t('选择全部小节') }}</span><kbd aria-hidden="true">Ctrl+A</kbd></button>
+          <button id="select-measure-range" type="button" :disabled="!studio.bar.value || state.invalid" @click="runSelectionAction(() => openSelectionDialog('measures'))"><TextCursorInput aria-hidden="true" /><span>{{ t('输入小节区间…') }}</span></button>
+          <button type="button" :disabled="!studio.bar.value || state.invalid" @click="runSelectionAction(studio.markLoop)"><Flag aria-hidden="true" /><span>{{ t('标记区间端点') }}</span><kbd aria-hidden="true">F</kbd></button>
+          <button id="clear-measure-selection" type="button" :disabled="!range && state.loopAnchor === null" @click="runSelectionAction(studio.clearLoop)"><SquareDashed aria-hidden="true" /><span>{{ t('取消小节选择') }}</span><kbd aria-hidden="true">Shift+F</kbd></button>
           <hr><h3>{{ t('选择音符') }}</h3>
-          <button id="select-first-note" type="button" :disabled="!studio.bar.value || state.invalid" @click="runSelectionAction(() => studio.selectNote(state.selected, 1))"><Check aria-hidden="true" /><span>{{ t('当前小节的第一个音符') }}</span></button>
-          <button id="select-previous-note" type="button" :disabled="!studio.cell.value || state.invalid" @click="runSelectionAction(() => studio.selectAdjacentNote(-1))"><SkipBack aria-hidden="true" /><span>{{ t('上一个音符') }}</span></button>
-          <button id="select-next-note" type="button" :disabled="!studio.cell.value || state.invalid" @click="runSelectionAction(() => studio.selectAdjacentNote(1))"><SkipForward aria-hidden="true" /><span>{{ t('下一个音符') }}</span></button>
-          <button id="select-note-position" type="button" :disabled="!studio.bar.value || state.invalid" @click="runSelectionAction(() => openSelectionDialog('note'))"><Plus aria-hidden="true" /><span>{{ t('按小节和序号选择…') }}</span></button>
-          <button id="clear-note-selection" type="button" :disabled="!studio.cell.value" @click="runSelectionAction(studio.clearNoteSelection)"><X aria-hidden="true" /><span>{{ t('取消音符选择') }}</span><kbd aria-hidden="true">Esc</kbd></button>
+          <button id="select-first-note" type="button" :disabled="!studio.bar.value || state.invalid" @click="runSelectionAction(() => studio.selectNote(state.selected, 1))"><ArrowLeftToLine aria-hidden="true" /><span>{{ t('当前小节的第一个音符') }}</span></button>
+          <button id="select-previous-note" type="button" :disabled="!studio.cell.value || state.invalid" @click="runSelectionAction(() => studio.selectAdjacentNote(-1))"><ArrowLeft aria-hidden="true" /><span>{{ t('上一个音符') }}</span></button>
+          <button id="select-next-note" type="button" :disabled="!studio.cell.value || state.invalid" @click="runSelectionAction(() => studio.selectAdjacentNote(1))"><ArrowRight aria-hidden="true" /><span>{{ t('下一个音符') }}</span></button>
+          <button id="select-note-position" type="button" :disabled="!studio.bar.value || state.invalid" @click="runSelectionAction(() => openSelectionDialog('note'))"><LocateFixed aria-hidden="true" /><span>{{ t('按小节和序号选择…') }}</span></button>
+          <button id="clear-note-selection" type="button" :disabled="!studio.cell.value" @click="runSelectionAction(studio.clearNoteSelection)"><CircleOff aria-hidden="true" /><span>{{ t('取消音符选择') }}</span><kbd aria-hidden="true">Esc</kbd></button>
           <p class="selection-help">{{ t('单击小节只查看；Shift+单击或拖动选择区间。选中区间会重复播放，音符选择不会改变区间。') }}</p>
         </div>
       </details>
@@ -600,7 +600,8 @@ async function dropFiles(event) {
 @media(max-width:720px){.shortcut-popover{position:static}.shortcut-panel{left:12px;right:12px;width:auto;max-height:calc(100dvh - 150px)}.shortcut-panel dl>div{flex-wrap:wrap}}
 .session-dot{position:absolute;right:4px;top:4px;box-shadow:0 0 0 2px #fff}.session-dot.error{background:var(--red)}#save-state.error{color:#bd352b}
 #app{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
-header{position:relative;z-index:40;height:38px;min-height:38px;padding:3px 8px;gap:6px;flex-shrink:0;flex-wrap:nowrap;justify-content:flex-start}
+header{position:relative;z-index:40;height:38px;min-height:38px;padding:3px 8px;gap:6px;flex-shrink:0;flex-wrap:nowrap;justify-content:flex-start;user-select:none}
+header :is(input,textarea){user-select:text}
 .brand{flex-shrink:0}.product-icon{border-radius:5px;display:block}
 .workspace-section-summary{display:flex;align-items:center;gap:7px;padding:12px 14px;cursor:pointer;font-size:12px;list-style:none}.workspace-section-summary::-webkit-details-marker{display:none}.workspace-section-summary>svg{width:14px;height:14px;flex-shrink:0}.workspace-section-summary>svg:first-child{color:var(--green)}.workspace-section-summary>.workspace-section-chevron{width:12px;height:12px;margin-left:auto;transform:rotate(-90deg)}details[open]>.workspace-section-summary{color:var(--green)}details[open]>.workspace-section-summary>.workspace-section-chevron{transform:none}.workspace-section-summary:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
 .workspace-section-summary>b,.workspace-section-summary>h2{min-width:0;margin:0;font:inherit;font-weight:700;overflow-wrap:anywhere}
