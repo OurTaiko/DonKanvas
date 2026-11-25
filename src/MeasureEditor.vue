@@ -9,7 +9,11 @@ import { NOTE_TYPES } from './note-model.js';
 import { GRID_DIVISIONS } from './grid.js';
 
 const studio = inject('studio');
-const { state, controls, bar, cell, command, measureCommand, stats } = studio;
+const { state, controls, cell } = studio;
+const bar = computed(() => studio.selectedTiming.value?.bar);
+const command = computed(() => bar.value ? studio.command.value : null);
+const measureCommand = computed(() => bar.value ? studio.measureCommand.value : null);
+const stats = computed(() => bar.value ? studio.stats.value : null);
 const position = reactive({ numerator: 0, denominator: 1 });
 const fields = reactive({ bpm: 120, scroll: 1, numerator: 4, denominator: 4, delay: 0, gogo: 'off', barline: 'on', lyric: '', senote: 1 });
 const enabled = reactive({ bpm: false, scroll: false, meter: false, delay: false, gogo: false, barline: false, lyric: false, section: false, levelhold: false, senote: false });
@@ -18,15 +22,20 @@ const preserved = { lyric: 'LYRIC', section: 'SECTION', levelhold: 'LEVELHOLD', 
 const measureKeys = ['meter', 'barline', 'section', 'levelhold'];
 const divisions = computed(() => [...new Set([4, 8, 12, 16, 24, 32, 48, 64, 96, 192, bar.value?.notes.length].filter(Boolean))].sort((first, second) => first - second));
 const sectionSummaries = computed(() => ({
-  note: cell.value?.name ?? t('空拍'),
+  note: cell.value?.name ?? (bar.value ? t('空拍') : '—'),
   position: command.value ? `${command.value.numerator}/${command.value.denominator} · ${formatTime(command.value.time)}` : '—',
-  measure: `${t('小节 {p0}', { p0: state.selected + 1 })} · ${t('音符数：{p0}', { p0: stats.value.total })}`,
-  commands: t('{p0} 条指令', { p0: command.value?.commands.length ?? 0 }),
-  instructions: t('{p0} 条指令', { p0: bar.value?.instructions.length ?? 0 }),
-  source: `${bar.value?.notes.length ?? 0} ${t('格')} · ${t(state.sourceState)}`
+  measure: bar.value ? `${t('小节 {p0}', { p0: bar.value.index + 1 })} · ${t('音符数：{p0}', { p0: stats.value.total })}` : '—',
+  commands: command.value ? t('{p0} 条指令', { p0: command.value.commands.length }) : '—',
+  instructions: bar.value ? t('{p0} 条指令', { p0: bar.value.instructions.length }) : '—',
+  source: bar.value ? `${bar.value.notes.length} ${t('格')} · ${t(state.sourceState)}` : '—'
 }));
 watch([command, measureCommand], ([value, measure]) => {
-  if (!value || !measure) return;
+  if (!value || !measure) {
+    position.numerator = position.denominator = '';
+    for (const key of Object.keys(fields)) fields[key] = '';
+    for (const key of Object.keys(enabled)) enabled[key] = false;
+    return;
+  }
   position.numerator = value.numerator; position.denominator = value.denominator;
   Object.assign(fields, value.timing, { numerator: measure.timing.numerator, denominator: measure.timing.denominator, gogo: value.timing.gogo ? 'on' : 'off', barline: measure.timing.barline ? 'on' : 'off', delay: value.commands.filter(item => item.name === 'DELAY').reduce((sum, item) => sum + Number(item.value), 0) });
   for (const [key, names] of Object.entries(types)) enabled[key] = (measureKeys.includes(key) ? measure : value).commands.some(item => names.includes(item.name));
@@ -94,9 +103,9 @@ function locate(item) { studio.setCommandPosition(item.slot, bar.value.notes.len
       <summary class="inspector-heading workspace-section-summary"><h2 id="measure-properties-title">{{ t('小节属性') }}</h2><span id="bar-badge" class="inspector-summary" :title="sectionSummaries.measure">{{ sectionSummaries.measure }}</span><ChevronDown class="workspace-section-chevron" aria-hidden="true" /></summary>
       <div class="inspector-content">
       <div class="detail-row"><span>{{ t('时间范围') }}</span><b id="bar-time">{{ bar ? `${measureStart(bar).toFixed(3)} – ${measureEnd(bar).toFixed(3)} s` : '—' }}</b></div>
-      <div class="detail-row"><span>{{ t('音符数') }}</span><b id="note-count">{{ stats.total }}</b></div>
+      <div class="detail-row"><span>{{ t('音符数') }}</span><b id="note-count">{{ stats?.total ?? '—' }}</b></div>
       <div class="detail-row"><span>{{ t('主网格') }}</span><b id="bar-grid">{{ GRID_DIVISIONS }} {{ t('格') }}</b></div>
-      <div class="detail-row"><label for="division">{{ t('源码格数') }}</label><select id="division" :value="bar?.notes.length" :disabled="!bar || state.invalid" @change="studio.setDivision(Number($event.target.value)); $event.target.value = bar.notes.length"><option v-for="length in divisions" :key="length" :value="length">{{ length }}</option></select></div>
+      <div class="detail-row"><label for="division">{{ t('源码格数') }}</label><select id="division" :value="bar?.notes.length ?? ''" :disabled="!bar || state.invalid" @change="studio.setDivision(Number($event.target.value)); $event.target.value = bar.notes.length"><option v-if="!bar" value=""></option><option v-for="length in divisions" :key="length" :value="length">{{ length }}</option></select></div>
       </div>
     </details>
     <details class="inspector-section" open aria-labelledby="command-editor-title" @focusin="state.playing && studio.pause()">
@@ -135,15 +144,15 @@ function locate(item) { studio.setCommandPosition(item.slot, bar.value.notes.len
           <button type="button" class="command-locate" :title="t('定位指令 {p0}', { p0: state.text.slice(item.start, item.end) })" :disabled="state.invalid" @click="locate(item)"><small>{{ item.slot }}/{{ bar.notes.length }} · {{ formatTime(item.time) }}</small><span>{{ state.text.slice(item.start, item.end) }}</span></button>
           <button type="button" class="icon" :title="item.shared ? t('共用指令（只读）') : t('删除指令 {p0}', { p0: state.text.slice(item.start, item.end) })" :aria-label="item.shared ? t('共用指令（只读）') : t('删除指令 {p0}', { p0: state.text.slice(item.start, item.end) })" :disabled="state.invalid || item.shared" @click="studio.removeCommand(item)"><Trash2 /></button>
         </div>
-        <span v-if="!bar?.instructions.length" class="command-empty">{{ t('无指令') }}</span>
+        <span v-if="!bar?.instructions.length" class="command-empty">{{ bar ? t('无指令') : '—' }}</span>
       </div>
       </div>
     </details>
     <details class="inspector-section source-section" open aria-labelledby="measure-source-title">
       <summary class="inspector-heading workspace-section-summary"><h2 id="measure-source-title">{{ t('小节源码（含指令）') }}</h2><span id="source-state" class="inspector-summary" :title="sectionSummaries.source">{{ sectionSummaries.source }}</span><ChevronDown class="workspace-section-chevron" aria-hidden="true" /></summary>
       <div class="inspector-content">
-      <textarea id="source" :value="state.source" :disabled="!bar" spellcheck="false" :aria-label="t('当前小节完整源码')" @input="studio.editSource($event.target.value)"></textarea>
-      <div class="source-meta"><span id="slots">{{ bar?.notes.length || 0 }} {{ t('格') }}</span><span>0–9 / A / B</span></div>
+      <textarea id="source" :value="bar ? state.source : ''" :disabled="!bar" spellcheck="false" :aria-label="t('当前小节完整源码')" @input="studio.editSource($event.target.value)"></textarea>
+      <div class="source-meta"><span id="slots">{{ bar ? `${bar.notes.length} ${t('格')}` : '—' }}</span><span>0–9 / A / B</span></div>
       <div class="aside-actions"><button id="preview" :disabled="!bar || state.invalid" @click="studio.loopCurrent(true)"><Headphones />{{ t('试听本小节') }}</button><button id="clear" class="icon" :title="t('清空本小节')" :aria-label="t('清空本小节')" :disabled="!bar || state.invalid" @click="studio.clearBar"><Eraser /></button></div>
       </div>
     </details>

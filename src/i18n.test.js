@@ -2,13 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, nextTick, reactive, ref, watch } from 'vue';
 import { parse, compileScript } from 'vue/compiler-sfc';
 import { TJAParser } from 'tja';
 import { parseChart } from './chart.js';
 import { translations } from './locales.js';
 import { SONG_FIELDS, setSongMetadata } from './metadata.js';
-import { NOTE_TYPES } from './note-model.js';
+import { NOTE_TYPES, longNoteSpans } from './note-model.js';
 import { createTimelineViewport, TIMELINE_GUTTER } from './timeline.js';
 import { measureStart, measureEnd } from './loop.js';
 import { formatTime } from './useStudio.js';
@@ -989,7 +989,7 @@ test('Shift-click chooses an inclusive range from the viewed measure or pending 
   viewMeasure({ shiftKey: true }, 3); viewMeasure({ shiftKey: false }, 0);
   assert.equal(ranges.length, 3); assert.deepEqual(views, [1]);
   assert.match(descriptor.template.content, /:aria-current="item.index === props.activeIndex \? 'location' : undefined"/);
-  assert.match(descriptor.template.content, /'note-selected': item.index === props.noteIndex/);
+  assert.doesNotMatch(descriptor.template.content + descriptor.styles[0].content, /note-selected/);
 });
 
 test('global navigation keeps viewing, looping and double-click toggles outside the shared grid', () => {
@@ -1002,7 +1002,83 @@ test('global navigation keeps viewing, looping and double-click toggles outside 
   toggle(1); assert.equal(cleared, 1); assert.equal(ranges.length, 0);
   toggle(3); assert.deepEqual(ranges.at(-1), [4, 4]);
   range.value = null; toggle(0); assert.deepEqual(ranges.at(-1), [1, 1]);
-  assert.match(descriptor.template.content, /<MeasureGrid[^>]*:selection="range"[^>]*:active-index="state.selected"[^>]*:anchor-index="state.loopAnchor"[^>]*:note-index="state.selectedCell\?\.bar"[^>]*@activate="studio.select" @select="studio.setLoop" @toggle="toggleMeasure"/);
+  assert.match(descriptor.template.content, /<MeasureGrid[^>]*:selection="range"[^>]*:active-index="selectedTiming\?\.bar.index \?\? null"[^>]*:anchor-index="state.loopAnchor"[^>]*:note-index="state.selectedCell\?\.bar"[^>]*@activate="studio.select" @select="studio.setLoop" @toggle="toggleMeasure"/);
+  const binding = descriptor.template.content.match(/<MeasureGrid id="measures"[^>]*:active-index="([^"]+)"/)[1];
+  const context = { selectedTiming: null, state: { selected: 2, position: 6, viewStart: 4 } };
+  const activeIndex = runInNewContext(`() => (${binding})`, context);
+  assert.equal(activeIndex(), null);
+  context.selectedTiming = { bar: { index: 0 } };
+  assert.equal(activeIndex(), 0);
+  context.state.selected = 3; context.state.position = 8; context.state.viewStart = 6;
+  assert.equal(activeIndex(), 0);
+  context.selectedTiming = { bar: { index: 1 } };
+  assert.equal(activeIndex(), 1);
+  context.selectedTiming = null;
+  assert.equal(activeIndex(), null);
+});
+
+test('navigation marks only measures intersecting the viewport independently of the selected point', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const source = descriptor.scriptSetup.content.slice(descriptor.scriptSetup.content.indexOf('const visibleMeasureIndices ='), descriptor.scriptSetup.content.indexOf('const balloonHits ='));
+  const bars = Array.from({ length: 4 }, (_, index) => ({ index, start: index * 2, end: (index + 1) * 2 }));
+  const visible = ref(null);
+  const indices = runInNewContext(`${source}; visibleMeasureIndices`, { computed, visible, measureStart: item => item.start, measureEnd: item => item.end });
+  assert.deepEqual(Array.from(indices.value), []);
+  visible.value = { bars, start: 2, end: 6 };
+  assert.deepEqual(Array.from(indices.value), [1, 2]);
+  visible.value = { bars, start: 1, end: 3 };
+  assert.deepEqual(Array.from(indices.value), [0, 1]);
+  visible.value = { bars, start: 6, end: 10 };
+  assert.deepEqual(Array.from(indices.value), [3]);
+  assert.match(descriptor.template.content, /:visible-indices="visibleMeasureIndices"/);
+  const grid = parse(readFileSync(new URL('MeasureGrid.vue', import.meta.url), 'utf8')).descriptor;
+  assert.match(grid.template.content, /'in-view': props.visibleIndices.includes\(item.index\)/);
+  assert.match(grid.template.content, /t\('当前视图内的小节'\)/);
+  assert.doesNotMatch(grid.styles[0].content, /in-view::before/);
+  assert.match(grid.styles[0].content, /\.measure-grid \.mini-notes\{width:40px;max-width:100%;justify-content:center;gap:1px;overflow:visible\}/);
+  assert.match(grid.styles[0].content, /grid-template-columns:repeat\(auto-fill,minmax\(56px,1fr\)\)/);
+  assert.match(grid.styles[0].content, /\.measure-grid button\{padding:7px\}/);
+  assert.match(grid.styles[0].content, /\.measure-grid \.mini-notes i\{width:3px;min-width:3px;flex:0 0 3px\}/);
+  assert.match(grid.styles[0].content, /\.measure-grid button.in-view \.mini-notes\{background:#e3edf3;box-shadow:0 0 0 4px #e3edf3;border-radius:2px\}/);
+});
+
+test('mini notes distinguish percussion, rolls, balloons and special rolls', () => {
+  const { descriptor } = parse(readFileSync(new URL('MeasureGrid.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'mini-note-types' });
+  const binding = descriptor.template.content.match(/<i v-for=[\s\S]*?:class="([^"]+)"/)[1];
+  for (const [notes, expected] of [['13A', []], ['24B', ['blue']], ['56', ['roll']], ['7', ['balloon']], ['9', ['special']]]) {
+    for (const note of notes) {
+      const classes = runInNewContext(`(${binding})`, { note });
+      assert.deepEqual(Object.keys(classes).filter(key => classes[key]), expected);
+    }
+  }
+  assert.match(descriptor.template.content, /:title="t\(NOTE_TYPES.find\(type => type.value === note\).name\)"/);
+  for (const [type, color] of [['roll', '#e6b800'], ['balloon', '#f07800'], ['special', '#ff78ae']]) {
+    assert.ok(descriptor.styles[0].content.includes(`.mini-notes i.${type}{background:${color}}`));
+  }
+});
+
+test('mini notes omit ends and show carried rolls and balloons only while their spans overlap the measure', () => {
+  const { descriptor } = parse(readFileSync(new URL('MeasureGrid.vue', import.meta.url), 'utf8'));
+  const script = descriptor.scriptSetup.content;
+  const source = script.slice(script.indexOf('const miniNotes ='), script.indexOf('const emit ='));
+  const props = reactive({ bars: [] });
+  const notes = runInNewContext(`${source}; miniNotes`, { computed, props, longNoteSpans, measureStart });
+  const chart = body => parseChart(`TITLE:Mini notes\nBPM:120\nCOURSE:Oni\nLEVEL:1\n#START\n${body}\n#END\n`, TJAParser);
+  for (const type of ['5', '6', '7', '9']) {
+    props.bars = chart(`${type}000,\n0000,\n0080,\n1000,`).bars;
+    assert.deepEqual(Array.from(notes.value.values(), value => Array.from(value)), [[type], [type], [type], ['1']]);
+    props.bars = chart(`${type}000,\n8000,\n0000,`).bars;
+    assert.deepEqual(Array.from(notes.value.values(), value => Array.from(value)), [[type], [], []]);
+    props.bars = chart(`${type}000,\n0000,`).bars;
+    assert.deepEqual(Array.from(notes.value.values(), value => Array.from(value)), [[type], [type]]);
+  }
+  props.bars = chart('5000,\n0068,').bars;
+  assert.deepEqual(Array.from(notes.value.get(1)), ['5', '6']);
+  props.bars = chart('5000,\n111111111111,').bars;
+  assert.deepEqual(Array.from(notes.value.get(1)), ['5', ...Array(9).fill('1')]);
+  props.bars = [];
+  assert.equal(notes.value.size, 0);
 });
 
 test('the header keeps title and history while global navigation contains full-chart statistics', () => {
@@ -1084,8 +1160,15 @@ test('position information separates its summary from aligned parameter columns'
   assert.match(template, /class="cell-inspector" :aria-label="t\('落点信息'\)"/);
   assert.doesNotMatch(template, /cell-heading|cell-current/);
   assert.doesNotMatch(descriptor.scriptSetup.content, /cell-bar/);
-  assert.match(descriptor.scriptSetup.content, /\.\.\.\(selected\?\.span \? \[\{ id: 'cell-long'/);
+  assert.match(descriptor.scriptSetup.content, /\.\.\.\(timing && selected\?\.span \? \[\{ id: 'cell-long'/);
   assert.match(template, /class="position-summary">[\s\S]*id="cell-fraction"[\s\S]*id="cell-time"/);
+  for (const selector of ['position-summary', 'chart-statistics']) {
+    assert.match(descriptor.styles[0].content, new RegExp(`\\.${selector}\\{[^}]*font-size:11px;color:var\\(--muted\\);font-variant-numeric:tabular-nums`));
+    assert.match(descriptor.styles[0].content, new RegExp(`\\.${selector} b\\{font-weight:500;color:var\\(--ink\\)\\}`));
+  }
+  assert.match(template, /<b>\{\{ positionSummary.measure \}\}<\/b>/);
+  assert.match(template, /id="cell-fraction">\{\{ t\('位置'\) \}\} <b>\{\{ positionSummary.fraction \}\}<\/b>/);
+  assert.match(template, /<b>\{\{ formatTime\(positionSummary.time\) \}\}<\/b>/);
   assert.doesNotMatch(descriptor.scriptSetup.content, /id: 'cell-(fraction|time)'/);
   assert.doesNotMatch(descriptor.scriptSetup.content, /cell-location|小节内位置|小节 \/ 格位/);
   assert.match(template, /v-for="attribute in cellAttributes"/);
@@ -1176,6 +1259,18 @@ test('position attributes omit branch information while preserving timing detail
   assert.match(descriptor.template.content, /<span v-if="attribute.warning" class="attribute-warning"><TriangleAlert aria-hidden="true" \/>\{\{ attribute.warning \}\}<\/span>/);
   cell.value = null;
   assert.equal(longValue(), undefined);
+  const timing = selectedTiming.value;
+  selectedTiming.value = null;
+  assert.equal(attributes.value.length, 5);
+  assert.ok(attributes.value.every(attribute => attribute.value === '—'));
+  assert.deepEqual(Array.from(attributes.value, attribute => attribute.id), ['cell-bpm', 'cell-scroll', 'cell-meter', 'cell-gogo', 'cell-delay']);
+  cell.value = { span: { note: '5', start: 1, end: 3.5, complete: true } };
+  assert.equal(attributes.value.length, 5);
+  assert.ok(attributes.value.every(attribute => attribute.value === '—'));
+  selectedTiming.value = timing;
+  assert.equal(attributes.value.find(attribute => attribute.id === 'cell-bpm').value, '180');
+  assert.match(descriptor.template.content, /<p v-else class="position-empty">\{\{ t\('未选取落点'\) \}\}<\/p>/);
+  assert.match(descriptor.styles[0].content, /\.position-empty\{margin:0;font:inherit;color:inherit\}/);
 });
 
 test('balloon and special roll counts are edited in the right note panel', () => {
@@ -1345,7 +1440,7 @@ test('section title summaries track selected notes, exact positions, measure cou
     const state = reactive({ selected: 2, sourceState: '已同步' });
     const cell = ref({ name: t('咔') });
     const command = ref({ numerator: 3, denominator: 8, time: 4.75, commands: [{ name: 'SCROLL' }, { name: 'LYRIC' }] });
-    const bar = ref({ notes: '10020000', instructions: [{}, {}, {}] });
+    const bar = ref({ index: 2, notes: '10020000', instructions: [{}, {}, {}] });
     const stats = ref({ total: 2 });
     const summaries = runInNewContext(`${source}; sectionSummaries`, { computed, state, cell, command, bar, stats, t, formatTime });
     assert.deepEqual({ ...summaries.value }, {
@@ -1359,7 +1454,7 @@ test('section title summaries track selected notes, exact positions, measure cou
     assert.equal(summaries.value.commands, '0 条指令');
     state.selected = 4;
     stats.value.total = 5;
-    bar.value = { notes: '1000100010001000', instructions: [] };
+    bar.value = { index: 4, notes: '1000100010001000', instructions: [] };
     state.sourceState = '编辑中';
     assert.equal(summaries.value.measure, '小节 5 · 音符数：5');
     assert.equal(summaries.value.instructions, '0 条指令');
@@ -1371,11 +1466,58 @@ test('section title summaries track selected notes, exact positions, measure cou
     assert.equal(summaries.value.source, `16 ${t('格')} · ${t('编辑中')}`);
     command.value = null; bar.value = null;
     assert.equal(summaries.value.position, '—');
-    assert.equal(summaries.value.commands, '0 commands');
-    assert.equal(summaries.value.instructions, '0 commands');
-    assert.equal(summaries.value.source, `0 ${t('格')} · ${t('编辑中')}`);
+    assert.equal(summaries.value.note, '—');
+    assert.equal(summaries.value.measure, '—');
+    assert.equal(summaries.value.commands, '—');
+    assert.equal(summaries.value.instructions, '—');
+    assert.equal(summaries.value.source, '—');
     assert.match(descriptor.styles[0].content, /\.inspector-summary\{[^}]*min-width:0;[^}]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis/);
   } finally { reset(); }
+});
+
+test('the editor remains visible with empty disabled bindings and clears stale fields when a point is deselected', async () => {
+  const { descriptor } = parse(readFileSync(new URL('MeasureEditor.vue', import.meta.url), 'utf8'));
+  compileScript(descriptor, { id: 'empty-point-editor' });
+  const timing = { bpm: 180, scroll: 2, numerator: 3, denominator: 4, gogo: false, barline: true };
+  const commands = [{ name: 'BPMCHANGE', value: '180' }, { name: 'MEASURE', value: '3/4' }];
+  const studio = {
+    state: reactive({ selected: 0, source: '#BPMCHANGE 180\n1000,', sourceState: '已同步', invalid: false }),
+    controls: {}, cell: ref(null), selectedTiming: ref(null),
+    bar: ref({ index: 0, notes: '1000', instructions: commands }),
+    command: ref({ numerator: 0, denominator: 1, time: 0, timing, commands }),
+    measureCommand: ref({ timing, commands }), stats: ref({ total: 1 })
+  };
+  const source = descriptor.scriptSetup.content.replace(/^import .*;\n/gm, '');
+  const editor = runInNewContext(`${source}; ({ bar, command, measureCommand, stats, fields, enabled, position, sectionSummaries })`, {
+    computed, reactive, watch, inject: () => studio, t, formatTime
+  });
+  const assertEmpty = () => {
+    assert.equal(editor.bar.value, undefined);
+    for (const key of ['command', 'measureCommand', 'stats']) assert.equal(editor[key].value, null);
+    assert.ok(Object.values(editor.fields).every(value => value === ''));
+    assert.ok(Object.values(editor.enabled).every(value => value === false));
+    assert.equal(editor.position.numerator, ''); assert.equal(editor.position.denominator, '');
+    assert.ok(Object.values(editor.sectionSummaries.value).every(value => value === '—'));
+  };
+  assertEmpty();
+  studio.selectedTiming.value = { bar: studio.bar.value };
+  await nextTick();
+  assert.equal(editor.fields.bpm, 180); assert.equal(editor.fields.numerator, 3);
+  assert.equal(editor.enabled.meter, true);
+  assert.equal(editor.sectionSummaries.value.measure, t('小节 {p0}', { p0: 1 }) + ' · ' + t('音符数：{p0}', { p0: 1 }));
+  studio.selectedTiming.value = null;
+  await nextTick();
+  assertEmpty();
+  studio.state.selected = 1;
+  studio.command.value = { ...studio.command.value, time: 2 };
+  await nextTick();
+  assertEmpty();
+  assert.match(descriptor.template.content, /<aside class="measure-editor"/);
+  assert.doesNotMatch(descriptor.template.content, /<aside[^>]*v-if/);
+  assert.match(descriptor.template.content, /id="source" :value="bar \? state.source : ''" :disabled="!bar"/);
+  for (const id of ['command-numerator', 'command-denominator', 'division', 'bar-bpm', 'bar-scroll', 'bar-delay', 'bar-gogo', 'bar-lyric', 'bar-senote', 'preview', 'clear']) {
+    assert.match(descriptor.template.content, new RegExp(`id="${id}"[^>]*:disabled="!bar \\|\\| state.invalid"`));
+  }
 });
 
 test('command inputs share full-column sizing and height without resizing checkboxes or losing paired fields', () => {
@@ -1672,10 +1814,10 @@ test('measure statistics live in measure properties while snap remains in the to
   assert.doesNotMatch(timeline.template.content, /id="note-count"|id="bar-grid"|id="bar-snap"|id="bar-slots"/);
   assert.match(measure.scriptSetup.content, /import \{[^}]*\bGRID_DIVISIONS\b[^}]*\} from '\.\/grid.js'/);
   const info = measure.template.content.match(/<details class="inspector-section" open aria-labelledby="measure-properties-title">[\s\S]*?<\/details>/)[0];
-  assert.match(info, /id="note-count">.*stats.total/);
+  assert.match(info, /id="note-count">.*stats\?\.total \?\? '—'/);
   assert.match(info, /id="bar-grid">.*GRID_DIVISIONS/);
   assert.match(timeline.template.content, /id="snap-division" v-model="controls.snapChoice"/);
-  assert.match(measure.template.content, /id="division" :value="bar\?\.notes.length"/);
+  assert.match(measure.template.content, /id="division" :value="bar\?\.notes.length \?\? ''"/);
 });
 
 test('navigation, position information and branches share an icon heading with inline details', () => {
@@ -1737,17 +1879,18 @@ test('branch information occupies the caption subtitle without instructional cop
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'compact-branch-caption' });
   assert.match(descriptor.template.content, /class="branch-current"><template v-if="current">/);
+  assert.match(descriptor.template.content, /<template v-else-if="selectedTiming">\{\{ t\('当前位于共用段'\) \}\}<\/template><template v-else>\{\{ t\('未选取落点'\) \}\}<\/template>/);
   assert.doesNotMatch(descriptor.template.content, /统一切换全部分歧，或按需单独调整。|仅影响显示与试听，不修改谱面。|branch-context-foot/);
 });
 
-test('branch context follows position timing rather than the viewed measure and hides its tag in shared measures', () => {
+test('branch context follows selected point timing rather than playback or the viewed measure and hides its tag in shared measures', () => {
   const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'branch-context-route-color' });
   const source = descriptor.scriptSetup.content.replace(/^import .*;\n/gm, '');
-  const bar = ref({ branchIndex: 1 }), currentTiming = ref(null);
+  const bar = ref({ branchIndex: 1 }), currentTiming = ref(null), selectedTiming = ref(null);
   const state = reactive({ chart: { branches: [{ index: 0, route: 'N' }, { index: 1, route: 'M' }] } });
   const { current } = runInNewContext(`${source}; ({ current })`, {
-    ref, reactive, computed, watch, inject: () => ({ state, bar, currentTiming }), t
+    ref, reactive, computed, watch, inject: () => ({ state, bar, currentTiming, selectedTiming }), t
   });
   assert.match(descriptor.template.content, /class="branch-count">\{\{ branches.length \}\}<\/span>\s*<template #description>/);
   assert.doesNotMatch(descriptor.template.content, /mixed-route|自定义路线/);
@@ -1756,7 +1899,7 @@ test('branch context follows position timing rather than the viewed measure and 
   const binding = descriptor.template.content.match(/class="branch-route-tag" :data-route="([^"]+)"/)[1];
   const routeColor = () => current.value ? runInNewContext(binding, { current: current.value }) : undefined;
   assert.equal(routeColor(), undefined);
-  currentTiming.value = { bar: { branchIndex: 0 } };
+  selectedTiming.value = { bar: { branchIndex: 0 } };
   for (const route of ['N', 'E', 'M']) {
     state.chart.branches[0].route = route;
     assert.equal(routeColor(), route);
@@ -1768,10 +1911,14 @@ test('branch context follows position timing rather than the viewed measure and 
   bar.value = { branchIndex: 1 };
   assert.equal(routeColor(), 'E');
   currentTiming.value = { bar: { branchIndex: 1 } };
+  assert.equal(routeColor(), 'E');
+  selectedTiming.value = { bar: { branchIndex: 1 } };
   assert.equal(routeColor(), 'M');
   currentTiming.value = { bar: { branchIndex: null } };
+  assert.equal(routeColor(), 'M');
+  selectedTiming.value = { bar: { branchIndex: null } };
   assert.equal(routeColor(), undefined);
-  currentTiming.value = null;
+  selectedTiming.value = null;
   assert.equal(routeColor(), undefined);
   state.chart = null;
   assert.equal(routeColor(), undefined);

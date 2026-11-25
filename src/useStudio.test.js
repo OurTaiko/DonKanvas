@@ -281,7 +281,7 @@ test('new and restored files have no selected range; switching preserves each fi
     assert.equal(studio.range.value, null);
     await studio.openChart(file()); const first = studio.state.activeId;
     await studio.play(); context.currentTime = 2.535; ticks.frame();
-    near(studio.state.position, 2.5); assert.equal(studio.state.selected, 1);
+    near(studio.state.position, 2.5); assert.equal(studio.state.selected, 0);
     context.currentTime = 4.1; ticks.schedule(); assert.equal(studio.state.playing, false);
     studio.setLoop(1, 2); assert.deepEqual(studio.range.value, [1, 2]);
     await studio.openChart(file('second.tja')); assert.equal(studio.range.value, null);
@@ -587,14 +587,20 @@ test('the header timing follows the selected command point, edits, source and un
     assert.equal(studio.bar.value.bpm, 120); assert.equal(studio.bar.value.scroll, 1);
     assert.equal(studio.currentTiming.value.bpm, 200); assert.equal(studio.currentTiming.value.scroll, 2);
     assert.equal(studio.currentTiming.value.numerator, 3); assert.equal(studio.currentTiming.value.gogo, true);
-    studio.history(); assert.equal(studio.currentTiming.value.bpm, 120); assert.equal(studio.currentTiming.value.scroll, 1);
+    studio.history(); assert.equal(studio.currentTiming.value, null);
+    studio.setCommandPosition(1, 2);
+    assert.equal(studio.currentTiming.value.bpm, 120); assert.equal(studio.currentTiming.value.scroll, 1);
     studio.history(true);
     studio.setCommandPosition(1, 2); assert.equal(studio.currentTiming.value.bpm, 200);
     studio.setCommandPosition(1, 4); assert.equal(studio.currentTiming.value.bpm, 120);
     studio.setCommandPosition(1, 1); assert.equal(studio.currentTiming.value.scroll, 2);
-    studio.select(1); assert.equal(studio.currentTiming.value.bpm, 200); assert.equal(studio.currentTiming.value.scroll, 2);
+    studio.select(1); assert.equal(studio.currentTiming.value, null);
+    studio.setCommandPosition(0, 1);
+    assert.equal(studio.currentTiming.value.bpm, 200); assert.equal(studio.currentTiming.value.scroll, 2);
     studio.editSource('#BPMCHANGE 150\n#SCROLL .5\n2000,');
     await new Promise(resolve => setTimeout(resolve, 280));
+    assert.equal(studio.currentTiming.value, null);
+    studio.setCommandPosition(0, 1);
     assert.equal(studio.currentTiming.value.bpm, 150); assert.equal(studio.currentTiming.value.scroll, .5);
   } finally { cleanup(); }
 });
@@ -603,11 +609,12 @@ test('playback timing follows the playhead while selected timing stays fixed wit
   const { studio, mock, ticks, cleanup } = mountStudio();
   const { context } = fakeAudio(mock);
   try {
-    await studio.openChart(file('live-timing.tja', chart.replace('1000,', '10\n#BPMCHANGE 240\n#SCROLL 2\n20,')));
+    await studio.openChart(file('live-timing.tja', chart.replace('1000,', '10\n#BPMCHANGE 240\n#SCROLL 2\n20,').replace('2000,', '#BRANCHSTART p,50,80\n#N\n2000,\n#BRANCHEND')));
     await nextTick();
     studio.setCommandPosition(0, 1);
     await studio.play();
     const selectedTiming = studio.selectedTiming.value;
+    assert.equal(selectedTiming.bar.branchIndex, null);
     context.currentTime = .535; ticks.frame();
     assert.equal(studio.currentTiming.value.bpm, 120); assert.equal(studio.currentTiming.value.scroll, 1);
     assert.deepEqual(studio.selectedTiming.value, selectedTiming);
@@ -618,10 +625,69 @@ test('playback timing follows the playhead while selected timing stays fixed wit
     studio.state.followPlayback = false; await nextTick();
     context.currentTime = 1.735; ticks.frame();
     assert.equal(studio.currentTiming.value.bar.index, 1); assert.equal(studio.state.selected, 0);
+    assert.equal(studio.currentTiming.value.bar.branchIndex, 0);
+    assert.equal(studio.selectedTiming.value.bar.branchIndex, null);
     assert.deepEqual(studio.selectedTiming.value, selectedTiming);
     assert.equal(studio.command.value.fraction, 0);
     studio.pause(); assert.equal(studio.currentTiming.value.bar.index, 0); assert.equal(studio.currentTiming.value.bpm, 120);
     assert.deepEqual(studio.selectedTiming.value, selectedTiming);
+    studio.selectCell({ bar: 1, numerator: 0, denominator: 16, divisions: 16 });
+    assert.equal(studio.selectedTiming.value.bar.branchIndex, 0);
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 16, divisions: 16 });
+    assert.equal(studio.selectedTiming.value.bar.branchIndex, null);
+  } finally { cleanup(); }
+});
+
+test('no selected point has no bound timing during navigation or playback, and clearing a point removes its binding', async () => {
+  const { studio, mock, ticks, cleanup } = mountStudio();
+  const { context } = fakeAudio(mock);
+  try {
+    await studio.openChart(file());
+    assert.equal(studio.selectedTiming.value, null);
+    studio.select(1); assert.equal(studio.selectedTiming.value, null);
+    await studio.play();
+    context.currentTime = .535; ticks.frame();
+    assert.equal(studio.selectedTiming.value, null);
+    assert.ok(studio.currentTiming.value);
+    studio.pause();
+    studio.setCommandPosition(1, 1);
+    assert.equal(studio.selectedTiming.value.bar.index, 1);
+    assert.equal(studio.state.selectedCell, null);
+    studio.clearNoteSelection();
+    assert.equal(studio.selectedTiming.value, null);
+    studio.selectCell({ bar: 0, numerator: 1, denominator: 4, divisions: 16 });
+    assert.equal(studio.selectedTiming.value.bar.index, 0);
+    studio.clearNoteSelection();
+    assert.equal(studio.selectedTiming.value, null);
+  } finally { cleanup(); }
+});
+
+test('playback preserves editor measure properties, commands and source across measures regardless of follow mode', async () => {
+  const { studio, mock, ticks, cleanup } = mountStudio();
+  const { context } = fakeAudio(mock);
+  try {
+    for (const follow of [true, false]) {
+      for (const point of [null, [1, 4], [1, 1]]) {
+        await studio.openChart(file('fixed-editor.tja', chart.replace('1000,', '#SCROLL 2\n#MEASURE 3/4\n#SECTION\n10\n#BPMCHANGE 240\n20,').replace('2000,', '#SCROLL 3\n#MEASURE 4/4\n22222222,')));
+        if (point) studio.setCommandPosition(...point);
+        studio.state.followPlayback = follow;
+        await nextTick();
+        const selected = studio.state.selected, cell = studio.state.selectedCell, commandCell = studio.state.commandCell;
+        const bar = studio.bar.value, stats = studio.stats.value, command = studio.command.value;
+        const measureCommand = studio.measureCommand.value, source = studio.state.source, timing = studio.selectedTiming.value;
+        await studio.play();
+        context.currentTime += 1.5; ticks.frame();
+        await nextTick();
+        assert.equal(studio.currentTiming.value.bar.index, 1);
+        assert.equal(studio.state.selected, selected);
+        assert.equal(studio.state.selectedCell, cell); assert.equal(studio.state.commandCell, commandCell);
+        assert.equal(studio.bar.value, bar); assert.equal(studio.stats.value, stats);
+        assert.equal(studio.command.value, command); assert.equal(studio.measureCommand.value, measureCommand);
+        assert.equal(studio.state.source, source); assert.equal(studio.selectedTiming.value, timing);
+        assert.equal(studio.state.playing, true);
+        studio.pause();
+      }
+    }
   } finally { cleanup(); }
 });
 
@@ -2337,7 +2403,7 @@ test('clearing an active loop continues from the exact playback position beyond 
     near(studio.state.position, .5); assert.equal(studio.state.playing, true);
     assert.equal(studio.range.value, null);
     context.currentTime = 3.07; ticks.frame(); near(studio.state.position, 3);
-    assert.equal(studio.state.selected, 1); assert.equal(studio.state.playing, true);
+    assert.equal(studio.state.selected, 0); assert.equal(studio.state.playing, true);
     assert.equal(studio.state.text, chart);
   } finally { cleanup(); }
 });
@@ -3046,9 +3112,9 @@ test('playback holds each page until its boundary and manual panning suspends fo
     studio.panTimeline(8.25);
     context.currentTime = 5.035; ticks.frame();
     near(studio.visible.value.start, 8.25); near(studio.state.position, 5);
-    assert.equal(studio.state.playing, true); assert.equal(studio.state.selected, 2);
+    assert.equal(studio.state.playing, true); assert.equal(studio.state.selected, 0);
     studio.state.followPlayback = true; await nextTick(); ticks.frame();
-    near(studio.visible.value.start, 4.25); assert.equal(studio.state.selected, 2);
+    near(studio.visible.value.start, 4.25); assert.equal(studio.state.selected, 0);
     studio.controls.rate = .5; await nextTick(); await Promise.resolve();
     context.currentTime = 6.07; ticks.frame(); near(studio.state.position, 5.5); near(studio.visible.value.start, 4.25);
     context.currentTime = 12.07; ticks.frame(); near(studio.visible.value.start, 8.25);

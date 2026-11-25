@@ -6,7 +6,7 @@ import { BRANCH_ROUTES, BRANCH_ROUTE_NAMES as names } from './chart.js';
 import SectionHeading from './SectionHeading.vue';
 import MeasureGrid from './MeasureGrid.vue';
 
-const studio = inject('studio'), { state, currentTiming } = studio;
+const studio = inject('studio'), { state, selectedTiming } = studio;
 const dialog = ref(null), filterDialog = ref(null), filterList = ref(null);
 const mode = ref(''), target = ref(null), error = ref(''), first = ref(null), last = ref(null), anchor = ref(null);
 const fields = reactive({ condition: 'p', lower: 50, upper: 80, route: 'N', source: 'shared', keep: '' });
@@ -20,7 +20,7 @@ watch([() => state.activeId, () => state.course, () => Boolean(editedBranch.valu
 }, { flush: 'sync' });
 const selectedMeasures = computed(() => first.value === null ? [] : state.chart.bars.slice(first.value, last.value + 1));
 const selection = computed(() => first.value === null ? null : [first.value + 1, last.value + 1]);
-const current = computed(() => branches.value.find(branch => branch.index === currentTiming.value?.bar.branchIndex));
+const current = computed(() => branches.value.find(branch => branch.index === selectedTiming.value?.bar.branchIndex));
 const uniform = computed(() => {
   const routes = state.branchRoutes.filter(Boolean);
   return routes.length && routes.every(route => route === routes[0]) ? routes[0] : null;
@@ -120,7 +120,7 @@ function keydown(event) {
   <section class="branch-context" :aria-label="t('分歧路线')" @keydown.space.stop @keydown.left.stop @keydown.right.stop>
     <SectionHeading class="branch-caption" :icon="GitBranch" :title="t('谱面分歧')">
       <span class="branch-count">{{ branches.length }}</span>
-      <template #description><p class="branch-current"><template v-if="current"><span v-if="current.route" class="branch-route-tag" :data-route="current.route">{{ t(names[current.route]) }}</span> {{ branchLabel(current) }} · {{ conditionLabel(current) }}</template><template v-else>{{ t('当前位于共用段') }}</template></p></template>
+      <template #description><p class="branch-current"><template v-if="current"><span v-if="current.route" class="branch-route-tag" :data-route="current.route">{{ t(names[current.route]) }}</span> {{ branchLabel(current) }} · {{ conditionLabel(current) }}</template><template v-else-if="selectedTiming">{{ t('当前位于共用段') }}</template><template v-else>{{ t('未选取落点') }}</template></p></template>
     </SectionHeading>
     <div class="branch-actions">
       <button id="branch-create" type="button" class="manage-branches" :disabled="state.invalid" @click="create"><Plus aria-hidden="true" />{{ t('创建分歧') }}</button>

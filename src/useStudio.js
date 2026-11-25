@@ -96,7 +96,10 @@ export function useStudio() {
   const measureCommand = computed(() => commandAt({ bar: state.selected, numerator: 0, denominator: 1 }));
   const selectedTiming = computed(() => {
     if (!state.chart?.bars.length) return null;
-    const selected = state.selectedCell ? commandAt(state.selectedCell) : command.value;
+    const position = state.selectedCell || state.commandCell;
+    if (!position) return null;
+    const selected = commandAt(position);
+    if (!selected) return null;
     return {
       bar: state.chart.bars[selected.bar], ...selected.timing,
       delay: selected.commands.filter(event => event.name === 'DELAY').reduce((sum, event) => sum + Number(event.value), 0)
@@ -819,11 +822,6 @@ export function useStudio() {
     if (state.playing) {
       const position = currentTime(); state.position = position;
       if (state.followPlayback) followTime(position);
-      if (state.followPlayback && !state.invalid && document.activeElement?.id !== 'source') {
-        const containing = state.chart.bars.findLastIndex(item => position >= measureStart(item) && position < measureEnd(item));
-        const next = containing >= 0 ? containing : state.chart.bars.findLastIndex(item => measureStart(item) <= position);
-        if (next >= 0 && next !== state.selected) { state.selected = next; state.commandCell = null; syncSource(); }
-      }
     }
     frame = requestAnimationFrame(animate);
   }

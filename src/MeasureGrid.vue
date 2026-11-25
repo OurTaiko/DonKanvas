@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { t } from './i18n.js';
+import { NOTE_TYPES, longNoteSpans } from './note-model.js';
+import { measureStart } from './loop.js';
 
 const props = defineProps({
   bars: { type: Array, required: true },
@@ -8,9 +10,20 @@ const props = defineProps({
   activeIndex: { type: Number, default: null },
   anchorIndex: { type: Number, default: null },
   noteIndex: { type: Number, default: null },
+  visibleIndices: { type: Array, default: () => [] },
   disabled: Boolean,
   unavailable: { type: Function, default: () => false },
   measureTitle: { type: Function, default: null }
+});
+const miniNotes = computed(() => {
+  const spans = longNoteSpans(props.bars);
+  return new Map(props.bars.map(item => {
+    const start = measureStart(item);
+    const carried = spans.find(span => span.start < start && span.end > start);
+    const notes = [...item.notes].filter(note => note !== '0' && note !== '8');
+    if (carried) notes.unshift(carried.note);
+    return [item.index, notes.slice(0, 10)];
+  }));
 });
 const emit = defineEmits(['activate', 'select', 'toggle', 'preview']);
 const measures = ref(null), measureDrag = ref(null);
@@ -79,14 +92,19 @@ onBeforeUnmount(cancelDrag);
 
 <template>
   <div ref="measures" class="measure-grid" :class="{ dragging: measureDrag?.dragged }" @pointerdown="startDrag" @pointermove="moveDrag" @pointerup="finishDrag" @pointercancel="cancelDrag" @lostpointercapture="cancelDrag" @keydown="keydown" @click.capture="captureClick">
-    <button v-for="item in props.bars" :key="item.index" type="button" :data-measure-index="item.index" :disabled="props.disabled || props.unavailable(item)" :title="props.measureTitle?.(item)" :class="{ active: item.index === props.activeIndex, gogo: item.gogo, 'loop-anchor': item.index === props.anchorIndex, 'in-selection': measureSelected(item.index), 'note-selected': item.index === props.noteIndex, 'loop-preview': measureDrag?.dragged && measureSelected(item.index) }" :aria-label="t('小节 {p0}', { p0: item.index + 1 }) + (item.index === props.noteIndex ? ` · ${t('已选音符所在小节')}` : '')" :aria-current="item.index === props.activeIndex ? 'location' : undefined" :aria-pressed="measureSelected(item.index)" @click="viewMeasure($event, item.index)" @dblclick="emit('toggle', item.index)">
-      <span>{{ String(item.index + 1).padStart(3, '0') }}</span><span class="mini-notes"><i v-for="(note, index) in [...item.notes].filter(note => note !== '0').slice(0, 10)" :key="index" :class="{ blue: '24B'.includes(note) }"></i></span>
+    <button v-for="item in props.bars" :key="item.index" type="button" :data-measure-index="item.index" :disabled="props.disabled || props.unavailable(item)" :title="props.measureTitle?.(item) ?? (props.visibleIndices.includes(item.index) ? t('当前视图内的小节') : undefined)" :class="{ active: item.index === props.activeIndex, gogo: item.gogo, 'loop-anchor': item.index === props.anchorIndex, 'in-selection': measureSelected(item.index), 'in-view': props.visibleIndices.includes(item.index), 'loop-preview': measureDrag?.dragged && measureSelected(item.index) }" :aria-label="t('小节 {p0}', { p0: item.index + 1 }) + (item.index === props.noteIndex ? ` · ${t('已选音符所在小节')}` : '') + (props.visibleIndices.includes(item.index) ? ` · ${t('当前视图内的小节')}` : '')" :aria-current="item.index === props.activeIndex ? 'location' : undefined" :aria-pressed="measureSelected(item.index)" @click="viewMeasure($event, item.index)" @dblclick="emit('toggle', item.index)">
+      <span>{{ String(item.index + 1).padStart(3, '0') }}</span><span class="mini-notes"><i v-for="(note, index) in miniNotes.get(item.index)" :key="index" :data-note="note" :title="t(NOTE_TYPES.find(type => type.value === note).name)" :class="{ blue: '24B'.includes(note), roll: '56'.includes(note), balloon: note === '7', special: note === '9' }"></i></span>
     </button>
   </div>
 </template>
 
 <style scoped>
-.measure-grid{user-select:none;touch-action:pan-y}.measure-grid.dragging,.measure-grid.dragging button{cursor:crosshair}.measure-grid button.loop-preview{outline:1px solid var(--green);outline-offset:-1px}
+.measure-grid{user-select:none;touch-action:pan-y;grid-template-columns:repeat(auto-fill,minmax(56px,1fr))}.measure-grid.dragging,.measure-grid.dragging button{cursor:crosshair}.measure-grid button.loop-preview{outline:1px solid var(--green);outline-offset:-1px}
+.measure-grid button{padding:7px}
 .measure-grid button.loop-anchor{outline:2px dashed var(--green);outline-offset:-2px}
-.measure-grid button.in-selection{box-shadow:inset 0 3px 0 var(--green)}.measure-grid button.note-selected{position:relative}.measure-grid button.note-selected::after{content:'';position:absolute;right:4px;bottom:4px;width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 0 2px #fff}
+.measure-grid button.in-selection{box-shadow:inset 0 3px 0 var(--green)}
+.measure-grid .mini-notes{width:40px;max-width:100%;justify-content:center;gap:1px;overflow:visible}
+.measure-grid .mini-notes i{width:3px;min-width:3px;flex:0 0 3px}
+.measure-grid button.in-view .mini-notes{background:#e3edf3;box-shadow:0 0 0 4px #e3edf3;border-radius:2px}
+.measure-grid .mini-notes i.roll{background:#e6b800}.measure-grid .mini-notes i.balloon{background:#f07800}.measure-grid .mini-notes i.special{background:#ff78ae}
 </style>

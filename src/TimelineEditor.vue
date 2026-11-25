@@ -54,6 +54,9 @@ function dismissTools(event) {
   toolsOpen.value = false;
 }
 const { state, controls, bar, spans, visible, viewBeats, timelineScale, timelineBounds, timelineScrollBounds, cell, command, stats, chartStats, selectedTiming, range } = studio;
+const visibleMeasureIndices = computed(() => visible.value?.bars
+  .filter(item => measureEnd(item) > visible.value.start && measureStart(item) < visible.value.end)
+  .map(item => item.index) ?? []);
 const balloonHits = computed(() => {
   const { balloon, special } = chartStats.value;
   return balloon === null || special === null ? null : balloon + special;
@@ -71,12 +74,12 @@ const positionSummary = computed(() => {
 const cellAttributes = computed(() => {
   const selected = cell.value, timing = selectedTiming.value;
   return [
-    { id: 'cell-bpm', label: 'BPM', value: String(timing.bpm) },
-    { id: 'cell-scroll', label: '卷轴倍率', value: `${timing.scroll}×` },
-    { id: 'cell-meter', label: '拍号', value: `${timing.numerator}/${timing.denominator}` },
-    { id: 'cell-gogo', label: 'GOGOTIME', value: t(timing.gogo ? '是' : '否') },
-    { id: 'cell-delay', label: '延迟 / s', value: String(timing.delay) },
-    ...(selected?.span ? [{ id: 'cell-long', label: '长音状态', value: `${t(NOTE_TYPES[Number(selected.span.note)].name)} · ${(selected.span.end - selected.span.start).toFixed(3)} s`, warning: selected.span.complete ? null : t('缺少结束标记') }] : [])
+    { id: 'cell-bpm', label: 'BPM', value: timing ? String(timing.bpm) : '—' },
+    { id: 'cell-scroll', label: '卷轴倍率', value: timing ? `${timing.scroll}×` : '—' },
+    { id: 'cell-meter', label: '拍号', value: timing ? `${timing.numerator}/${timing.denominator}` : '—' },
+    { id: 'cell-gogo', label: 'GOGOTIME', value: timing ? t(timing.gogo ? '是' : '否') : '—' },
+    { id: 'cell-delay', label: '延迟 / s', value: timing ? String(timing.delay) : '—' },
+    ...(timing && selected?.span ? [{ id: 'cell-long', label: '长音状态', value: `${t(NOTE_TYPES[Number(selected.span.note)].name)} · ${(selected.span.end - selected.span.start).toFixed(3)} s`, warning: selected.span.complete ? null : t('缺少结束标记') }] : [])
   ];
 });
 const timeline = ref(null), overview = ref(null), customSnap = ref(null), hover = ref(null);
@@ -502,13 +505,14 @@ onUnmounted(() => {
       <Teleport to="#mobile-position-panel" :disabled="!mobile" defer>
       <section class="cell-inspector" :aria-label="t('落点信息')">
         <SectionHeading class="position-caption" :icon="Grid2X2" :title="t('落点信息')">
-          <span class="position-source">{{ t('所选落点') }}</span>
+          <span v-if="positionSummary" class="position-source">{{ t('所选落点') }}</span>
           <template #description>
             <div v-if="positionSummary" class="position-summary">
-              <span>{{ t('小节 {p0}', { p0: positionSummary.measure }) }}</span>
-              <span v-if="positionSummary.fraction" id="cell-fraction">{{ t('位置') }} {{ positionSummary.fraction }}</span>
-              <span id="cell-time" :title="`${positionSummary.time.toFixed(4)} s`">{{ formatTime(positionSummary.time) }}</span>
+              <span>{{ t('小节') }} <b>{{ positionSummary.measure }}</b></span>
+              <span v-if="positionSummary.fraction" id="cell-fraction">{{ t('位置') }} <b>{{ positionSummary.fraction }}</b></span>
+              <span id="cell-time" :title="`${positionSummary.time.toFixed(4)} s`"><b>{{ formatTime(positionSummary.time) }}</b></span>
             </div>
+            <p v-else class="position-empty">{{ t('未选取落点') }}</p>
           </template>
         </SectionHeading>
         <dl>
@@ -535,7 +539,7 @@ onUnmounted(() => {
       </SectionHeading>
       <output v-if="state.loopAnchor !== null" id="measure-loop-anchor">{{ t('已标记第 {p0} 小节，再按 F 完成区间选择，Esc 取消。', { p0: state.loopAnchor + 1 }) }}</output>
     </div>
-    <MeasureGrid id="measures" :key="state.activeId" :bars="state.chart?.bars || []" :selection="range" :active-index="state.selected" :anchor-index="state.loopAnchor" :note-index="state.selectedCell?.bar" :disabled="state.invalid" @activate="studio.select" @select="studio.setLoop" @toggle="toggleMeasure" @preview="measurePreview = $event" />
+    <MeasureGrid id="measures" :key="state.activeId" :bars="state.chart?.bars || []" :selection="range" :active-index="selectedTiming?.bar.index ?? null" :visible-indices="visibleMeasureIndices" :anchor-index="state.loopAnchor" :note-index="state.selectedCell?.bar" :disabled="state.invalid" @activate="studio.select" @select="studio.setLoop" @toggle="toggleMeasure" @preview="measurePreview = $event" />
   </section>
   </Teleport>
       </div>
@@ -569,7 +573,9 @@ onUnmounted(() => {
 #selection-summary{font-size:11px;color:var(--green)}
 .clear-measure-selection{align-self:center;min-height:20px;padding:0 6px;gap:4px;border:0;background:transparent;font-size:11px}.clear-measure-selection svg{width:14px;height:14px}
 .position-caption{margin-bottom:12px}.position-source{font-size:11px;color:var(--muted)}
-.position-summary{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--ink);font-variant-numeric:tabular-nums}.position-summary>span{white-space:nowrap}
+.position-summary{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.position-summary>span{white-space:nowrap}
+.position-summary b{font-weight:500;color:var(--ink)}
+.position-empty{margin:0;font:inherit;color:inherit}
 .measure-nav{display:flex;align-items:center;gap:6px;min-width:0}.measure-nav label{display:flex;align-items:center;gap:6px;font-size:11px;white-space:nowrap}.measure-nav input{width:64px;min-width:0;height:28px;min-height:28px;padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:#fff;text-align:center;font-size:11px}
 .chart-statistics{display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;min-width:0;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.chart-statistics>span{white-space:nowrap}.chart-statistics b{font-weight:500;color:var(--ink)}
 .measure-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.measure-actions{display:inline-flex;max-width:100%;margin-right:6px;border:0;border-radius:5px;background:transparent}.measure-actions button{min-width:0;padding:4px 8px;gap:4px;border:0;border-radius:4px;font-size:11px}.measure-actions button svg{width:14px;height:14px}
