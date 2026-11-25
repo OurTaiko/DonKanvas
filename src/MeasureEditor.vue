@@ -153,6 +153,7 @@ function locate(item) { studio.setCommandPosition(item.slot, bar.value.notes.len
 <style scoped>
 .measure-editor{display:block;min-width:0;min-height:0;padding:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
 .inspector-section{min-width:0;margin:0 0 16px;border:0}.inspector-section:last-child{margin-bottom:0}.inspector-content{min-width:0;padding:12px 14px 14px;border:0}.inspector-content.bar-settings{margin:0;border:0}.inspector-content>.detail-row:first-child{margin-top:0}.inspector-content>.detail-row:last-child{margin-bottom:0}
+.inspector-section:not([open]){margin-bottom:0;border-bottom:1px solid var(--line)}
 .inspector-heading{background:var(--paper)}.inspector-heading:hover{background:#edf3ee}
 .inspector-heading h2{flex:0 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.inspector-summary{flex:1 1 auto;min-width:0;font-size:11px;line-height:1;color:var(--muted);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .command-group{min-width:0;margin:12px 0 0;padding:10px 0 0;border:0;border-top:1px dashed var(--line)}.command-group legend{padding:0 8px 0 0;font-size:11px;font-weight:500;color:var(--muted)}.selection-position .command-position{margin-top:0}.selection-position .inspector-content>output{display:block;margin-top:8px;font-size:12px;line-height:18px;color:var(--muted)}

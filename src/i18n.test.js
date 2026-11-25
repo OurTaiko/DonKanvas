@@ -1325,6 +1325,7 @@ test('editor sections collapse independently without unmounting fields or promot
   assert.doesNotMatch(descriptor.template.content, /<label for="source">/);
   const styles = descriptor.styles[0].content;
   assert.match(styles, /\.inspector-section\{[^}]*margin:0 0 16px;border:0\}/);
+  assert.match(styles, /\.inspector-section:not\(\[open\]\)\{margin-bottom:0;border-bottom:1px solid var\(--line\)\}/);
   assert.match(styles, /\.inspector-content\{[^}]*padding:12px 14px 14px;border:0\}/);
   assert.doesNotMatch(styles, /\.inspector-(?:section|heading)\{[^}]*border-radius/);
   assert.match(styles, /\.inspector-heading\{background:var\(--paper\)\}/);
