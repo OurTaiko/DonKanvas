@@ -434,7 +434,12 @@ test('overview centers a location icon on the exact selected time, including bot
   assert.equal(position.value, 50);
   cell.value = null;
   assert.equal(position.value, null);
-  assert.ok(descriptor.template.content.includes('<svg v-if="overviewSelection !== null" class="overview-selection" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" :style="{ left: `${overviewSelection}%` }"><circle cx="12" cy="12" r="7" stroke-width="1" stroke-dasharray="4 2" stroke-linecap="butt" /><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" /></svg>'));
+  assert.ok(descriptor.template.content.includes('<PositionIcon v-if="overviewSelection !== null" class="overview-selection" aria-hidden="true" :style="{ left: `${overviewSelection}%` }" />'));
+  const icon = parse(readFileSync(new URL('PositionIcon.vue', import.meta.url), 'utf8')).descriptor;
+  compileScript(descriptor, { id: 'shared-position-icon' });
+  assert.match(icon.template.content, /<svg[^>]*viewBox="0 0 24 24"[^>]*stroke-width="2"/);
+  assert.match(icon.template.content, /<circle cx="12" cy="12" r="9" stroke-dasharray="4 2" stroke-linecap="butt" \/>/);
+  assert.match(icon.template.content, /<circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" \/>/);
   const markerStyle = descriptor.styles[0].content.match(/\.overview-selection\{([^}]*)\}/)[1];
   assert.match(markerStyle, /top:50%;width:24px;height:24px;transform:translate\(-50%,-50%\);color:#49638c;stroke-width:2;pointer-events:none/);
   assert.doesNotMatch(markerStyle, /border|background|box-shadow/);
@@ -2122,7 +2127,7 @@ test('navigation, position information and branches share an icon heading with i
   assert.match(descriptor.styles[0].content, /\.section-caption-actions\{display:flex;align-self:center;align-items:center;flex:0 0 auto;height:20px\}/);
   assert.match(timeline, /<SectionHeading :icon="Map" :title="t\('全局导航'\)">[\s\S]*id="selection-summary"[\s\S]*@click="studio.clearLoop"[\s\S]*<\/SectionHeading>/);
   assert.match(timeline, /:title="t\('全局导航'\)">[\s\S]*<template #description>\s*<div class="chart-statistics"[\s\S]*id="total-notes"[\s\S]*<\/template>\s*<\/SectionHeading>/);
-  assert.match(timeline, /<SectionHeading class="position-caption" :icon="Grid2X2" :title="t\('落点信息'\)">\s*<template #actions><button v-if="positionSummary" id="clear-position-selection" type="button" class="clear-position-selection clear-selection" :title="t\('取消选择'\)" :aria-label="t\('取消选择'\)" @click="studio.clearNoteSelection"><X aria-hidden="true" \/>{{ t\('取消选择'\) }}<\/button><\/template>/);
+  assert.match(timeline, /<SectionHeading class="position-caption" :icon="PositionIcon" :title="t\('落点信息'\)">\s*<template #actions><button v-if="positionSummary" id="clear-position-selection" type="button" class="clear-position-selection clear-selection" :title="t\('取消选择'\)" :aria-label="t\('取消选择'\)" @click="studio.clearNoteSelection"><X aria-hidden="true" \/>{{ t\('取消选择'\) }}<\/button><\/template>/);
   assert.match(timeline, /class="clear-measure-selection clear-selection"/);
   assert.doesNotMatch(timeline, /position-source|t\('所选落点'\)/);
   const branches = readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8');
@@ -2382,10 +2387,16 @@ test('short portrait layouts size the timeline row to its content instead of spa
   assert.doesNotMatch(descriptor.styles[0].content, /grid-template-rows:auto minmax\(0,4fr\)/);
 });
 
-test('landscape inspector tabs use only named icons while portrait tabs retain text', () => {
+test('landscape inspector tabs match their panel heading icons while portrait tabs retain text', () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'landscape-icon-tabs' });
-  assert.match(descriptor.scriptSetup.content, /const inspectorIcons = \[FilePenLine, LocateFixed, ListMusic, GitBranch\]/);
+  const icons = descriptor.scriptSetup.content.match(/const inspectorIcons = \[([^\]]+)\]/)[1].split(', ');
+  const timeline = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8')).descriptor.template.content;
+  const branch = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8')).descriptor.template.content;
+  for (const [index, label, template] of [[1, '落点信息', timeline], [2, '全局导航', timeline], [3, '谱面分歧', branch]]) {
+    const headingIcon = template.match(new RegExp(`<SectionHeading[^>]*:icon="([^"]+)" :title="t\\('${label}'\\)"`))[1];
+    assert.equal(icons[index], headingIcon, label);
+  }
   const tabs = descriptor.template.content.match(/<div class="inspector-tabs"[\s\S]*?<\/div>/)[0];
   assert.match(tabs, /:aria-label="t\(label\)" :title="mobileLandscape \? t\(label\) : undefined"/);
   assert.match(tabs, /<component v-if="mobileLandscape" :is="inspectorIcons\[index\]" aria-hidden="true" \/><span v-else>\{\{ t\(label\) \}\}<\/span>/);

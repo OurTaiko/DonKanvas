@@ -1,7 +1,7 @@
 <script setup>
 import { t, message, formatMessage, LocalizedError, languages, localePreference, initializeLocale, setLocale } from './i18n.js';
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, shallowRef, watch } from 'vue';
-import { Plus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser, ListMusic, SquareMousePointer, ListChecks, TextCursorInput, Flag, SquareDashed, ArrowLeftToLine, ArrowLeft, ArrowRight, LocateFixed, CircleOff } from '@lucide/vue';
+import { Plus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser, ListMusic, SquareMousePointer, ListChecks, TextCursorInput, Flag, SquareDashed, ArrowLeftToLine, ArrowLeft, ArrowRight, Map, CircleOff } from '@lucide/vue';
 import { GitBranch } from '@lucide/vue';
 import { useStudio, formatTime } from './useStudio.js';
 import productIcon from './assets/icon.png';
@@ -10,6 +10,7 @@ import MeasureEditor from './MeasureEditor.vue';
 import SongWorkspace from './SongWorkspace.vue';
 import DifficultyIcon from './DifficultyIcon.vue';
 import DocumentTitle from './DocumentTitle.vue';
+import PositionIcon from './PositionIcon.vue';
 import { COURSE_NAMES, COURSE_LABELS } from './courses.js';
 import { NOTE_TYPES } from './note-model.js';
 import { checkPwaUpdate, activatePwaUpdate, waitForPwaRegistration } from './pwa.js';
@@ -23,7 +24,7 @@ const activeDocument = computed({ get: () => state.activeId, set: id => studio.s
 const transportHost = ref(null), transportHeight = ref(0);
 const playbackMenu = ref(null), compactTransport = ref(true), playbackMenuOpen = ref(false);
 const inspectorTabs = ['谱面编辑', '落点信息', '全局导航', '谱面分歧'], inspectorTab = ref(0);
-const inspectorIcons = [FilePenLine, LocateFixed, ListMusic, GitBranch];
+const inspectorIcons = [FilePenLine, PositionIcon, Map, GitBranch];
 function inspectorKeydown(event, index) {
   if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
   event.preventDefault(); event.stopPropagation();

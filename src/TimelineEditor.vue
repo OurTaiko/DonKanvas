@@ -3,6 +3,7 @@ import { t } from './i18n.js';
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
 import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map, TriangleAlert, Ellipsis, Check, ChevronRight, ZoomIn, Crosshair, Maximize2, Ruler, ChevronsLeft, ChevronsRight } from '@lucide/vue';
 import SectionHeading from './SectionHeading.vue';
+import PositionIcon from './PositionIcon.vue';
 import BranchControls from './BranchControls.vue';
 import MeasureGrid from './MeasureGrid.vue';
 import { barTimeAt, barFractionAt, BRANCH_ROUTES, BRANCH_ROUTE_NAMES } from './chart.js';
@@ -585,7 +586,7 @@ onUnmounted(() => {
       <section class="overview">
         <div class="overview-caption"><span class="overview-legend" :class="{ 'overview-legend-compact': !mobile || landscape }"><span class="overview-gogo" role="img" aria-label="GOGOTIME" title="GOGOTIME"><i class="gogo">{{ !mobile || landscape ? 'G' : '' }}</i><span class="overview-legend-label">GOGOTIME</span></span><span v-for="route in BRANCH_ROUTES" :key="route" class="overview-route" role="img" :aria-label="t(BRANCH_ROUTE_NAMES[route])" :title="t(BRANCH_ROUTE_NAMES[route])"><i :style="{ '--overview-legend-color': branchColor(route) }">{{ !mobile || landscape ? route : '' }}</i><span class="overview-legend-label">{{ t(BRANCH_ROUTE_NAMES[route]) }}</span></span></span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div>
         <div class="overview-wave">
-          <svg v-if="overviewSelection !== null" class="overview-selection" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" :style="{ left: `${overviewSelection}%` }"><circle cx="12" cy="12" r="7" stroke-width="1" stroke-dasharray="4 2" stroke-linecap="butt" /><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" /></svg>
+          <PositionIcon v-if="overviewSelection !== null" class="overview-selection" aria-hidden="true" :style="{ left: `${overviewSelection}%` }" />
           <span v-if="overviewHover" id="overview-hover" role="tooltip" :style="{ left: `${overviewHover.x}px`, top: `${overviewHover.y}px`, transform: `translate(${-overviewHover.fraction * 100}%, calc(-100% - 12px))` }">{{ formatTime(overviewHover.time) }} · {{ t('小节 {p0}', { p0: overviewHover.measure ?? '—' }) }}</span>
           <canvas id="overview" ref="overview" :aria-label="t('全曲波形，点击跳转，拖动浏览')" :aria-describedby="range ? 'selection-summary' : undefined" role="img" @pointerenter="hoverOverview" @pointerleave="overviewHover = null" @pointerdown="startOverviewDrag" @pointermove="hoverOverview($event); moveOverviewDrag($event)" @pointerup="finishOverviewDrag" @pointercancel="cancelOverviewDrag($event); overviewHover = null" @lostpointercapture="cancelOverviewDrag"></canvas>
         </div>
@@ -594,7 +595,7 @@ onUnmounted(() => {
       <div class="editor-information-left">
       <Teleport to="#mobile-position-panel" :disabled="!mobile" defer>
       <section class="cell-inspector" :aria-label="t('落点信息')">
-        <SectionHeading class="position-caption" :icon="Grid2X2" :title="t('落点信息')">
+        <SectionHeading class="position-caption" :icon="PositionIcon" :title="t('落点信息')">
           <template #actions><button v-if="positionSummary" id="clear-position-selection" type="button" class="clear-position-selection clear-selection" :title="t('取消选择')" :aria-label="t('取消选择')" @click="studio.clearNoteSelection"><X aria-hidden="true" />{{ t('取消选择') }}</button></template>
           <template #description>
             <div v-if="positionSummary" class="position-summary">
