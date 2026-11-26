@@ -269,7 +269,7 @@ function touchSelectionHarness() {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   const script = descriptor.scriptSetup.content;
   const source = script.slice(script.indexOf('const touchGuide = ref(false);'), script.indexOf('let overviewDrag = null;'));
-  const timers = new Map(), moves = [], scrolls = [], captures = new Set(), playback = [], selections = [];
+  const timers = new Map(), moves = [], scrolls = [], captures = new Set(), playback = [], selections = [], pans = [];
   const state = reactive({ chart: { bars: [] }, selectedCell: { bar: 0 }, invalid: false, editorBlocked: false, playing: false, position: 0 });
   let now = 0, timerId = 0;
   const target = {
@@ -282,7 +282,8 @@ function touchSelectionHarness() {
     studio: {
       moveCell: direction => moves.push(direction),
       seek: time => { state.position = time; playback.push(['seek', time]); },
-      seekMeasure: direction => playback.push(['measure', direction]),
+      seekMeasure: direction => { state.position += direction * 2; playback.push(['measure', direction]); },
+      panTimeline: (time, manual) => { pans.push([time, manual]); if (manual) state.followPlayback = false; },
       play: time => { state.position = time; state.playing = true; playback.push(['play', time]); },
       pause: () => { state.playing = false; playback.push(['pause']); },
       selectCell: position => selections.push(position)
@@ -300,18 +301,21 @@ function touchSelectionHarness() {
     now += delay;
     for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
   };
-  return { ...handlers, event, advance, moves, scrolls, captures, state, playback, selections };
+  return { ...handlers, event, advance, moves, scrolls, captures, state, playback, selections, pans };
 }
 
-test('waveform gutter clicks seek adjacent measures without activating note editing or long press', () => {
-  for (const pointerType of ['mouse', 'touch']) {
+test('waveform gutter clicks seek and reveal adjacent measures without changing follow mode or activating note editing or long press', () => {
+  for (const pointerType of ['mouse', 'pen', 'touch']) for (const follow of [false, true]) {
     const gesture = touchSelectionHarness();
+    gesture.state.position = 4; gesture.state.followPlayback = follow; gesture.state.playing = true;
     for (const [pixel, direction] of [[6, -1], [230, 1]]) {
       const event = gesture.event(pixel, { pointerType });
       gesture.pointerDown(event); gesture.advance(500); gesture.finishTouchSelection(event);
       assert.deepEqual(gesture.playback.at(-1), ['measure', direction]);
     }
     assert.deepEqual(gesture.playback, [['pause'], ['measure', -1], ['pause'], ['measure', 1]]);
+    assert.deepEqual(gesture.pans, [[2, false], [4, false]]);
+    assert.equal(gesture.state.followPlayback, follow);
     assert.equal(gesture.state.playing, false); assert.deepEqual(gesture.selections, []);
     assert.equal(gesture.touchGuide.value, false); assert.equal(gesture.captures.size, 0);
   }

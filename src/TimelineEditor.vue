@@ -435,6 +435,7 @@ function pointerDown(event) {
     const pixel = event.clientX - rect.left;
     if (pixel < TIMELINE_GUTTER || pixel >= TIMELINE_GUTTER + viewportWidth.value) {
       studio.seekMeasure(pixel < TIMELINE_GUTTER ? -1 : 1);
+      studio.panTimeline(state.position, false);
       startTouchSelection(event, false);
       return;
     }
