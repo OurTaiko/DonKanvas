@@ -433,8 +433,8 @@ async function dropFiles(event) {
         </div>
       </details>
     </div>
-    <select v-if="mobileLandscape" id="opened-chart-select" v-model="activeDocument" class="landscape-chart-picker" :aria-label="t('已打开谱面')" :title="state.filename || t('已打开谱面')" :disabled="!state.documents.length">
-      <option v-if="!state.documents.length" :value="state.activeId">{{ t('已打开谱面') }}</option>
+    <select v-if="mobileLandscape" id="opened-chart-select" v-model="activeDocument" class="landscape-chart-picker" :aria-label="t(state.documents.length ? '已打开谱面' : '尚未打开谱面')" :title="state.documents.length ? state.filename || t('已打开谱面') : t('尚未打开谱面')" :disabled="!state.documents.length">
+      <option v-if="!state.documents.length" :value="state.activeId">{{ t('尚未打开谱面') }}</option>
       <option v-for="document in state.documents" :key="document.id" :value="document.id">{{ document.id === state.activeId ? state.filename : document.filename }}{{ (document.id === state.activeId ? state.dirty || state.invalid : document.dirty || document.invalid) ? ' *' : '' }}</option>
     </select>
     <details ref="settingsMenu" class="settings-popover" @toggle="positionPopover($event.target)" @keydown="popoverKeydown($event, settingsMenu)">
@@ -548,7 +548,8 @@ async function dropFiles(event) {
       </template>
       <div v-else class="empty-start-actions">
         <div class="welcome-intro">
-          <h1>{{ t('欢迎使用 {p0}', { p0: productMetadata.name }) }}</h1>
+          <h1>{{ t('欢迎使用 {p0}', { p0: productMetadata.displayName }) }}</h1>
+          <p>{{ t('跟着音乐放下音符，边听边调整，把脑海中的节奏变成谱面。通过直观的图形界面就能完成创作，不必编写 TJA 代码。无论用电脑、手机还是平板，打开浏览器就能开始；键盘快捷键、鼠标操作和触屏手势，让你用顺手的方式创作。') }}</p>
           <p>{{ t('初次使用？通过快速上手，了解谱面编辑的基本操作。') }}</p>
           <button id="empty-welcome-guide" type="button" class="primary" @click="welcomeGuide.open()"><WandSparkles aria-hidden="true" />{{ t('开始上手') }}<ArrowRight aria-hidden="true" /></button>
         </div>
@@ -677,6 +678,8 @@ main:has(.mobile-landscape){padding-bottom:0}
 .studio-panel-body.mobile-landscape .workspace-icons{display:grid}
 .studio-panel-body.mobile-landscape .song-workspace.collapsed .workspace-heading{justify-content:center;padding:0}
 .studio-panel-body.mobile-landscape>.editor-core{grid-column:2;grid-row:1;container-type:size}
+.studio-panel-body.mobile-landscape:not(:has(>.song-workspace)){grid-template-columns:minmax(0,1fr)}
+.studio-panel-body.mobile-landscape:not(:has(>.song-workspace))>.editor-core{grid-column:1 / -1}
 .studio-panel-body.mobile-landscape>.mobile-inspector{grid-column:3;grid-row:1;border-top:0;border-left:1px solid var(--line)}
 .mobile-landscape .inspector-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
 .mobile-landscape .inspector-tabs>[role=tab]{min-height:32px;padding:4px 2px;font-size:11px;line-height:16px;overflow-wrap:anywhere}

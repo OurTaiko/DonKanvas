@@ -2481,7 +2481,9 @@ test('landscape keeps top menus and switches open charts through a single-line d
   compileScript(descriptor, { id: 'landscape-chart-picker' });
   const header = descriptor.template.content.match(/<header>[\s\S]*?<\/header>/)[0];
   assert.match(header, /<select v-if="mobileLandscape" id="opened-chart-select" v-model="activeDocument"/);
-  assert.match(header, /:aria-label="t\('已打开谱面'\)"/);
+  assert.match(header, /:aria-label="t\(state.documents.length \? '已打开谱面' : '尚未打开谱面'\)"/);
+  assert.match(header, /:title="state.documents.length \? state.filename \|\| t\('已打开谱面'\) : t\('尚未打开谱面'\)"/);
+  assert.match(header, /<option v-if="!state.documents.length"[^>]*>\{\{ t\('尚未打开谱面'\) \}\}<\/option>/);
   assert.match(header, /:disabled="!state.documents.length"/);
   assert.match(header, /<option v-for="document in state.documents"[^>]*:value="document.id"/);
   assert.match(header, /document.dirty \|\| document.invalid/);
@@ -2491,6 +2493,8 @@ test('landscape keeps top menus and switches open charts through a single-line d
   assert.match(descriptor.template.content, /<nav class="chart-tabs" v-show="!mobileLandscape"/);
   assert.doesNotMatch(descriptor.template.content, /mobile-menu-panel/);
   assert.match(descriptor.styles[0].content, /\.landscape-chart-picker\{[^}]*min-width:0;[^}]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis/);
+  assert.ok(descriptor.styles[0].content.includes('.studio-panel-body.mobile-landscape:not(:has(>.song-workspace)){grid-template-columns:minmax(0,1fr)}'));
+  assert.ok(descriptor.styles[0].content.includes('.studio-panel-body.mobile-landscape:not(:has(>.song-workspace))>.editor-core{grid-column:1 / -1}'));
   const calls = [], state = { activeId: 12 };
   const studio = { switchChart(id) { calls.push(id); state.activeId = id; } };
   const source = descriptor.scriptSetup.content.match(/const activeDocument = computed\([^\n]+;/)[0];
@@ -2928,7 +2932,7 @@ test('the independent song sidebar edits metadata while empty songs expose creat
   assert.match(app.template.content, /:data-create-course="course"/);
   assert.match(app.template.content, /studio.createCourse\(\{ course, player: 'single', style: 'Single', level: 1 \}\)/);
   assert.match(app.template.content, /v-else class="empty-start-actions"[\s\S]*id="empty-welcome-guide"[^>]*class="primary"[^>]*@click="welcomeGuide.open\(\)"/);
-  assert.match(app.template.content, /class="welcome-intro"[\s\S]*t\('欢迎使用 \{p0\}', \{ p0: productMetadata.name \}\)[\s\S]*初次使用？通过快速上手[\s\S]*id="empty-welcome-guide"[\s\S]*t\('开始上手'\)[\s\S]*class="welcome-files"[\s\S]*id="empty-new-chart"[\s\S]*id="empty-open-chart"/);
+  assert.match(app.template.content, /class="welcome-intro"[\s\S]*t\('欢迎使用 \{p0\}', \{ p0: productMetadata.displayName \}\)[\s\S]*跟着音乐放下音符，边听边调整[\s\S]*不必编写 TJA 代码。[\s\S]*电脑、手机还是平板[\s\S]*键盘快捷键、鼠标操作和触屏手势[\s\S]*初次使用？通过快速上手，了解谱面编辑的基本操作。[\s\S]*id="empty-welcome-guide"[\s\S]*t\('开始上手'\)[\s\S]*class="welcome-files"[\s\S]*id="empty-new-chart"[\s\S]*id="empty-open-chart"/);
   assert.match(app.template.content, /id="empty-new-chart"[^>]*@click="studio.newChart"/);
   assert.match(app.template.content, /id="empty-open-chart"[^>]*@click="runFileAction\(chooseCharts\)"/);
   assert.doesNotMatch(app.template.content, /workspace.focusTree\(\)|选择难度与模式/);
