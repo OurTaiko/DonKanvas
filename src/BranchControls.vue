@@ -10,7 +10,7 @@ const studio = inject('studio'), { state, selectedTiming } = studio;
 const dialog = ref(null);
 const mode = ref(''), target = ref(null), error = ref(''), first = ref(null), last = ref(null), anchor = ref(null);
 const fields = reactive({ condition: 'p', lower: 50, upper: 80, route: 'N', source: 'shared', keep: '' });
-const actionTitle = computed(() => mode.value === 'create' || mode.value === 'route' ? t('创建分歧') : mode.value === 'remove-route' ? t('删除路线') : t('删除整个分歧'));
+const actionTitle = computed(() => mode.value === 'create' || mode.value === 'route' ? t('创建分歧') : mode.value === 'remove-route' ? t('删除分歧') : t('删除整个分歧'));
 const actionSubtitle = computed(() => mode.value === 'route' || mode.value === 'remove-route' ? t(names[fields.route]) : '');
 const branches = computed(() => state.chart?.branches || []);
 const editedBranch = computed(() => branches.value.find(branch => branch.index === target.value));
@@ -128,14 +128,14 @@ function keydown(event) {
 </script>
 
 <template>
-  <section class="branch-context" :aria-label="t('分歧路线')" @keydown.space.stop @keydown.left.stop @keydown.right.stop>
+  <section class="branch-context" :aria-label="t('分歧')" @keydown.space.stop @keydown.left.stop @keydown.right.stop>
     <SectionHeading class="branch-caption" :icon="GitBranch" :title="t('谱面分歧')">
       <span class="branch-count">{{ branches.length }}</span>
       <template #description><p class="branch-current"><template v-if="current"><span v-if="current.route" class="branch-route-tag" :data-route="current.route">{{ t(names[current.route]) }}</span> {{ branchLabel(current) }} · {{ conditionLabel(current) }}</template><template v-else-if="selectedTiming">{{ t('当前位于共用段') }}</template><template v-else>{{ t('未选取落点') }}</template></p></template>
     </SectionHeading>
     <div class="branch-actions">
       <button id="branch-create" type="button" class="manage-branches" :title="t('创建分歧')" :aria-label="t('创建分歧')" :disabled="state.invalid" @click="create"><Plus aria-hidden="true" /><span class="branch-create-label">{{ t('创建分歧') }}</span></button>
-      <div class="route-segments branch-route-filter" role="group" :aria-label="t('路线筛选')">
+      <div class="route-segments branch-route-filter" role="group" :aria-label="t('分歧筛选')">
         <button v-for="route in BRANCH_ROUTES" :id="`branch-all-${route}`" :key="route" :data-route="route" type="button" :aria-pressed="uniform === route" :disabled="state.invalid || !available.includes(route)" @click="studio.changeAllBranches(route)">{{ t(names[route]) }}</button>
       </div>
     </div>
@@ -155,29 +155,29 @@ function keydown(event) {
             <output class="branch-selection">{{ first === null ? t('请先选择有效的小节。') : t('已选小节：{p0}–{p1}', { p0: first + 1, p1: last + 1 }) }}</output>
           </template>
           <div v-if="mode === 'create'" class="branch-source-fields">
-            <label>{{ t('首条路线') }}<select id="branch-initial-route" v-model="fields.route"><option v-for="route in BRANCH_ROUTES" :key="route" :value="route">{{ route }} · {{ t(names[route]) }}</option></select></label>
+            <label>{{ t('首条分歧') }}<select id="branch-initial-route" v-model="fields.route"><option v-for="route in BRANCH_ROUTES" :key="route" :value="route">{{ route }} · {{ t(names[route]) }}</option></select></label>
             <label>{{ t('音符来源') }}<select id="branch-source" v-model="fields.source"><option value="">{{ t('空白（保留小节和指令）') }}</option><option value="shared">{{ t('复制所选共用小节') }}</option></select></label>
           </div>
           <div v-if="mode === 'route'" class="route-source-actions">
-            <button id="branch-source-empty" type="button" @click="createRoute('')"><Plus aria-hidden="true" />{{ t('创建空白路线') }}</button>
-            <button v-for="route in editedBranch.routes" :key="route" type="button" :data-source="route" @click="createRoute(route)"><Copy aria-hidden="true" /><span>{{ routeActionParts('复制路线 {p0}')[0] }}<span class="branch-route-text" :data-route="route">{{ t(names[route]) }}</span>{{ routeActionParts('复制路线 {p0}')[1] }}</span></button>
+            <button id="branch-source-empty" type="button" @click="createRoute('')"><Plus aria-hidden="true" />{{ t('创建空白分歧') }}</button>
+            <button v-for="route in editedBranch.routes" :key="route" type="button" :data-source="route" @click="createRoute(route)"><Copy aria-hidden="true" /><span>{{ routeActionParts('复制分歧 {p0}')[0] }}<span class="branch-route-text" :data-route="route">{{ t(names[route]) }}</span>{{ routeActionParts('复制分歧 {p0}')[1] }}</span></button>
           </div>
           <div v-if="mode === 'create'" class="branch-condition-fields">
             <label>{{ t('分歧条件') }}<select id="branch-condition" v-model="fields.condition"><option value="p">{{ t('精度（p）') }}</option><option value="r">{{ t('连打数（r）') }}</option><option value="s">{{ t('分数（s）') }}</option></select></label>
             <label>{{ t('第一阈值') }}<input id="branch-lower" v-model.number="fields.lower" type="number" step="any" required></label>
             <label>{{ t('第二阈值') }}<input id="branch-upper" v-model.number="fields.upper" type="number" step="any" required></label>
           </div>
-          <p v-if="mode === 'remove-route'">{{ t('删除路线 {p0} 及其内容？可撤销恢复。', { p0: t(names[fields.route]) }) }}</p>
+          <p v-if="mode === 'remove-route'">{{ t('删除分歧 {p0} 及其内容？可撤销恢复。', { p0: t(names[fields.route]) }) }}</p>
           <template v-if="mode === 'remove' || mode === 'remove-last'">
-            <p v-if="mode === 'remove-last'">{{ t('删除最后一条路线将同时删除整个分歧，小节和指令保留。') }}</p>
-            <p v-else>{{ t('删除分歧后保留小节和指令，可选择保留一条路线的音符，或全部清空。') }}</p>
+            <p v-if="mode === 'remove-last'">{{ t('删除最后一条分歧将同时删除整个分歧，小节和指令保留。') }}</p>
+            <p v-else>{{ t('删除分歧后保留小节和指令，可选择保留一条分歧的音符，或全部清空。') }}</p>
             <div class="route-source-actions branch-delete-actions">
               <button v-for="route in editedBranch.routes" :key="route" type="button" class="delete-action" :data-keep="route" @click="removeBranch(route)"><Trash2 aria-hidden="true" /><span>{{ routeActionParts('删除分歧并保留 {p0} 音符')[0] }}<span class="branch-route-text" :data-route="route">{{ t(names[route]) }}</span>{{ routeActionParts('删除分歧并保留 {p0} 音符')[1] }}</span></button>
               <button id="branch-delete-empty" type="button" class="delete-action" @click="removeBranch('')"><Trash2 aria-hidden="true" />{{ t('删除分歧并清空音符') }}</button>
             </div>
           </template>
           <p v-if="error || state.error" class="branch-route-error" role="alert">{{ error || state.notice }}</p>
-          <div class="branch-form-actions"><button id="branch-cancel" type="button" @click="close">{{ t('取消') }}</button><button v-if="mode === 'create' || mode === 'remove-route'" id="branch-apply" type="submit" :class="{ 'delete-action': mode === 'remove-route' }" :disabled="mode === 'create' && !selectedMeasures.length"><Trash2 v-if="mode === 'remove-route'" aria-hidden="true" />{{ mode === 'remove-route' ? t('删除路线') : t('确定') }}</button></div>
+          <div class="branch-form-actions"><button id="branch-cancel" type="button" @click="close">{{ t('取消') }}</button><button v-if="mode === 'create' || mode === 'remove-route'" id="branch-apply" type="submit" :class="{ 'delete-action': mode === 'remove-route' }" :disabled="mode === 'create' && !selectedMeasures.length"><Trash2 v-if="mode === 'remove-route'" aria-hidden="true" />{{ mode === 'remove-route' ? t('删除分歧') : t('确定') }}</button></div>
         </fieldset>
       </form>
     </dialog>
@@ -200,7 +200,7 @@ function keydown(event) {
                 <strong><span class="route-name">{{ branch.routes.includes(route) ? t(names[route]) : t('创建分歧') }}</span><span v-if="branch.routes.includes(route)" class="route-note-count">{{ t('音符数：{p0}', { p0: routeNoteCount(branch, route) }) }}</span><span v-else class="route-subtitle">{{ t(names[route]) }}</span></strong>
                 <Plus v-if="!branch.routes.includes(route)" aria-hidden="true" />
               </button>
-              <button v-if="branch.routes.includes(route)" type="button" class="route-remove" :disabled="state.invalid || !branch.barCount" :title="t('删除路线 {p0}', { p0: route })" :aria-label="t('删除路线 {p0}', { p0: route })" @click="removeRoute(branch, route)"><X /></button>
+              <button v-if="branch.routes.includes(route)" type="button" class="route-remove" :disabled="state.invalid || !branch.barCount" :title="t('删除分歧 {p0}', { p0: route })" :aria-label="t('删除分歧 {p0}', { p0: route })" @click="removeRoute(branch, route)"><X /></button>
             </div>
           </div>
           </div>
@@ -269,17 +269,18 @@ function keydown(event) {
 .branch-dialog-heading h2:has(#branch-action-route){font-size:16px}
 .route-subtitle{display:block;margin-top:4px;font-size:11px;font-weight:400}
 .branch-route-tag{display:inline-block;padding:0 5px;border-radius:4px;color:var(--route-color);background:var(--route-hover-background);font-weight:600}
-.branch-route-card[data-route=N]:not(.missing){background:#f1f2f3;border-color:#a3a8ae;color:var(--route-color)}
-.branch-route-card[data-route=E]:not(.missing){background:#eaf3fc;border-color:#96b9df;color:var(--route-color)}
-.branch-route-card[data-route=M]:not(.missing){background:#fbeaf4;border-color:#d99abd;color:var(--route-color)}
+.branch-route-card[data-route=N]:not(.missing){background:#fafafb;border-color:#a3a8ae;color:var(--route-color)}
+.branch-route-card[data-route=E]:not(.missing){background:#f7faff;border-color:#96b9df;color:var(--route-color)}
+.branch-route-card[data-route=M]:not(.missing){background:#fff8fc;border-color:#d99abd;color:var(--route-color)}
 .branch-route-card.missing{text-align:left}
-.branch-route-card:has(.route-select:not(:disabled)):is(:hover,:focus-within){background:color-mix(in srgb,var(--route-hover-background) 90%,var(--route-color));border-color:var(--route-color)}
+.branch-route-card:has(.route-select:not(:disabled)):hover{background:color-mix(in srgb,var(--route-hover-background) 90%,var(--route-color));border-color:var(--route-color)}
+.branch-route-card:has(:focus-visible){outline:2px solid var(--route-color);outline-offset:2px}
 .branch-route-card .route-remove{width:28px;min-height:28px;border:0;background:transparent;color:var(--ink)}
 .branch-route-card .route-select{color:var(--ink)}
 .branch-route-card:not(.missing) .route-name,.route-subtitle{color:var(--route-color)}
 .branch-route-card .route-select:hover:not(:disabled),.branch-route-card .route-remove:hover:not(:disabled){background:transparent}
 .branch-route-card:not(.missing){border-style:solid}
-.branch-route-card[data-route].selected{border-color:var(--route-color);border-left-width:3px;border-right-width:3px;padding:6px 8px;box-shadow:none}
+.branch-route-card[data-route].selected{border-color:var(--route-color);border-left-width:3px;border-right-width:3px;padding:6px 8px;box-shadow:none;background:color-mix(in srgb,var(--route-color) 20%,white)}
 .route-name{display:flex;align-items:center;gap:3px}
 .branch-route-card .route-select{flex:1;align-self:stretch;min-width:0;justify-content:space-between;gap:4px;border:0;background:transparent;color:var(--ink);padding:0;text-align:left;white-space:normal}
 .route-note-count,.route-status{display:block;margin-top:4px;font-size:10px;font-weight:400}

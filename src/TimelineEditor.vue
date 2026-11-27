@@ -1,7 +1,7 @@
 <script setup>
 import { t } from './i18n.js';
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
-import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map, TriangleAlert, Ellipsis, Check, ChevronRight, ZoomIn, Crosshair, Maximize2, Ruler, ChevronsLeft, ChevronsRight, ChevronsUp, ChevronsDown } from '@lucide/vue';
+import { BetweenHorizontalStart, BetweenHorizontalEnd, ListPlus, Trash2, Undo2, Redo2, X, Map, TriangleAlert, Ellipsis, Check, ChevronDown, ChevronRight, ZoomIn, Crosshair, Maximize2, Ruler, ChevronsLeft, ChevronsRight, ChevronsUp, ChevronsDown } from '@lucide/vue';
 import SectionHeading from './SectionHeading.vue';
 import PositionIcon from './PositionIcon.vue';
 import BranchControls from './BranchControls.vue';
@@ -19,6 +19,7 @@ const studio = inject('studio');
 const props = defineProps({ mobile: Boolean, landscape: Boolean });
 const toolbar = ref(null), toolsMenu = ref(null), compactTools = ref(true), toolsOpen = ref(false);
 const zoomMenu = ref(null), zoomOptions = ref(null), zoomOpen = ref(false), zoomPosition = ref({});
+const snapPicker = ref(null), snapInput = ref(null), snapOptions = ref(null), snapOptionsOpen = ref(false), snapPosition = ref({}), activeSnap = ref(0);
 const zoomChoices = computed(() => [{ value: 1, label: t('标准'), icon: Maximize2 }, ...zooms.map(value => ({ value, label: `${value}×`, icon: Ruler }))]);
 async function openZoom() {
   zoomOpen.value = !zoomOpen.value;
@@ -55,7 +56,7 @@ function dismissTools(event) {
   } else if (toolsMenu.value.contains(event.target) || zoomOptions.value?.contains(event.target)) return;
   toolsOpen.value = false;
 }
-const { state, controls, bar, spans, visible, viewBeats, timelineScale, timelineBounds, timelineScrollBounds, cell, command, stats, chartStats, selectedTiming, range } = studio;
+const { state, controls, bar, spans, visible, viewBeats, timelineScale, timelineBounds, timelineScrollBounds, cell, command, stats, chartStats, selectedTiming, range, deleteRange, canDeleteMeasures } = studio;
 const visibleMeasureIndices = computed(() => visible.value?.bars
   .filter(item => measureEnd(item) > visible.value.start && measureStart(item) < visible.value.end)
   .map(item => item.index) ?? []);
@@ -66,18 +67,19 @@ function closeDeleteMeasure() {
   deleteError.value = '';
 }
 function requestDeleteMeasure() {
-  if (!bar.value || state.invalid || state.chart.bars.length <= 1) return;
+  if (!canDeleteMeasures.value) return;
   studio.pause();
-  deleteTarget.value = state.selected;
+  deleteTarget.value = [...deleteRange.value];
   deleteError.value = '';
   deleteDialog.value.showModal();
 }
 function confirmDeleteMeasure() {
-  if (deleteTarget.value === null || deleteTarget.value !== state.selected || !bar.value || state.invalid || state.chart.bars.length <= 1) return;
+  if (!deleteTarget.value || !canDeleteMeasures.value || deleteTarget.value[0] !== deleteRange.value?.[0] || deleteTarget.value[1] !== deleteRange.value?.[1]) return;
   if (studio.deleteBar()) closeDeleteMeasure();
   else deleteError.value = state.notice;
 }
-watch(() => [state.activeId, state.course, state.chart, state.selected, state.invalid, state.editorBlocked], closeDeleteMeasure, { flush: 'sync' });
+watch(() => [state.activeId, state.course, state.chart, deleteRange.value?.[0], deleteRange.value?.[1], state.invalid, state.editorBlocked], closeDeleteMeasure, { flush: 'sync' });
+watch(() => state.deleteRequest, requestDeleteMeasure, { flush: 'sync' });
 const balloonHits = computed(() => {
   const { balloon, special } = chartStats.value;
   return balloon === null || special === null ? null : balloon + special;
@@ -104,7 +106,7 @@ const cellAttributes = computed(() => {
     ...(timing && selected?.span ? [{ id: 'cell-long', label: '长音状态', value: `${t(NOTE_TYPES[Number(selected.span.note)].name)} · ${(selected.span.end - selected.span.start).toFixed(3)} s`, warning: selected.span.complete ? null : t('缺少结束标记') }] : [])
   ];
 });
-const timeline = ref(null), overview = ref(null), customSnap = ref(null), hover = ref(null);
+const timeline = ref(null), overview = ref(null), hover = ref(null);
 const overviewHover = ref(null);
 const overviewSelection = computed(() => {
   if (!cell.value) return null;
@@ -521,15 +523,48 @@ function finishOverviewDrag(event) {
   if (!drag.dragged) overviewClick(event);
 }
 watch(() => [state.activeId, state.chart, state.invalid], () => { cancelOverviewDrag(); overviewHover.value = null; }, { flush: 'sync' });
-async function snapChange() {
+function snapChange(event) {
   hover.value = null;
-  if (controls.snapChoice !== 'custom') studio.setSnap(Number(controls.snapChoice));
-  else {
-    toolsOpen.value = true;
-    await nextTick();
-    customSnap.value?.focus();
-  }
+  studio.setSnap(Number(event.target.value));
+  event.target.value = String(controls.snap);
 }
+function openSnap() {
+  const rect = snapPicker.value.getBoundingClientRect();
+  const height = Math.min(300, innerHeight - 16), width = Math.min(160, innerWidth - 16);
+  snapPosition.value = { left: `${Math.max(8, Math.min(rect.left, innerWidth - width - 8))}px`, top: `${Math.max(8, Math.min(rect.bottom + 4, innerHeight - height - 8))}px`, width: `${width}px`, maxHeight: `${height}px` };
+  activeSnap.value = Math.max(0, snaps.indexOf(controls.snap));
+  snapOptionsOpen.value = true;
+  nextTick(() => snapOptions.value?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' }));
+}
+function chooseSnap(value) {
+  studio.setSnap(value); hover.value = null; snapOptionsOpen.value = false;
+  snapInput.value.value = String(controls.snap); snapInput.value.focus();
+}
+function toggleSnap() {
+  if (snapOptionsOpen.value) snapOptionsOpen.value = false;
+  else openSnap();
+  snapInput.value.focus();
+}
+function snapKeydown(event) {
+  if (event.isComposing || event.keyCode === 229) return;
+  if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && (snapOptionsOpen.value || event.key.startsWith('Arrow'))) {
+    event.preventDefault(); event.stopPropagation();
+    if (!snapOptionsOpen.value) openSnap();
+    else activeSnap.value = event.key === 'Home' ? 0 : event.key === 'End' ? snaps.length - 1 : (activeSnap.value + (event.key === 'ArrowDown' ? 1 : -1) + snaps.length) % snaps.length;
+    nextTick(() => snapOptions.value?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' }));
+  } else if (event.key === 'Enter') {
+    event.preventDefault(); event.stopPropagation();
+    if (snapOptionsOpen.value) chooseSnap(snaps[activeSnap.value]);
+    else event.target.blur();
+  } else if (event.key === 'Escape' && snapOptionsOpen.value) {
+    event.preventDefault(); event.stopPropagation(); snapOptionsOpen.value = false;
+    event.target.value = String(controls.snap);
+  } else if (event.key === 'Tab') snapOptionsOpen.value = false;
+}
+function dismissSnap(event) {
+  if (!snapPicker.value?.contains(event.target) && !snapOptions.value?.contains(event.target)) snapOptionsOpen.value = false;
+}
+watch(() => [state.activeId, state.course], () => { snapOptionsOpen.value = false; });
 watchEffect(draw, { flush: 'post' });
 watchEffect(() => { state.activeId; state.selected; visible.value?.start; controls.snap; hover.value = null; });
 watch(() => state.playing, playing => {
@@ -538,14 +573,19 @@ watch(() => state.playing, playing => {
 onMounted(() => {
   const resize = () => {
     zoomOpen.value = false;
+    snapOptionsOpen.value = false;
     compactTools.value = toolbar.value.clientWidth < 1100;
     if (viewport.value) { viewportWidth.value = Math.max(1, viewport.value.clientWidth - TIMELINE_GUTTER * 2); draw(); }
   };
   observer = new ResizeObserver(resize); observer.observe(toolbar.value); observer.observe(viewport.value); observer.observe(overview.value.parentElement); resize();
   document.addEventListener('pointerdown', dismissTools);
   document.addEventListener('focusin', dismissTools);
+  document.addEventListener('pointerdown', dismissSnap);
+  document.addEventListener('focusin', dismissSnap);
 });
 onUnmounted(() => {
+  document.removeEventListener('pointerdown', dismissSnap);
+  document.removeEventListener('focusin', dismissSnap);
   cancelWaveformHold();
   cancelTouchSelection(); cancelOverviewDrag(); observer?.disconnect();
   document.removeEventListener('pointerdown', dismissTools);
@@ -560,14 +600,18 @@ onUnmounted(() => {
         <label for="bar-number" :title="t('查看小节')"><span class="tool-label">{{ t('查看小节') }}</span></label>
         <input id="bar-number" type="number" min="1" :max="state.chart?.bars.length" step="1" :value="state.selected + 1" :disabled="!bar || state.invalid" @change="studio.select(Number($event.target.value) - 1); $event.target.value = state.selected + 1">
       </div>
-        <label :title="t('吸附栅格')"><span class="tool-label">{{ t('吸附栅格') }}</span><select id="snap-division" v-model="controls.snapChoice" :aria-label="t('吸附栅格')" @change="snapChange"><option v-for="value in snaps" :key="value" :value="String(value)">{{ value }} {{ t('分') }}</option><option value="custom">{{ t('自定义') }}</option></select></label>
+        <div ref="snapPicker" class="snap-control"><label class="tool-label" for="snap-division">{{ t('吸附栅格') }}</label><div class="snap-picker"><input id="snap-division" ref="snapInput" type="text" inputmode="numeric" role="combobox" autocomplete="off" aria-autocomplete="none" aria-controls="snap-presets" :aria-expanded="snapOptionsOpen" :aria-activedescendant="snapOptionsOpen ? `snap-preset-${snaps[activeSnap]}` : undefined" :value="controls.snap" :aria-label="t('吸附栅格')" @click="openSnap" @input="snapOptionsOpen = false" @change="snapChange" @keydown="snapKeydown"><button type="button" class="snap-toggle" :aria-label="t('选择预设分音')" :title="t('选择预设分音')" aria-controls="snap-presets" :aria-expanded="snapOptionsOpen" @pointerdown.prevent @click="toggleSnap"><ChevronDown aria-hidden="true" /></button></div></div>
+        <Teleport to="body"><div v-if="snapOptionsOpen" id="snap-presets" ref="snapOptions" class="zoom-options snap-options" role="listbox" :aria-label="t('吸附栅格')" :style="snapPosition"><button v-for="(value, index) in snaps" :id="`snap-preset-${value}`" :key="value" type="button" role="option" tabindex="-1" :aria-selected="controls.snap === value" :data-active="activeSnap === index" @pointerdown.prevent @pointermove="activeSnap = index" @click="chooseSnap(value)">{{ value }} {{ t('分') }}<span class="menu-check"><Check v-if="controls.snap === value" aria-hidden="true" /></span></button></div></Teleport>
         <div v-show="!mobile" id="desktop-zoom-tools" class="desktop-zoom-tools"></div>
         <div class="editor-history"><button id="undo" class="icon" :aria-label="t('撤销')" :title="t('撤销（Ctrl+Z）')" :disabled="!state.undo.length" @click="studio.history()"><Undo2 /></button><button id="redo" class="icon" :aria-label="t('重做')" :title="t('重做（Ctrl+Shift+Z）')" :disabled="!state.redo.length" @click="studio.history(true)"><Redo2 /></button></div>
-        <div v-show="mobile" id="mobile-measure-tools" class="mobile-measure-tools"></div>
+        <div class="primary-measure-actions">
+          <button id="append-bar" class="icon" :aria-label="t('末尾追加小节')" :title="t('末尾追加小节（Shift+Enter）')" :disabled="!bar || state.invalid" @click="studio.appendBar"><ListPlus aria-hidden="true" /><span class="primary-action-label">{{ t('末尾追加小节') }}</span></button>
+          <button id="delete-bar" class="icon delete-measure" :aria-label="t('删除小节')" :title="!deleteRange ? t('请先选择一个音符或落点。') : !canDeleteMeasures ? t('至少保留一个小节。') : t('删除所选小节及其音符和指令')" :disabled="!canDeleteMeasures" @click="studio.requestDeleteBar"><Trash2 aria-hidden="true" /><span class="primary-action-label">{{ t('删除小节') }}</span></button>
+        </div>
+        <div v-show="mobile && !compactTools" id="mobile-measure-tools" class="mobile-measure-tools"></div>
         <details ref="toolsMenu" class="tools-menu" :open="!compactTools || toolsOpen" @keydown="dismissTools">
         <summary :aria-label="t('更多工具')" :title="t('更多工具')" @click.prevent="toolsOpen = !toolsOpen"><Ellipsis /></summary>
         <div class="tools-panel" @scroll="zoomOpen = false">
-        <label v-show="controls.snapChoice === 'custom'" id="custom-snap-label"><Grid2X2 v-if="compactTools" aria-hidden="true" /><span class="menu-item-label">{{ t('每小节等分') }}</span><input id="custom-snap" ref="customSnap" v-model.number="controls.customSnap" type="number" min="1" max="768" step="1" @change="studio.setSnap(Number(controls.customSnap))"></label>
         <Teleport to="#desktop-zoom-tools" :disabled="mobile" defer>
         <details v-if="mobile && compactTools" ref="zoomMenu" class="zoom-menu" :open="zoomOpen">
           <summary :title="t('以标准网格宽度为缩放参考')" aria-haspopup="menu" :aria-expanded="zoomOpen" @click.prevent="openZoom" @keydown.right.prevent="!zoomOpen && openZoom()" @keydown.esc="zoomOpen && zoomKeydown($event)"><ZoomIn aria-hidden="true" /><span class="menu-item-label">{{ t('缩放') }}</span><ChevronRight aria-hidden="true" /></summary>
@@ -577,13 +621,12 @@ onUnmounted(() => {
         </details>
         <label v-else :title="t('以标准网格宽度为缩放参考')">{{ t('缩放') }}<select id="view" v-model.number="controls.zoom" :aria-label="t('时间轴缩放')" @change="controls.view = 'auto'"><option :value="1">{{ t('标准') }}</option><option v-for="value in zooms" :key="value" :value="value">{{ value }}×</option></select></label>
         </Teleport>
-      <Teleport to="#mobile-measure-tools" :disabled="!mobile" defer>
+      <Teleport to="#mobile-measure-tools" :disabled="!mobile || compactTools" defer>
       <div class="editor-actions">
         <div class="measure-actions" role="group" :aria-label="t('插入小节')">
-          <button id="insert-bar-before" :class="{ icon: mobile }" :aria-label="t('前插小节')" :title="t('在当前小节前插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('before')"><BetweenHorizontalStart aria-hidden="true" /><span v-if="!mobile">{{ t('前插小节') }}</span></button>
-          <button id="insert-bar-after" :class="{ icon: mobile }" :aria-label="t('后插小节')" :title="t('在当前小节后插入空白小节')" :disabled="!bar || state.invalid" @click="studio.insertBar('after')"><BetweenHorizontalEnd aria-hidden="true" /><span v-if="!mobile">{{ t('后插小节') }}</span></button>
+          <button id="insert-bar-before" :class="{ icon: mobile && !compactTools }" :aria-label="t('前插小节')" :title="t('在当前小节前插入空白小节')" :disabled="!state.selectedCell || state.invalid" @click="studio.insertBar('before')"><BetweenHorizontalStart aria-hidden="true" /><span v-if="!mobile || compactTools">{{ t('前插小节') }}</span></button>
+          <button id="insert-bar-after" :class="{ icon: mobile && !compactTools }" :aria-label="t('后插小节')" :title="t('在已选落点所在小节后插入空白小节')" :disabled="!state.selectedCell || state.invalid" @click="studio.insertBar('after')"><BetweenHorizontalEnd aria-hidden="true" /><span v-if="!mobile || compactTools">{{ t('后插小节') }}</span></button>
         </div>
-        <button id="delete-bar" class="delete-measure" :class="{ icon: mobile }" :aria-label="t('删除小节')" :title="state.chart.bars.length <= 1 ? t('不能删除最后一个小节。') : t('删除当前小节及其音符和指令')" :disabled="!bar || state.invalid || state.chart.bars.length <= 1" @click="requestDeleteMeasure"><Trash2 aria-hidden="true" /><span v-if="!mobile">{{ t('删除小节') }}</span></button>
       </div>
       </Teleport>
         <button v-if="compactTools" id="follow-playback" type="button" role="menuitemcheckbox" :aria-checked="state.followPlayback" @click="state.followPlayback = !state.followPlayback"><Crosshair aria-hidden="true" />{{ t('跟随播放') }}<span class="menu-check"><Check v-if="state.followPlayback" aria-hidden="true" /></span></button>
@@ -593,8 +636,8 @@ onUnmounted(() => {
       <Teleport to="body">
         <dialog ref="deleteDialog" class="delete-measure-dialog" aria-labelledby="delete-measure-title" aria-describedby="delete-measure-description" @keydown.stop @cancel.prevent="closeDeleteMeasure" @close="deleteTarget = null">
           <div class="delete-measure-heading"><h2 id="delete-measure-title">{{ t('删除小节') }}</h2><button type="button" class="icon" :title="t('关闭')" :aria-label="t('关闭')" @click="closeDeleteMeasure"><X aria-hidden="true" /></button></div>
-          <p id="delete-measure-description">{{ t('删除第 {p0} 小节及其音符和指令？此操作可撤销。', { p0: deleteTarget === null ? '' : deleteTarget + 1 }) }}</p>
-          <p v-if="bar && bar.branchIndex !== null">{{ t('若小节位于分歧内，将同步删除各路线中的对应小节。') }}</p>
+          <p v-if="deleteTarget" id="delete-measure-description">{{ deleteTarget[0] === deleteTarget[1] ? t('删除第 {p0} 小节及其音符和指令？此操作可撤销。', { p0: deleteTarget[0] }) : t('删除第 {p0}–{p1} 小节及其音符和指令？此操作可撤销。', { p0: deleteTarget[0], p1: deleteTarget[1] }) }}</p>
+          <p v-if="deleteTarget && state.chart.bars.slice(deleteTarget[0] - 1, deleteTarget[1]).some(item => item.branchIndex !== null)">{{ t('若小节位于分歧内，将同步删除各分歧中的对应小节。') }}</p>
           <p v-if="deleteError" class="delete-measure-error" role="alert">{{ deleteError }}</p>
           <div class="delete-measure-actions"><button id="delete-measure-cancel" type="button" autofocus @click="closeDeleteMeasure">{{ t('取消') }}</button><button id="delete-measure-confirm" type="button" @click="confirmDeleteMeasure"><Trash2 aria-hidden="true" />{{ t('删除小节') }}</button></div>
         </dialog>
@@ -646,7 +689,7 @@ onUnmounted(() => {
         </template>
       </SectionHeading>
     </div>
-    <MeasureGrid id="measures" :key="state.activeId" :bars="state.chart?.bars || []" :selection="range" :active-index="selectedTiming?.bar.index ?? null" :visible-indices="visibleMeasureIndices" :note-index="state.selectedCell?.bar" :disabled="state.invalid" @activate="studio.select" @select="studio.setLoop" @toggle="range && studio.clearLoop()" @preview="measurePreview = $event" />
+    <MeasureGrid id="measures" :key="state.activeId" :bars="state.chart?.bars || []" :selection="range" :active-index="selectedTiming?.bar.index ?? null" :visible-indices="visibleMeasureIndices" :note-index="state.selectedCell?.bar" :disabled="state.invalid" appendable @activate="studio.select" @select="studio.setLoop" @toggle="range && studio.clearLoop()" @preview="measurePreview = $event" @append="studio.appendBar" />
   </section>
   </Teleport>
       </div>
@@ -704,14 +747,17 @@ onUnmounted(() => {
 @media(prefers-reduced-motion:reduce){.touch-selection-guide>svg{animation:none}}
 @media(max-width:900px){.workspace>.editor{display:flex;flex-direction:column;min-height:0}.editor>.editor-bar,.editor>.overview{flex-shrink:0}.editor>.overview{padding:0}.editor>.timeline-frame{flex:0 1 171px;height:171px;min-height:0}.timeline-frame>.timeline-wrap,.timeline-frame .timeline-content,.timeline-frame #timeline{height:100%}}
 .editor-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.primary-measure-actions{display:flex;align-items:center;flex-shrink:0;gap:2px}.primary-measure-actions>.icon{width:28px;min-width:28px;padding:4px;border:0;background:transparent}.primary-measure-actions svg{width:16px;height:16px}.primary-measure-actions>.icon:hover:not(:disabled){background:#e1ece5}.primary-measure-actions>.delete-measure:hover:not(:disabled){background:#fff2ef;color:#bd352b}
+.primary-action-label{display:none}
+@container(min-width:840px){.primary-measure-actions>.icon{width:auto;padding-inline:8px;gap:4px}.primary-action-label{display:inline}}
 .editor-history{display:flex;align-items:center;gap:4px;padding-right:6px;border-right:1px solid var(--line)}.editor-history>.icon{width:28px;min-width:28px;padding:4px}.editor-history svg{width:14px;height:14px}
 .desktop-zoom-tools{display:flex;align-items:center;flex-shrink:0}
 .desktop-zoom-tools #view{width:78px}
 .editor-bar,.lane-head.editor-tools{background:var(--paper)}
 .editor .editor-bar{margin-left:0;padding:4px 12px}
 .lane-head.editor-tools{justify-content:flex-start;gap:6px;padding:4px 12px;border-bottom:1px solid var(--line);font:400 11px/normal system-ui,sans-serif;color:var(--muted)}
-.editor-tools input[type=number],.editor-tools select{background:#fff}
-.editor-tools :is(input[type=number],select,button){box-sizing:border-box;height:28px;min-height:28px;padding-block:0;line-height:normal;font-size:11px}
+.editor-tools input[type=number],.editor-tools input[role=combobox],.editor-tools select{background:#fff}
+.editor-tools :is(input[type=number],input[role=combobox],select,button){box-sizing:border-box;height:28px;min-height:28px;padding-block:0;line-height:normal;font-size:11px}
 .editor-actions .delete-measure{padding:4px 8px;gap:4px;font-size:11px}.delete-measure svg{width:14px;height:14px}.delete-measure:hover:not(:disabled){color:#bd352b;border-color:#bd352b;background:#fff2ef}
 .editor-tools .follow-control{position:relative;margin-left:auto;white-space:nowrap;gap:6px;cursor:pointer}
 .editor-tools .follow-control input{position:absolute;width:1px;height:1px;margin:0;opacity:0;clip-path:inset(50%)}
@@ -721,7 +767,7 @@ onUnmounted(() => {
 .follow-control input:checked+.switch-track::before{transform:translateX(12px)}
 .follow-control input:focus-visible+.switch-track{outline:2px solid var(--green);outline-offset:3px}
 .editor-tools label{min-height:28px;line-height:normal;white-space:nowrap}
-.editor-tools #custom-snap{width:64px;min-width:0;padding-inline:6px;font-size:11px}
+.snap-control{display:flex;align-items:center;gap:4px;flex-shrink:0}.snap-picker{display:flex;align-items:center;width:80px;border:1px solid var(--line);border-radius:4px;background:#fff}.editor-tools .snap-picker #snap-division{width:calc(100% - 23px);min-width:0;height:26px;min-height:26px;padding:0 6px;border:0;background:transparent;font-size:11px}.editor-tools .snap-toggle{width:23px;min-width:23px;height:26px;min-height:26px;padding:0;border:0;background:transparent}.snap-toggle svg{width:13px;height:13px}
 .editor-tools :is(label,input,select,button,option){font:inherit}
 .choice-symbol.duet{position:relative}.choice-symbol.duet::after{content:'2P';position:absolute;inset:0;display:grid;place-items:center;color:#fff;font:bold 8px sans-serif}
 .editor-bar,.editor-tools{flex-wrap:nowrap}
@@ -737,7 +783,8 @@ onUnmounted(() => {
 .zoom-menu>summary{display:flex;align-items:center;gap:8px;min-height:36px;padding:7px 8px;border-radius:4px;cursor:pointer;list-style:none}.zoom-menu>summary::-webkit-details-marker{display:none}.zoom-menu>summary:hover{background:#edf5ef}.zoom-menu>summary:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
 .zoom-options{position:fixed;z-index:50;overflow:auto;overscroll-behavior:contain;padding:5px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);font:400 12px/1.4 system-ui,sans-serif;box-shadow:0 6px 24px #202a2820}.zoom-options button{width:100%;min-height:36px;justify-content:flex-start;padding:7px 8px;border:0;border-radius:4px;background:transparent;text-align:left}.zoom-options button:hover{background:#edf5ef}.menu-check{display:inline-flex;align-items:center;justify-content:center;flex:0 0 17px;width:17px;height:17px;margin-left:auto}
 .compact-tools .tools-panel :is(button,label,input,summary),.zoom-options button{font:inherit;color:inherit}.compact-tools .menu-item-label{flex:1}
-@container(max-width:480px){.editor .editor-bar{padding-inline:6px;gap:4px}.measure-nav{gap:4px}.measure-nav input{width:42px;padding-inline:2px}.editor-tools>label{gap:4px}.editor-tools #snap-division{width:65px;padding-inline:2px}.editor-history{gap:0}}
+.snap-options button[data-active=true],.snap-options button[aria-selected=true],.zoom-options button[aria-checked=true]{background:#e0ede4;color:var(--green)}
+@container(max-width:480px){.editor .editor-bar{padding-inline:6px;gap:4px}.measure-nav{gap:4px}.measure-nav input{width:42px;padding-inline:2px}.editor-tools>label{gap:4px}.snap-picker{width:65px}.editor-history{gap:0}}
 @container(max-width:480px){.tool-label,.measure-nav>label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}}
 .mobile-measure-tools{display:flex;align-items:center;flex-shrink:0}
 .mobile-measure-tools .editor-actions{display:flex;flex-wrap:nowrap;gap:2px}

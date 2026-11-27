@@ -1,7 +1,7 @@
 import { t, message, LocalizedError, formatMessage } from './i18n.js';
 import { computed, onMounted, onUnmounted, reactive, ref, shallowReactive, watch } from 'vue';
 import { TJAParser as parser } from 'tja';
-import { BRANCH_ROUTES, decodeChart, parseChart, alignBranchRoutes, synchronizeBranchTiming, insertEmptyBar, resizeNotes, setBaseBpm, barTimeAt, barStateAt, barStateAtTime, setPositionSettings, clearPositionSettings, barSource } from './chart.js';
+import { BRANCH_ROUTES, decodeChart, parseChart, alignBranchRoutes, synchronizeBranchTiming, insertEmptyBar, appendEmptyBar, resizeNotes, setBaseBpm, barTimeAt, barStateAt, barStateAtTime, setPositionSettings, clearPositionSettings, barSource } from './chart.js';
 import { createHitBuffer, MIX_DEFAULTS, duckMusic } from './hit-audio.js';
 import { resolveLoop, measureStart, measureEnd } from './loop.js';
 import { GRID_DIVISIONS, MAX_SNAP_DIVISIONS, SNAP_DIVISIONS } from './grid.js';
@@ -31,12 +31,14 @@ export const formatTime = value => {
 };
 
 export function useStudio() {
-  const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, playing: false, copiedMeasures: null, pasteRequest: 0, closeRequest: null, editorBlocked: false, fileErrors: [], branchRouteWarning: null, saveState: '尚未打开谱面', noticeMessage: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', get notice() { return formatMessage(this.noticeMessage); }, error: false });
+  const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, playing: false, copiedMeasures: null, pasteRequest: 0, deleteRequest: 0, closeRequest: null, editorBlocked: false, fileErrors: [], branchRouteWarning: null, saveState: '尚未打开谱面', noticeMessage: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', get notice() { return formatMessage(this.noticeMessage); }, error: false });
   let nextDocumentId = 1, viewAnimation = null, reloadApproved = false;
   const controls = reactive({ hits: true, rate: 1, volume: MIX_DEFAULTS.music, hitVolume: MIX_DEFAULTS.hits, view: 'auto', zoom: 1, snap: GRID_DIVISIONS, snapChoice: '16', customSnap: GRID_DIVISIONS });
   const bar = computed(() => state.chart?.bars[state.selected]);
   const spans = computed(() => state.chart ? longNoteSpans(state.chart.bars) : []);
   const range = computed(() => state.customLoop);
+  const deleteRange = computed(() => range.value ?? (state.selectedCell ? [state.selectedCell.bar + 1, state.selectedCell.bar + 1] : null));
+  const canDeleteMeasures = computed(() => !state.invalid && Boolean(deleteRange.value) && deleteRange.value[1] - deleteRange.value[0] + 1 < (state.chart?.bars.length ?? 0));
   const metadata = computed(() => songMetadata(state.text));
   const duration = computed(() => state.buffer?.duration ?? state.chart?.bars.reduce((end, item) => Math.max(end, measureEnd(item)), 0) ?? 0);
   const timelineBounds = computed(() => state.chart?.bars.reduce((bounds, item) => ({ start: Math.min(bounds.start, measureStart(item)), end: Math.max(bounds.end, measureEnd(item)) }), { start: 0, end: duration.value }) || { start: 0, end: 0 });
@@ -276,24 +278,45 @@ export function useStudio() {
   function insertBar(side) {
     return guard(() => {
       flushSource(); requireValid();
-      const text = insertEmptyBar(state.text, bar.value, side, state.chart);
-      const selected = state.selected + (side === 'after' ? 1 : 0);
+      if (!bar.value) throw new LocalizedError(message('请先创建难度谱面。'));
+      if (!state.selectedCell) throw new LocalizedError(message('请先选择一个音符或落点。'));
+      const anchor = state.chart.bars[state.selectedCell.bar];
+      const text = insertEmptyBar(state.text, anchor, side, state.chart);
+      const selected = anchor.index + (side === 'after' ? 1 : 0);
       const loop = state.customLoop?.map(value => value > selected ? value + 1 : value) ?? null;
       commit(text, false, { selected, loop });
       return true;
     });
   }
+  function appendBar() {
+    return guard(() => {
+      flushSource(); requireValid();
+      const text = appendEmptyBar(state.text, state.chart);
+      const selected = state.chart.bars.length;
+      commit(text, false, { selected, loop: state.customLoop });
+      selectCell({ bar: selected, numerator: 0, denominator: controls.snap, divisions: controls.snap }, true);
+      return true;
+    });
+  }
+  function requestDeleteBar() {
+    if (!canDeleteMeasures.value || state.editorBlocked) return false;
+    pause(); state.deleteRequest++;
+    return true;
+  }
   function deleteBar() {
     return guard(() => {
       flushSource(); requireValid();
-      const text = deleteBarWithBalloons(state.text, state.chart, bar.value);
-      const deleted = state.selected + 1;
-      let loop = null;
-      if (state.customLoop) {
-        const [first, last] = state.customLoop;
-        if (first !== deleted || last !== deleted) loop = [first - (deleted < first ? 1 : 0), last - (deleted <= last ? 1 : 0)];
+      if (!bar.value) throw new LocalizedError(message('请先创建难度谱面。'));
+      if (state.chart.bars.length <= 1) throw new LocalizedError(message('不能删除最后一个小节。'));
+      if (!deleteRange.value) throw new LocalizedError(message('请先选择一个音符或落点。'));
+      const [first, last] = deleteRange.value;
+      if (!canDeleteMeasures.value) throw new LocalizedError(message('至少保留一个小节。'));
+      let text = state.text, chart = state.chart;
+      for (let index = last - 1; index >= first - 1; index--) {
+        text = deleteBarWithBalloons(text, chart, chart.bars[index]);
+        chart = parseChart(text, parser, state.course, state.branchRoutes);
       }
-      commit(text, false, { selected: Math.min(state.selected, state.chart.bars.length - 2), loop });
+      commit(text, false, { selected: Math.min(first - 1, chart.bars.length - 1), loop: null });
       return true;
     });
   }
@@ -423,7 +446,7 @@ export function useStudio() {
       requireValid();
       const result = setBranchSourceWithBalloons(state.text, state.chart, command.value, source, index, parser);
       commit(result.text, false, { routes: result.branchRoutes, index: result.index });
-      if (!state.error) notice(message('分歧结构已保存；若当前路线被移除，将切换到可用路线。'));
+      if (!state.error) notice(message('分歧结构已保存；若当前分歧被移除，将切换到可用分歧。'));
       return true;
     });
   }
@@ -435,12 +458,12 @@ export function useStudio() {
       const structure = { routes: result.branchRoutes, index: result.index };
       commit(result.text, false, result.preserveSelection ? { ...structure, preserveSelection: true } : { ...structure, selected: result.selected, loop: null });
       if (disabled && !state.error) notice(message('分歧已删除，小节和指令已保留。'));
-      else if (operation.type === 'route' && !state.error) notice(message('分歧结构已保存；若当前路线被移除，将切换到可用路线。'));
+      else if (operation.type === 'route' && !state.error) notice(message('分歧结构已保存；若当前分歧被移除，将切换到可用分歧。'));
       return true;
     });
   }
   function clearSettings() { guard(() => { requireValid(); commit(clearPositionSettings(state.text, bar.value, command.value)); }); }
-  function removeCommand(item) { guard(() => { requireValid(); if (item.shared) throw new LocalizedError(message('分歧边界及共用指令不能从路线小节中删除。')); commit(state.text.slice(0, item.start) + state.text.slice(item.end)); }); }
+  function removeCommand(item) { guard(() => { requireValid(); if (item.shared) throw new LocalizedError(message('分歧边界及共用指令不能从分歧小节中删除。')); commit(state.text.slice(0, item.start) + state.text.slice(item.end)); }); }
   function chooseNote(value) {
     if (!state.selectedCell || state.invalid) return;
     guard(() => { const item = state.chart.bars[state.selectedCell.bar]; commit(replaceBarWithBalloons(state.text, state.chart, item, setCellNote(item.notes, state.selectedCell, value))); });
@@ -511,6 +534,7 @@ export function useStudio() {
   function setSnap(value) {
     if (!Number.isInteger(value) || value < 1 || value > MAX_SNAP_DIVISIONS) { controls.customSnap = controls.snap; notice(message('吸附栅格须为 1–768 之间的整数。'), true); return; }
     controls.snap = value; controls.customSnap = value;
+    controls.snapChoice = SNAP_DIVISIONS.includes(value) ? String(value) : 'custom';
   }
   function changeCourse(value) {
     guard(() => {
@@ -542,13 +566,13 @@ export function useStudio() {
     state.selected = Math.min(chart.bars.length - 1, chart.branches[index].firstBarIndex + Math.min(relative, Math.max(0, chart.branches[index].barCount - 1)));
     state.selectedCell = null; state.commandCell = null; state.customLoop = null;
     state.position = Math.max(0, measureStart(bar.value)); syncSource();
-    if (persist()) notice(message('已切换分歧路线；试听按当前选择播放。'));
+    if (persist()) notice(message('已切换分歧；试听按当前选择播放。'));
   }
   function changeBranch(index, route) {
     guard(() => {
       requireValid();
       const previous = state.chart?.branches[index];
-      if (!previous || !previous.routes.includes(route)) throw new LocalizedError(message('分歧路线选择无效。'));
+      if (!previous || !previous.routes.includes(route)) throw new LocalizedError(message('分歧选择无效。'));
       if (previous.route === route) return;
       const routes = [...state.branchRoutes]; routes[index] = route;
       applyBranchRoutes(routes, index);
@@ -558,7 +582,7 @@ export function useStudio() {
     guard(() => {
       requireValid();
       const branches = state.chart?.branches.filter(branch => branch.routes.length);
-      if (!branches?.length || !BRANCH_ROUTES.includes(route)) throw new LocalizedError(message('分歧路线选择无效。'));
+      if (!branches?.length || !BRANCH_ROUTES.includes(route)) throw new LocalizedError(message('分歧选择无效。'));
       const missing = branches.filter(branch => !branch.routes.includes(route)).map(branch => ({ index: branch.index, first: branch.firstBarIndex + 1, last: branch.firstBarIndex + branch.barCount, route: branch.route }));
       const warning = missing.length ? { route, branches: missing } : null;
       const changed = branches.filter(branch => branch.routes.includes(route) && branch.route !== route);
@@ -620,8 +644,8 @@ export function useStudio() {
   function prepareChartText(source, name, draft = false) {
     const text = alignBranchRoutes(source, parser);
     const prompt = draft
-      ? '{p0} 的分歧路线小节数量或计时不一致。是否补齐空小节、按最长路线同步计时并清空旧编辑历史？取消将拒绝恢复此工作区。'
-      : '{p0} 的分歧路线小节数量或计时不一致。是否补齐空小节，并按最长路线同步 BPM、拍号和延迟？取消将拒绝载入。';
+      ? '{p0} 的分歧小节数量或计时不一致。是否补齐空小节、按最长分歧同步计时并清空旧编辑历史？取消将拒绝恢复此工作区。'
+      : '{p0} 的分歧小节数量或计时不一致。是否补齐空小节，并按最长分歧同步 BPM、拍号和延迟？取消将拒绝载入。';
     if (text !== source && !confirm(t(prompt, { p0: name }))) {
       throw new LocalizedError(message('分歧小节数量或时长不一致，已拒绝载入。'));
     }
@@ -870,7 +894,11 @@ export function useStudio() {
       event.preventDefault(); viewAnimation = null; clearNoteSelection(); return;
     }
     const note = NOTE_TYPES.find(type => (type.shortcut ?? type.value) === key)?.value ?? (['delete', 'backspace'].includes(key) ? '0' : null);
-    if (event.code === 'Space' || key === ' ') {
+    if (key === 'enter' && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing && event.keyCode !== 229 && !event.defaultPrevented && !inDialog && bar.value && !state.invalid) {
+      event.preventDefault();
+      if (!event.repeat) appendBar();
+    }
+    else if (event.code === 'Space' || key === ' ') {
       if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || document.activeElement?.tagName === 'SUMMARY' || inDialog) return;
       event.preventDefault();
       if (!event.repeat) { if (state.playing) pause(); else void play(); }
@@ -920,5 +948,5 @@ export function useStudio() {
     pause(); void context?.close(); document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup);
     window.removeEventListener('blur', clearShortcutKeys); window.removeEventListener('beforeunload', beforeUnload);
   });
-  return { state, controls, bar, spans, visible, viewSpan, viewBeats, timelineWidth, timelineScale, timelineBounds, timelineScrollBounds, chartStats, stats, cell, command, measureCommand, selectedTiming, currentTiming, range, duration, metadata, notice, reportFileError, pause, play, stop, seek, seekMeasure, panTimeline, select, selectCell, moveCell, selectNote, selectAdjacentNote, clearNoteSelection, setCommandPosition, applySettings, applyBranchSource, applyMeasureBranch, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, clearLoop, loopCurrent, setSnap, changeCourse, createCourse, removeCourse, createPlayerCharts, setLevel, changeAllBranches, changeBranch, openChart, openCharts, openAudio, newChart, switchChart, closeChart, insertBar, deleteBar, copyMeasures, requestPaste, pasteMeasures, reloadForUpdate, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
+  return { state, controls, bar, spans, visible, viewSpan, viewBeats, timelineWidth, timelineScale, timelineBounds, timelineScrollBounds, chartStats, stats, cell, command, measureCommand, selectedTiming, currentTiming, range, deleteRange, canDeleteMeasures, duration, metadata, notice, reportFileError, pause, play, stop, seek, seekMeasure, panTimeline, select, selectCell, moveCell, selectNote, selectAdjacentNote, clearNoteSelection, setCommandPosition, applySettings, applyBranchSource, applyMeasureBranch, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, clearLoop, loopCurrent, setSnap, changeCourse, createCourse, removeCourse, createPlayerCharts, setLevel, changeAllBranches, changeBranch, openChart, openCharts, openAudio, newChart, switchChart, closeChart, insertBar, appendBar, requestDeleteBar, deleteBar, copyMeasures, requestPaste, pasteMeasures, reloadForUpdate, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
 }

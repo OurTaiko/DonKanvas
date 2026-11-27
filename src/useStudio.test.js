@@ -6,6 +6,7 @@ import { locale, formatMessage } from './i18n.js';
 import { drawNote, noteHitRadius } from './note-render.js';
 import { createTimelineViewport } from './timeline.js';
 import { COURSE_NAMES, courseLevel } from './courses.js';
+import { balloonCounts } from './balloon.js';
 
 const chart = 'TITLE:Vue session\nBPM:120\nOFFSET:0\nCOURSE:Oni\nLEVEL:1\n#START\n1000,\n2000,\n#END\n';
 
@@ -509,11 +510,13 @@ test('branch measure insertions and deletions keep all routes equal through undo
     const before = studio.state.text;
     const counts = () => ['N', 'E', 'M'].map(route => studio.state.chart.allBars.filter(bar => bar.branchIndex === 0 && bar.route === route).length);
     studio.select(1); studio.setLoop(1, 2);
+    studio.selectCell({ bar: 1, numerator: 0, denominator: 16, divisions: 16 });
     assert.equal(studio.insertBar('before'), true);
     assert.deepEqual(counts(), [3, 3, 3]); assert.deepEqual(studio.range.value, [1, 3]);
     const inserted = studio.state.text;
     studio.history(); assert.equal(studio.state.text, before); assert.deepEqual(counts(), [2, 2, 2]);
     studio.history(true); assert.equal(studio.state.text, inserted);
+    studio.setLoop(2, 2);
     assert.equal(studio.deleteBar(), true); assert.deepEqual(counts(), [2, 2, 2]);
     studio.history(); assert.equal(studio.state.text, inserted);
     studio.history(true);
@@ -728,18 +731,50 @@ test('measure deletion pauses, selects the remaining measure, preserves audio an
   } finally { restored.cleanup(); }
 });
 
-test('deleting before, within and after a loop retains the remaining original measures', async () => {
+test('deletion targets the navigation selection rather than the viewed measure and rejects no selection or all measures', async () => {
   const { studio, cleanup } = mountStudio();
   const source = chart.replace('2000,', '2000,\n3000,\n4000,\n5000,');
   try {
-    for (const [selected, expected] of [[0, [1, 3]], [1, [2, 3]], [2, [2, 3]], [3, [2, 3]], [4, [2, 4]]]) {
+    for (const selected of [0, 1, 2, 3, 4]) {
       await studio.openChart(file(`delete-loop-${selected}.tja`, source));
+      assert.equal(studio.canDeleteMeasures.value, false);
+      assert.equal(studio.requestDeleteBar(), false);
+      assert.equal(studio.deleteBar(), undefined);
+      assert.equal(studio.state.text, source);
       studio.setLoop(2, 4); studio.select(selected);
+      assert.equal(studio.canDeleteMeasures.value, true);
+      assert.equal(studio.requestDeleteBar(), true);
       assert.equal(studio.deleteBar(), true);
-      assert.deepEqual(studio.state.customLoop, expected);
-      assert.equal(studio.state.selected, Math.min(selected, 3));
+      assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['1000', '5000']);
+      assert.equal(studio.state.customLoop, null);
+      assert.equal(studio.state.selected, 1);
+      assert.equal(studio.state.undo.length, 1);
       studio.history(); assert.deepEqual(studio.state.customLoop, [2, 4]); assert.equal(studio.state.selected, selected);
+      studio.setLoop(1, 5);
+      assert.equal(studio.canDeleteMeasures.value, false);
+      assert.equal(studio.requestDeleteBar(), false);
+      assert.equal(studio.deleteBar(), undefined); assert.equal(studio.state.text, source);
     }
+  } finally { cleanup(); }
+});
+
+test('range deletion reconciles every branch balloon pool in one undoable edit without touching another player', async () => {
+  const { studio, cleanup } = mountStudio();
+  const source = 'TITLE:Range balloons\nBPM:120\nCOURSE:Oni\nBALLOONNOR:11,12\nBALLOONEXP:21,22\nBALLOONMAS:31,32\n#START P1\n1000,\n#BRANCHSTART p,50,80\n#N\n7080,\n9080,\n#E\n7080,\n9080,\n#M\n7080,\n9080,\n#BRANCHEND\n3000,\n4000,\n#END\n#START P2\n4400,\n#END\n';
+  try {
+    await studio.openChart(file('range-balloons.tja', source));
+    studio.changeAllBranches('E'); studio.select(4); studio.setLoop(2, 4);
+    assert.equal(studio.deleteBar(), true);
+    assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['1000', '4000']);
+    assert.equal(studio.state.chart.allBars.length, 2);
+    assert.ok(studio.state.text.endsWith('#START P2\n4400,\n#END\n'));
+    for (const field of ['BALLOONNOR', 'BALLOONEXP', 'BALLOONMAS']) assert.deepEqual(balloonCounts(studio.state.text, 0, field), []);
+    assert.equal(studio.state.undo.length, 1);
+    const edited = studio.state.text;
+    studio.history(); assert.equal(studio.state.text, source);
+    assert.deepEqual(studio.state.customLoop, [2, 4]); assert.equal(studio.state.selected, 4);
+    assert.deepEqual(studio.state.branchRoutes, ['E']);
+    studio.history(true); assert.equal(studio.state.text, edited); assert.equal(studio.state.customLoop, null);
   } finally { cleanup(); }
 });
 
@@ -750,6 +785,7 @@ test('deletion flushes valid pending edits and rejects invalid source or absent 
     studio.newChart(); const empty = studio.state.text;
     assert.equal(studio.deleteBar(), undefined); assert.equal(studio.state.text, empty);
     await studio.openChart(file());
+    studio.setLoop(1, 1);
     studio.editSource('4000,'); assert.equal(studio.deleteBar(), true);
     assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['2000']);
     studio.history(); assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['4000', '2000']);
@@ -767,6 +803,7 @@ test('deletion leaves other player parts, documents and course-aware history int
   try {
     await studio.openChart(file('delete-players.tja', source));
     const id = studio.state.activeId;
+    studio.setLoop(1, 1);
     assert.equal(studio.deleteBar(), true); const edited = studio.state.text;
     studio.changeCourse(1); assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['4400']);
     studio.history(); assert.equal(studio.state.text, source); assert.equal(studio.state.course, 1);
@@ -799,6 +836,7 @@ test('inserting measures selects the blank, pauses playback, shifts custom loops
     assert.equal(studio.state.dirty, false); assert.equal(studio.state.selected, 0);
     studio.history(true); assert.deepEqual(studio.range.value, [3, 3]);
     studio.select(2);
+    studio.selectCell({ bar: 2, numerator: 0, denominator: 16, divisions: 16 });
     assert.equal(studio.insertBar('after'), true);
     assert.equal(studio.state.selected, 3); assert.equal(studio.state.chart.bars.length, 4);
     assert.deepEqual(studio.range.value, [3, 3]);
@@ -818,6 +856,108 @@ test('inserting measures selects the blank, pauses playback, shifts custom loops
   } finally { restored.cleanup(); }
 });
 
+test('append selects the new final measure, keeps loops and supports undo, redo and immediate note entry', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file());
+    studio.select(0); studio.setLoop(1, 2); studio.setSnap(24);
+    assert.equal(studio.appendBar(), true);
+    assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['1000', '2000', '0'.repeat(16)]);
+    assert.deepEqual(studio.state.selectedCell, { bar: 2, numerator: 0, denominator: 24, divisions: 24 });
+    assert.equal(studio.state.selected, 2);
+    assert.equal(studio.state.position, 4);
+    assert.deepEqual(studio.range.value, [1, 2]);
+    assert.equal(studio.state.undo.length, 1);
+    const text = studio.state.text;
+    studio.history(); assert.equal(studio.state.text, chart); assert.equal(studio.state.selected, 0);
+    assert.deepEqual(studio.range.value, [1, 2]);
+    studio.history(true); assert.equal(studio.state.text, text); assert.equal(studio.state.selected, 2);
+    studio.appendBar(); studio.chooseNote('1');
+    assert.equal(studio.state.chart.bars.at(-1).notes[0], '1');
+    studio.editSource('unfinished');
+    const before = studio.state.text, edits = studio.state.undo.length;
+    assert.equal(studio.appendBar(), undefined);
+    assert.equal(studio.state.text, before); assert.equal(studio.state.undo.length, edits);
+  } finally { cleanup(); }
+});
+
+test('Shift+Enter appends once and preserves native input, dialog, IME and modified key behavior', async () => {
+  const { studio, handlers, cleanup } = mountStudio();
+  const press = (extra = {}) => handlers.get('keydown')({ key: 'Enter', shiftKey: true, preventDefault() {}, ...extra });
+  try {
+    await studio.openChart(file());
+    press(); assert.equal(studio.state.chart.bars.length, 3);
+    press({ repeat: true }); assert.equal(studio.state.chart.bars.length, 3);
+    const native = extra => press({ preventDefault() { assert.fail('Native key must not be consumed'); }, ...extra });
+    for (const extra of [{ shiftKey: false }, { ctrlKey: true }, { metaKey: true }, { altKey: true }, { isComposing: true }, { keyCode: 229 }, { defaultPrevented: true }]) native(extra);
+    for (const tagName of ['INPUT', 'TEXTAREA', 'SELECT']) { document.activeElement = { tagName }; native(); }
+    document.activeElement = { isContentEditable: true }; native();
+    document.activeElement = { closest: () => ({}) }; native();
+    document.activeElement = null;
+    studio.state.editorBlocked = true; native(); studio.state.editorBlocked = false;
+    studio.state.invalid = true; native(); studio.state.invalid = false;
+    assert.equal(studio.state.chart.bars.length, 3);
+    studio.newChart(); native();
+    assert.equal(studio.appendBar(), undefined);
+  } finally { cleanup(); }
+});
+
+test('point-anchored before insertion requires a point and ignores the viewed measure', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file());
+    assert.equal(studio.insertBar('before'), undefined);
+    assert.equal(studio.state.text, chart);
+    studio.selectCell({ bar: 0, numerator: 1, denominator: 4, divisions: 16 });
+    studio.select(1);
+    assert.equal(studio.insertBar('before'), true);
+    assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['0'.repeat(16), '1000', '2000']);
+    assert.equal(studio.state.selectedCell, null);
+    assert.equal(studio.insertBar('before'), undefined);
+    studio.history(); assert.equal(studio.state.text, chart);
+  } finally { cleanup(); }
+});
+
+test('deletion falls back to the selected point, keeps navigation selection priority and never targets the view', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file());
+    studio.select(1);
+    assert.equal(studio.canDeleteMeasures.value, false);
+    studio.selectCell({ bar: 0, numerator: 1, denominator: 4, divisions: 16 });
+    assert.deepEqual(studio.deleteRange.value, [1, 1]);
+    assert.equal(studio.canDeleteMeasures.value, true);
+    assert.equal(studio.requestDeleteBar(), true);
+    assert.equal(studio.deleteBar(), true);
+    assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['2000']);
+    assert.equal(studio.canDeleteMeasures.value, false);
+    studio.history();
+    studio.selectCell({ bar: 0, numerator: 1, denominator: 4, divisions: 16 });
+    studio.setLoop(2, 2);
+    assert.deepEqual(studio.deleteRange.value, [2, 2]);
+    assert.equal(studio.deleteBar(), true);
+    assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['1000']);
+  } finally { cleanup(); }
+});
+
+test('after insertion follows the selected point instead of the viewed measure and requires a point', async () => {
+  const { studio, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file());
+    assert.equal(studio.insertBar('after'), undefined);
+    assert.equal(studio.state.text, chart); assert.equal(studio.state.undo.length, 0);
+    studio.selectCell({ bar: 0, numerator: 1, denominator: 4, divisions: 16 });
+    studio.select(1); studio.setLoop(2, 2);
+    assert.equal(studio.insertBar('after'), true);
+    assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['1000', '0'.repeat(16), '2000']);
+    assert.equal(studio.state.selected, 1); assert.deepEqual(studio.range.value, [3, 3]);
+    assert.equal(studio.state.selectedCell, null);
+    const text = studio.state.text;
+    assert.equal(studio.insertBar('after'), undefined); assert.equal(studio.state.text, text);
+    studio.history(); assert.equal(studio.state.text, chart); assert.equal(studio.state.selected, 1);
+  } finally { cleanup(); }
+});
+
 test('measure insertion flushes valid pending source and rejects invalid source, invalid sides and metadata-only songs atomically', async () => {
   const { studio, cleanup } = mountStudio();
   try {
@@ -826,16 +966,20 @@ test('measure insertion flushes valid pending source and rejects invalid source,
     assert.equal(studio.insertBar('after'), undefined); assert.equal(studio.state.text, empty);
     assert.match(studio.state.notice, /请先创建/);
     await studio.openChart(file());
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 16, divisions: 16 });
     studio.editSource('4000,');
-    assert.equal(studio.insertBar('after'), true);
-    assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['4000', '0'.repeat(16), '2000']);
+    assert.equal(studio.insertBar('before'), undefined);
+    assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['4000', '2000']);
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 16, divisions: 16 });
+    assert.equal(studio.insertBar('before'), true);
+    assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['0'.repeat(16), '4000', '2000']);
     const valid = studio.state.text, history = studio.state.undo.length;
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 16, divisions: 16 });
+    assert.equal(studio.insertBar('wrong'), undefined); assert.equal(studio.state.text, valid);
+    assert.match(studio.state.notice, /插入位置无效/);
     studio.editSource('unfinished');
     assert.equal(studio.insertBar('before'), undefined);
     assert.equal(studio.state.text, valid); assert.equal(studio.state.undo.length, history);
-    studio.editSource('0000000000000000,');
-    assert.equal(studio.insertBar('wrong'), undefined); assert.equal(studio.state.text, valid);
-    assert.match(studio.state.notice, /插入位置无效/);
   } finally { cleanup(); }
 });
 
@@ -848,6 +992,7 @@ test('measure insertion leaves other player parts, documents and cached audio un
     const id = studio.state.activeId;
     await studio.openAudio(audioFile());
     const buffer = studio.state.buffer;
+    studio.selectCell({ bar: 0, numerator: 0, denominator: 16, divisions: 16 });
     studio.insertBar('after'); assert.equal(studio.state.buffer, buffer);
     const inserted = studio.state.text;
     studio.changeCourse(1); assert.deepEqual(studio.state.chart.bars.map(bar => bar.notes), ['4400']);
@@ -1454,7 +1599,7 @@ test('invalid branch edits, source topology changes and shared-command deletion 
     assert.equal(studio.state.text, branchChart); assert.equal(studio.state.undo.length, 0);
     const shared = studio.bar.value.instructions.find(item => item.shared);
     studio.removeCommand(shared);
-    assert.match(studio.state.notice, /不能从路线小节中删除/);
+    assert.match(studio.state.notice, /不能从分歧小节中删除/);
     assert.equal(studio.state.text, branchChart);
     studio.changeBranch(0, 'bad'); assert.deepEqual(studio.state.branchRoutes, ['E']);
     studio.editSource('#BRANCHEND\n1000,');

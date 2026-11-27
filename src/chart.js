@@ -23,7 +23,7 @@ export function decodeChart(bytes) {
 }
 
 export function parseChart(text, parser, courseIndex = 0, branchRoutes = [], { allowUnequalBranches = false } = {}) {
-  if (!Array.isArray(branchRoutes) || branchRoutes.some(route => route !== null && !BRANCH_ROUTES.includes(route))) throw new LocalizedError(message('分歧路线选择无效。'));
+  if (!Array.isArray(branchRoutes) || branchRoutes.some(route => route !== null && !BRANCH_ROUTES.includes(route))) throw new LocalizedError(message('分歧选择无效。'));
   const field = name => text.match(new RegExp(`^${name}:(.*)$`, 'mi'))?.[1].trim();
   const blocks = [...text.matchAll(/^#START[^\r\n]*\r?\n([\s\S]*?)^#END/gmi)];
   let bpm = Number(field('BPM'));
@@ -62,15 +62,15 @@ export function parseChart(text, parser, courseIndex = 0, branchRoutes = [], { a
     if (!branch.current) { fence(); branch.entry = capture(); }
     const current = branch, routes = BRANCH_ROUTES.filter(route => current.paths[route]);
     if (!allowUnequalBranches && new Set(routes.map(route => current.paths[route].bars.length)).size > 1) {
-      throw new LocalizedError(message('第 {p0} 处分歧的各路线小节数量必须一致。', { p0: current.index + 1 }));
+      throw new LocalizedError(message('第 {p0} 处分歧的各分歧小节数量必须一致。', { p0: current.index + 1 }));
     }
     const routeEndTimes = Object.fromEntries(routes.map(route => [route, current.paths[route].time]));
     if (!allowUnequalBranches && routes.some(route => Math.abs(routeEndTimes[route] - routeEndTimes[routes[0]]) > 1e-7)) {
-      throw new LocalizedError(message('第 {p0} 处分歧的各路线时长必须一致。', { p0: current.index + 1 }));
+      throw new LocalizedError(message('第 {p0} 处分歧的各分歧时长必须一致。', { p0: current.index + 1 }));
     }
     const requested = branchRoutes[current.index];
     const route = requested ?? (routes.includes('N') ? 'N' : routes[0] ?? null);
-    if (route !== null && !routes.includes(route)) throw new LocalizedError(message('第 {p0} 处分歧没有路线 {p1}。', { p0: current.index + 1, p1: route }));
+    if (route !== null && !routes.includes(route)) throw new LocalizedError(message('第 {p0} 处分歧没有分歧 {p1}。', { p0: current.index + 1, p1: route }));
     const selected = route === null ? current.entry : current.paths[route];
     restore(selected);
     bars = route === null ? [...current.entry.bars] : [...current.entry.bars, ...selected.bars];
@@ -98,7 +98,7 @@ export function parseChart(text, parser, courseIndex = 0, branchRoutes = [], { a
         continue;
       }
       if (BRANCH_ROUTES.includes(name)) {
-        if (!branch || value || branch.paths[name] || branch.current === name) throw new LocalizedError(message('分歧路线标记缺失、重复或位置无效。'));
+        if (!branch || value || branch.paths[name] || branch.current === name) throw new LocalizedError(message('分歧标记缺失、重复或位置无效。'));
         finishPath();
         if (!branch.current) { fence(); branch.entry = capture(); }
         restore(branch.entry); bars = []; commands = []; sharedCommands = [...sharedCommands, instruction]; branch.current = name;
@@ -172,7 +172,7 @@ export function parseChart(text, parser, courseIndex = 0, branchRoutes = [], { a
     }
   }
   if (branch) finishBranch(bodyStart + body.length);
-  if (branchRoutes.length > branches.length) throw new LocalizedError(message('分歧路线选择无效。'));
+  if (branchRoutes.length > branches.length) throw new LocalizedError(message('分歧选择无效。'));
   if (digits.length) throw new LocalizedError(message('最后一个小节缺少逗号。'));
   if (!bars.length && (!allowUnequalBranches || !allBars.length)) throw new LocalizedError(message('没有可编辑的小节。'));
   bars.forEach((bar, index) => { bar.index = index; });
@@ -229,7 +229,7 @@ export function synchronizeBranchTiming(text, parser, courseIndex = null, branch
       const template = chart.allBars.filter(bar => bar.branchIndex === branch.index && bar.route === route);
       for (const candidate of branch.routes.filter(candidate => candidate !== route)) {
         const bars = chart.allBars.filter(bar => bar.branchIndex === branch.index && bar.route === candidate);
-        if (bars.length !== template.length) throw new LocalizedError(message('第 {p0} 处分歧的各路线小节数量必须一致。', { p0: branch.index + 1 }));
+        if (bars.length !== template.length) throw new LocalizedError(message('第 {p0} 处分歧的各分歧小节数量必须一致。', { p0: branch.index + 1 }));
         bars.forEach((bar, index) => {
           const commands = timing(template[index]), previous = timing(bar);
           if (signature(commands) === signature(previous)) return;
@@ -289,12 +289,24 @@ export function synchronizeBranchTiming(text, parser, courseIndex = null, branch
 export function correspondingBars(chart, bar) {
   if (!bar) throw new LocalizedError(message('请先创建难度谱面。'));
   if (bar.branchIndex === null) return [bar];
-  if (!chart) throw new LocalizedError(message('分歧路线选择无效。'));
+  if (!chart) throw new LocalizedError(message('分歧选择无效。'));
   const routes = chart.branches[bar.branchIndex].routes;
   const paths = routes.map(route => chart.allBars.filter(item => item.branchIndex === bar.branchIndex && item.route === route));
   const offset = paths.find(path => path.includes(bar))?.indexOf(bar);
-  if (offset === undefined || paths.some(path => !path[offset])) throw new LocalizedError(message('第 {p0} 处分歧的各路线小节数量必须一致。', { p0: bar.branchIndex + 1 }));
+  if (offset === undefined || paths.some(path => !path[offset])) throw new LocalizedError(message('第 {p0} 处分歧的各分歧小节数量必须一致。', { p0: bar.branchIndex + 1 }));
   return paths.map(path => path[offset]);
+}
+
+export function appendEmptyBar(text, chart) {
+  if (!chart?.variants.length) throw new LocalizedError(message('请先创建难度谱面。'));
+  const block = [...text.matchAll(/^#START[^\r\n]*\r?\n([\s\S]*?)^#END/gmi)][chart.courseIndex];
+  if (!block) throw new LocalizedError(message('难度不存在。'));
+  const position = block.index + block[0].length - 4;
+  const newline = text.includes('\r\n') ? '\r\n' : '\n';
+  const branch = chart.branches.at(-1);
+  const closeBranch = branch && !/^[\t ]*#BRANCHEND\b/mi.test(text.slice(branch.start, branch.end));
+  const addition = `${closeBranch ? '#BRANCHEND' + newline : ''}0000000000000000,${newline}`;
+  return text.slice(0, position) + addition + text.slice(position);
 }
 
 export function insertEmptyBar(text, bar, side, chart) {
@@ -418,7 +430,7 @@ export function setBranchSource(text, chart, cell, source, index, parser) {
   const routes = [...chart.branchRoutes];
   if (index !== null) {
     const branch = chart.branches[index];
-    if (!Number.isSafeInteger(index) || !branch) throw new LocalizedError(message('分歧路线选择无效。'));
+    if (!Number.isSafeInteger(index) || !branch) throw new LocalizedError(message('分歧选择无效。'));
     ({ start, end } = branch); target = index;
   } else {
     const bar = chart.bars[cell?.bar];

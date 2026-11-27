@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { TJAParser } from 'tja';
-import { decodeChart, parseChart, insertEmptyBar, deleteBar, replaceBar, resizeNotes, setBaseBpm, setBarSettings, clearBarSettings, barTimeAt, barFractionAt, barStateAt, barStateAtTime, setPositionSettings, clearPositionSettings, barSource, replaceBarSource } from './chart.js';
+import { decodeChart, parseChart, insertEmptyBar, appendEmptyBar, deleteBar, replaceBar, resizeNotes, setBaseBpm, setBarSettings, clearBarSettings, barTimeAt, barFractionAt, barStateAt, barStateAtTime, setPositionSettings, clearPositionSettings, barSource, replaceBarSource } from './chart.js';
 const chart = body => `TITLE:Test\nBPM:120\nOFFSET:-0.825\nCOURSE:Oni\nLEVEL:7\n#START\n${body}\n#END\n`;
 
 test('playback timing observes command order before and after leading, middle and ending delays', () => {
@@ -52,6 +52,27 @@ test('deletion handles first, middle, last, empty, compact and CRLF measures wit
       assert.ok(!/(?<!\r)\n/.test(text));
     }
   }
+});
+
+test('append adds a common measure after explicit or implicit branches without changing other players', () => {
+  for (const ending of ['', '\n#BRANCHEND']) for (const newline of ['\n', '\r\n']) {
+    const source = (chart('#MEASURE 3/4\n#BPMCHANGE 180\n#BRANCHSTART p,50,80\n#N\n1000,\n#E\n2000,\n#M\n3000,' + ending) + '#START P2\n4400,\n#END\n').replaceAll('\n', newline);
+    for (const route of ['N', 'E', 'M']) {
+      const parsed = parseChart(source, TJAParser, 0, [route]);
+      const text = appendEmptyBar(source, parsed), next = parseChart(text, TJAParser, 0, [route]);
+      assert.equal(next.bars.length, 2);
+      assert.equal(next.branches[0].barCount, 1);
+      assert.equal(next.bars[1].branchIndex, null);
+      assert.equal(next.bars[1].notes, '0'.repeat(16));
+      assert.equal(next.bars[1].bpm, 180);
+      assert.equal(next.bars[1].numerator, 3);
+      assert.equal(next.bars[1].start, parsed.bars[0].end);
+      assert.deepEqual(parseChart(text, TJAParser, 1).bars.map(bar => bar.notes), ['4400']);
+      if (newline === '\r\n') assert.ok(!/(?<!\r)\n/.test(text));
+    }
+  }
+  const empty = 'TITLE:Empty\nBPM:120\n';
+  assert.throws(() => appendEmptyBar(empty, parseChart(empty, TJAParser)), /请先创建/);
 });
 
 test('blank measure insertion inherits boundary state without copying instructions or notes', () => {

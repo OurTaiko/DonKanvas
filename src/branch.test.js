@@ -59,7 +59,7 @@ test('new routes can copy an explicitly chosen route or be empty without losing 
     if (source !== null) assert.equal(balloonInfo(result.text, next, { bar: 0, numerator: 0, denominator: 1 }).count, 22);
     assert.equal(balloonInfo(result.text, next, { bar: 1, numerator: 0, denominator: 1 }).count, 33);
   }
-  assert.throws(() => setMeasureBranch(text, parsed, parsed.bars[0], { type: 'route', route: 'M', source: 'X' }, TJAParser), /路线选择无效/);
+  assert.throws(() => setMeasureBranch(text, parsed, parsed.bars[0], { type: 'route', route: 'M', source: 'X' }, TJAParser), /分歧选择无效/);
 });
 
 test('whole branch removal keeps notes from any chosen route or clears them without removing measures or timing', () => {
@@ -536,7 +536,7 @@ test('omitted unreachable paths, reordered routes and empty branch blocks are su
   const text = chart('#BRANCHSTART p,0,0\n#M\n3000,\n#E\n2000,\n#BRANCHEND\n1000,');
   assert.deepEqual(parse(text).branchRoutes, ['E']);
   assert.deepEqual(parse(text, ['M']).bars.map(bar => bar.notes), ['3000', '1000']);
-  assert.throws(() => parse(text, ['N']), /没有路线/);
+  assert.throws(() => parse(text, ['N']), /没有分歧/);
   const empty = parse(chart('#BRANCHSTART p,50,80\n#BRANCHEND\n1000,'));
   assert.equal(empty.bars.length, 1);
   assert.deepEqual(empty.branchRoutes, [null]);

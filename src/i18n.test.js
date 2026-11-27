@@ -282,7 +282,7 @@ function touchSelectionHarness() {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   const script = descriptor.scriptSetup.content;
   const source = script.slice(script.indexOf('const touchGuide = ref(false);'), script.indexOf('let overviewDrag = null;'));
-  const timers = new Map(), moves = [], scrolls = [], captures = new Set(), playback = [], selections = [], pans = [];
+  const timers = new Map(), moves = [], scrolls = [], captures = new Set(), playback = [], selections = [], pans = [], focuses = [];
   const state = reactive({ chart: { bars: [] }, selectedCell: { bar: 0 }, invalid: false, editorBlocked: false, playing: false, position: 0 });
   const controls = reactive({ snap: 16, snapChoice: '16', customSnap: 16 });
   let now = 0, timerId = 0;
@@ -307,7 +307,7 @@ function touchSelectionHarness() {
     timelineScale: ref(null), visible: ref(null), viewBeats: ref(8), viewportWidth: ref(200), timelineBounds: ref({ start: 0, end: 20 }), TIMELINE_GUTTER,
     createTimelineViewport: () => ({ hitTest: pixel => ({ time: pixel / 10, item: { index: 0 }, x: time => time * 10 }) }),
     timelineCell: () => ({ numerator: 0, denominator: 4 }),
-    viewport: ref({ scrollLeft: 100, scrollTo: options => scrolls.push(options.left), focus() {} }),
+    viewport: ref({ scrollLeft: 100, scrollTo: options => scrolls.push(options.left), focus: options => focuses.push(options.preventScroll) }),
     setTimeout: (callback, delay) => { timers.set(++timerId, { callback, at: now + delay }); return timerId; },
     clearTimeout: id => timers.delete(id)
   });
@@ -316,8 +316,19 @@ function touchSelectionHarness() {
     now += delay;
     for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
   };
-  return { ...handlers, event, advance, moves, scrolls, captures, state, playback, selections, pans };
+  return { ...handlers, event, advance, moves, scrolls, captures, state, playback, selections, pans, focuses };
 }
+
+test('mouse, pen and touch note selection focus the timeline for external keyboard shortcuts without scrolling', () => {
+  for (const pointerType of ['mouse', 'pen', 'touch']) {
+    const gesture = touchSelectionHarness();
+    const event = gesture.event(100, { pointerType, clientY: 220 });
+    gesture.pointerDown(event); gesture.finishTouchSelection(event);
+    assert.deepEqual(gesture.focuses, [true], pointerType);
+    assert.equal(gesture.selections.length, 1, pointerType);
+    assert.equal(gesture.captures.size, 0, pointerType);
+  }
+});
 
 test('waveform gutter clicks seek and reveal adjacent measures without changing follow mode or activating note editing or long press', () => {
   for (const pointerType of ['mouse', 'pen', 'touch']) for (const follow of [false, true]) {
@@ -1106,9 +1117,10 @@ test('dropping TJA files anywhere opens them sequentially, preserves native text
     assert.doesNotMatch(menu, /studio.markLoop|studio.clearLoop/);
     assert.match(menu, /Ctrl\+Z/); assert.match(menu, /Ctrl\+Shift\+Z/);
     const actions = descriptor.scriptSetup.content.match(/const measureActions = computed\(\(\) => \[[\s\S]*?\n\]\);/)[0];
-    for (const [label, icon] of [['前插小节', 'BetweenHorizontalStart'], ['后插小节', 'BetweenHorizontalEnd'], ['删除小节', 'Trash2'], ['清空本小节', 'Eraser']]) {
+    for (const [label, icon] of [['末尾追加小节', 'ListPlus'], ['前插小节', 'BetweenHorizontalStart'], ['后插小节', 'BetweenHorizontalEnd'], ['删除小节', 'Trash2'], ['清空本小节', 'Eraser']]) {
       assert.ok(actions.includes(`label: '${label}', icon: ${icon},`));
     }
+    assert.match(actions, /action: studio.requestDeleteBar, disabled: !studio.canDeleteMeasures.value/);
     assert.match(menu, /@click="runEditAction\(item.action\)"><component :is="item.icon" aria-hidden="true" \/>/);
   });
 
@@ -1176,6 +1188,26 @@ test('the selection menu owns measure and note operations; playback has no indep
   assert.match(menu, /runSelectionAction\(studio.clearNoteSelection\)/);
   assert.doesNotMatch(descriptor.template.content, /id="loop"|id="loop-first"|id="loop-last"|controls.loop/);
   assert.match(menu, /双击全局导航中的小节取消选择/);
+});
+
+test('only the main measure overview opts into a localized append button and shortcut', () => {
+  const grid = parse(readFileSync(new URL('MeasureGrid.vue', import.meta.url), 'utf8')).descriptor;
+  compileScript(grid, { id: 'append-measure' });
+  assert.match(grid.template.content, /<button v-if="props.appendable"[^>]*:disabled="props.disabled \|\| !props.bars.length"[^>]*@click="emit\('append'\)"/);
+  assert.match(grid.template.content, /<Plus aria-hidden="true"/);
+  const timeline = readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8');
+  assert.match(timeline, /<MeasureGrid id="measures"[^>]* appendable [^>]*@append="studio.appendBar"/);
+  const branch = readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8');
+  assert.doesNotMatch(branch, /<MeasureGrid[^>]* appendable/);
+  const app = readFileSync(new URL('App.vue', import.meta.url), 'utf8');
+  assert.ok(app.includes("['Shift+Enter', '末尾追加小节']"));
+  try {
+    for (const language of languages) {
+      locale.value = language.code;
+      assert.ok(t('末尾追加小节'));
+      assert.match(t('末尾追加小节（Shift+Enter）'), /Shift\+Enter/);
+    }
+  } finally { reset(); }
 });
 
 test('shared measure grids preview and commit pointer ranges without consuming ordinary clicks or selecting another grid', () => {
@@ -1370,8 +1402,52 @@ test('navigation marks only measures intersecting the viewport independently of 
   assert.match(grid.styles[0].content, /grid-template-columns:repeat\(auto-fill,minmax\(56px,1fr\)\)/);
   assert.match(grid.styles[0].content, /\.measure-grid button\{padding:7px\}/);
   assert.match(grid.styles[0].content, /\.measure-grid \.mini-notes i\{width:3px;min-width:3px;flex:0 0 3px\}/);
-  assert.match(grid.styles[0].content, /\.measure-grid button.active\{background:#fff;border-color:var\(--line\);color:inherit\}/);
-  assert.match(grid.styles[0].content, /\.measure-grid button.active \.mini-notes,\.measure-grid button.in-view \.mini-notes\{background:#e3edf3;box-shadow:0 0 0 4px #e3edf3;border-radius:2px\}/);
+  assert.match(grid.styles[0].content, /\.measure-grid button.active\{background:var\(--selection-soft\);border-color:var\(--selection-line\);color:var\(--selection-ink\)\}/);
+  assert.match(grid.styles[0].content, /\.measure-grid button.in-view \.mini-notes\{background:#dceee2;box-shadow:0 0 0 4px #dceee2;border-radius:2px\}/);
+  assert.match(grid.styles[0].content, /\.measure-grid button:hover:not\(:disabled\)\{background:#edf5ef\}/);
+  assert.doesNotMatch(grid.styles[0].content, /\.measure-grid button.in-selection\{[^}]*background:/);
+  assert.doesNotMatch(grid.styles[0].content, /button.active \.mini-notes/);
+});
+
+test('only point and measure selections use blue while palettes, toolbars and peripheral controls keep their themes', () => {
+  const global = readFileSync(new URL('style.css', import.meta.url), 'utf8');
+  assert.match(global, /--selection:#2457d6;--selection-soft:#edf2fc;--selection-line:#b7c9f0/);
+  assert.match(global, /\.palette button.active\{border:2px solid var\(--green\);background:#edf7f0\}/);
+  for (const [file, selectors] of [
+    ['MeasureGrid.vue', ['.measure-grid button.active', '.measure-grid button.in-selection', '.measure-grid button.loop-preview']],
+    ['WelcomeGuide.vue', ['.mock-navigation>.mock-measure.selected', '.scene-append .mock-navigation>.mock-measure.has-point']]
+  ]) {
+    const styles = parse(readFileSync(new URL(file, import.meta.url), 'utf8')).descriptor.styles.map(style => style.content).join('\n');
+    for (const selector of selectors) {
+      const start = styles.indexOf(`${selector}{`);
+      assert.ok(start >= 0, `${file}: ${selector}`);
+      const rule = styles.slice(start + selector.length + 1).split('}')[0];
+      assert.match(rule, /var\(--selection(?:-soft|-line|-ink)?\)/, `${file}: ${selector}`);
+      assert.doesNotMatch(rule, /var\(--green\)/, `${file}: ${selector}`);
+    }
+  }
+  assert.match(global, /accent-color:var\(--green\)/);
+  assert.doesNotMatch(global.match(/\.measure-grid button.active\{([^}]+)\}/)[1], /background:/);
+  for (const file of ['App.vue', 'CourseControls.vue', 'BranchControls.vue']) {
+    const styles = parse(readFileSync(new URL(file, import.meta.url), 'utf8')).descriptor.styles.map(style => style.content).join('\n');
+    assert.doesNotMatch(styles, /var\(--selection(?:-soft|-line|-ink)?\)/, file);
+    assert.match(styles, /var\(--green\)/, file);
+  }
+  const timeline = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8')).descriptor.styles[0].content;
+  assert.doesNotMatch(timeline, /var\(--selection(?:-soft|-line|-ink)?\)/);
+  assert.match(timeline, /\.zoom-options button\[aria-checked=true\]\{background:#e0ede4;color:var\(--green\)\}/);
+  const guide = parse(readFileSync(new URL('WelcomeGuide.vue', import.meta.url), 'utf8')).descriptor.styles.map(style => style.content).join('\n');
+  assert.match(guide, /\.mock-palette \.mock-palette-slot.chosen\{border-color:var\(--green\);background:#edf7f0\}/);
+});
+
+test('Chinese branch wording consistently uses the branch term in controls, dialogs and errors', () => {
+  for (const file of ['App.vue', 'BranchControls.vue', 'TimelineEditor.vue', 'branch-commands.js', 'chart.js', 'useStudio.js', 'locales.js']) {
+    assert.doesNotMatch(readFileSync(new URL(file, import.meta.url), 'utf8'), /路[线線]/, file);
+  }
+  const { descriptor } = parse(readFileSync(new URL('BranchControls.vue', import.meta.url), 'utf8'));
+  assert.match(descriptor.template.content, /t\('分歧筛选'\)/);
+  assert.match(descriptor.template.content, /t\('创建空白分歧'\)/);
+  assert.match(descriptor.template.content, /t\('删除分歧 \{p0\} 及其内容？可撤销恢复。'/);
 });
 
 test('mini notes distinguish percussion, rolls, balloons and special rolls', () => {
@@ -1562,7 +1638,7 @@ test('position attributes omit branch information while preserving timing detail
   const attributes = runInNewContext(`${source}; cellAttributes`, {
     computed, cell, selectedTiming, t, NOTE_TYPES
   });
-  assert.ok(!attributes.value.some(attribute => attribute.id === 'cell-branch' || attribute.label === '分歧路线'));
+  assert.ok(!attributes.value.some(attribute => attribute.id === 'cell-branch' || attribute.label === '分歧'));
   assert.equal(attributes.value.find(attribute => attribute.id === 'cell-bpm').value, '120');
   selectedTiming.value.bpm = 180;
   assert.equal(attributes.value.find(attribute => attribute.id === 'cell-bpm').value, '180');
@@ -1630,9 +1706,9 @@ test('current position timing lives in note attributes and measure selection liv
   assert.match(styles, /\.measure-nav input\{[^}]*height:28px;min-height:28px;[^}]*background:#fff/);
   assert.match(styles, /\.editor \.editor-bar\{[^}]*padding:4px 12px\}/);
   assert.match(styles, /\.lane-head\.editor-tools\{[^}]*padding:4px 12px/);
-  assert.match(styles, /\.editor-tools input\[type=number\],\.editor-tools select\{background:#fff\}/);
-  assert.match(styles, /\.editor-tools :is\(input\[type=number\],select,button\)\{box-sizing:border-box;height:28px;min-height:28px;/);
-  assert.match(styles, /\.editor-tools :is\(input\[type=number\],select,button\)\{[^}]*padding-block:0;line-height:normal;/);
+  assert.match(styles, /\.editor-tools input\[type=number\],\.editor-tools input\[role=combobox\],\.editor-tools select\{background:#fff\}/);
+  assert.match(styles, /\.editor-tools :is\(input\[type=number\],input\[role=combobox\],select,button\)\{box-sizing:border-box;height:28px;min-height:28px;/);
+  assert.match(styles, /\.editor-tools :is\(input\[type=number\],input\[role=combobox\],select,button\)\{[^}]*padding-block:0;line-height:normal;/);
   assert.match(styles, /\.editor-tools label\{min-height:28px;line-height:normal;/);
   assert.match(styles, /\.lane-head\.editor-tools\{[^}]*font:400 11px\/normal system-ui,sans-serif;/);
   assert.match(styles, /\.editor-tools :is\(label,input,select,button,option\)\{font:inherit\}/);
@@ -2153,11 +2229,11 @@ test('command changes auto-apply only their own field at the correct scope and v
 test('the timeline toolbar groups explicit before and after measure insertion actions with availability guards', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'insert-measures' });
-  const toolbar = descriptor.template.content.match(/<div class="editor-actions">[\s\S]*?<\/button>\s*<\/div>(?=\s*<\/Teleport>\s*<button v-if="compactTools" id="follow-playback")/)[0];
+  const toolbar = descriptor.template.content.match(/<div class="editor-actions">[\s\S]*?<\/Teleport>/)[0];
   assert.match(toolbar, /class="measure-actions" role="group" :aria-label="t\('插入小节'\)"/);
   for (const [id, side] of [['insert-bar-before', 'before'], ['insert-bar-after', 'after']]) {
     const button = toolbar.match(new RegExp(`<button id="${id}"[^>]*>[\\s\\S]*?<\\/button>`))[0];
-    assert.ok(button.includes(':disabled="!bar || state.invalid"'));
+    assert.ok(button.includes(':disabled="!state.selectedCell || state.invalid"'));
     assert.ok(button.includes(`@click="studio.insertBar('${side}')"`));
     assert.ok(button.includes(`t('${side === 'before' ? '前插小节' : '后插小节'}')`));
     assert.ok(button.includes(`<BetweenHorizontal${side === 'before' ? 'Start' : 'End'} aria-hidden="true" />`));
@@ -2173,37 +2249,55 @@ test('the timeline toolbar groups explicit before and after measure insertion ac
 test('the timeline toolbar confirms measure deletion in a cancelable modal with context and availability guards', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'delete-measure' });
-  const toolbar = descriptor.template.content.match(/<div class="editor-actions">[\s\S]*?<\/div><\/div>/)[0];
+  const toolbar = descriptor.template.content.match(/<div class="primary-measure-actions">[\s\S]*?<\/div>/)[0];
   const button = toolbar.match(/<button id="delete-bar"[\s\S]*?<\/button>/)[0];
-  assert.match(button, /:disabled="!bar \|\| state.invalid \|\| state.chart.bars.length <= 1"/);
-  assert.match(button, /@click="requestDeleteMeasure"/);
+  assert.match(button, /:disabled="!canDeleteMeasures"/);
+  assert.match(button, /@click="studio.requestDeleteBar"/);
   assert.match(button, /<Trash2 aria-hidden="true" \/>/);
-  assert.match(button, /t\('不能删除最后一个小节。'\)/);
+  assert.match(button, /t\('至少保留一个小节。'\)/);
+  assert.match(button, /t\('请先选择一个音符或落点。'\)/);
   assert.match(button, /t\('删除小节'\)/);
   assert.equal(descriptor.template.content.split('id="delete-bar"').length - 1, 1);
   assert.match(descriptor.template.content, /<dialog ref="deleteDialog"[^>]*aria-labelledby="delete-measure-title"[^>]*@cancel.prevent="closeDeleteMeasure"/);
   assert.match(descriptor.template.content, /id="delete-measure-cancel" type="button" autofocus @click="closeDeleteMeasure"/);
   assert.match(descriptor.template.content, /id="delete-measure-confirm" type="button" @click="confirmDeleteMeasure"/);
-  const state = reactive({ activeId: 1, course: 0, chart: { bars: [{}, {}] }, selected: 0, invalid: false, editorBlocked: false, notice: 'failed' });
+  const state = reactive({ activeId: 1, course: 0, chart: { bars: [{}, {}] }, selected: 0, selectedCell: null, customLoop: [2, 2], deleteRequest: 0, invalid: false, editorBlocked: false, notice: 'failed' });
+  const range = computed(() => state.customLoop);
+  const deleteRange = computed(() => range.value ?? (state.selectedCell ? [state.selectedCell.bar + 1, state.selectedCell.bar + 1] : null));
+  const canDeleteMeasures = computed(() => !state.invalid && Boolean(deleteRange.value) && deleteRange.value[1] - deleteRange.value[0] + 1 < state.chart.bars.length);
   let deleted = 0, paused = 0, succeeds = true, open = false;
   const source = descriptor.scriptSetup.content.match(/const deleteDialog = ref\(null\)[\s\S]*?(?=const balloonHits)/)[0];
   const modal = runInNewContext(`${source}; ({ deleteDialog, deleteTarget, deleteError, requestDeleteMeasure, confirmDeleteMeasure, closeDeleteMeasure })`, {
-    ref, watch, state, bar: computed(() => state.chart?.bars[state.selected]),
+    ref, watch, state, range, deleteRange, canDeleteMeasures,
     studio: { pause: () => paused++, deleteBar: () => { deleted++; return succeeds; } },
     confirm: () => assert.fail('Measure deletion must not use native confirm'),
   });
   modal.deleteDialog.value = { showModal: () => { open = true; }, close: () => { open = false; } };
   modal.requestDeleteMeasure(); assert.equal(open, true); assert.equal(deleted, 0); assert.equal(paused, 1);
+  assert.deepEqual(Array.from(modal.deleteTarget.value), [2, 2]);
+  state.selected = 1; assert.equal(open, true);
   modal.closeDeleteMeasure(); modal.confirmDeleteMeasure(); assert.equal(open, false); assert.equal(deleted, 0);
   modal.requestDeleteMeasure(); modal.confirmDeleteMeasure(); assert.equal(deleted, 1); assert.equal(open, false);
   succeeds = false; modal.requestDeleteMeasure(); modal.confirmDeleteMeasure();
   assert.equal(open, true); assert.equal(modal.deleteError.value, 'failed');
   succeeds = true; modal.confirmDeleteMeasure(); assert.equal(open, false); assert.equal(modal.deleteError.value, '');
-  for (const field of ['selected', 'course', 'activeId']) {
+  for (const field of ['course', 'activeId']) {
     state.selected = 0; modal.requestDeleteMeasure(); state[field]++;
     assert.equal(open, false, field); const count = deleted; modal.confirmDeleteMeasure(); assert.equal(deleted, count);
   }
   state.selected = 0; modal.requestDeleteMeasure(); state.chart = { bars: [{}, {}] }; assert.equal(open, false);
+  state.deleteRequest++; assert.equal(open, true); modal.closeDeleteMeasure();
+  modal.requestDeleteMeasure(); state.customLoop = [1, 1]; assert.equal(open, false);
+  modal.requestDeleteMeasure(); state.customLoop = null; assert.equal(open, false);
+  modal.requestDeleteMeasure(); assert.equal(open, false);
+  state.selectedCell = { bar: 0 }; modal.requestDeleteMeasure(); assert.equal(open, true);
+  assert.deepEqual(Array.from(modal.deleteTarget.value), [1, 1]);
+  state.selectedCell = { bar: 1 }; assert.equal(open, false);
+  modal.requestDeleteMeasure(); assert.deepEqual(Array.from(modal.deleteTarget.value), [2, 2]);
+  modal.confirmDeleteMeasure(); assert.equal(open, false);
+  state.selectedCell = null;
+  state.customLoop = [1, 2]; modal.requestDeleteMeasure(); assert.equal(open, false);
+  state.customLoop = [1, 1];
   modal.requestDeleteMeasure(); state.invalid = true; assert.equal(open, false);
   modal.requestDeleteMeasure(); assert.equal(open, false);
   state.invalid = false; state.chart = { bars: [{}] }; modal.requestDeleteMeasure(); assert.equal(open, false);
@@ -2219,7 +2313,7 @@ test('measure statistics live in measure properties while snap remains in the to
   const info = measure.template.content.match(/<details class="inspector-section" open aria-labelledby="measure-properties-title">[\s\S]*?<\/details>/)[0];
   assert.match(info, /id="note-count">.*stats\?\.total \?\? '—'/);
   assert.match(info, /id="bar-grid">.*GRID_DIVISIONS/);
-  assert.match(timeline.template.content, /id="snap-division" v-model="controls.snapChoice"/);
+  assert.match(timeline.template.content, /id="snap-division" ref="snapInput" type="text" inputmode="numeric" role="combobox"/);
   assert.match(measure.template.content, /id="division" :value="bar\?\.notes.length \?\? ''"/);
 });
 
@@ -2308,7 +2402,7 @@ test('branch context follows selected point timing rather than playback or the v
     ref, reactive, computed, watch, inject: () => ({ state, bar, currentTiming, selectedTiming }), t
   });
   assert.match(descriptor.template.content, /class="branch-count">\{\{ branches.length \}\}<\/span>\s*<template #description>/);
-  assert.doesNotMatch(descriptor.template.content, /mixed-route|自定义路线/);
+  assert.doesNotMatch(descriptor.template.content, /mixed-route|自定义分歧/);
   const description = descriptor.template.content.match(/<template #description>([\s\S]*?)<\/p><\/template>/)[1];
   assert.match(description, /class="branch-current"><template v-if="current"><span v-if="current.route" class="branch-route-tag" :data-route="current.route">\{\{ t\(names\[current.route\]\) \}\}<\/span> \{\{ branchLabel\(current\) \}\}/);
   const binding = descriptor.template.content.match(/class="branch-route-tag" :data-route="([^"]+)"/)[1];
@@ -2346,21 +2440,31 @@ test('branch context follows selected point timing rather than playback or the v
   assert.doesNotMatch(styles, /\.branch-context\[data-route/);
 });
 
-test('mobile measure actions use a single set of named icon buttons directly in the toolbar', () => {
+test('append and delete stay in the toolbar while before and after insertion collapse first', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'mobile-measure-tools' });
   const template = descriptor.template.content;
-  assert.match(template, /class="editor-history"[\s\S]*?<div v-show="mobile" id="mobile-measure-tools" class="mobile-measure-tools"><\/div>\s*<details ref="toolsMenu"/);
-  const actions = template.match(/<Teleport to="#mobile-measure-tools" :disabled="!mobile" defer>[\s\S]*?<\/Teleport>/)[0];
-  for (const id of ['insert-bar-before', 'insert-bar-after', 'delete-bar']) {
-    const button = actions.match(new RegExp(`<button id="${id}"[\\s\\S]*?<\\/button>`))[0];
-    assert.match(button, /:class="\{ icon: mobile \}"/);
+  const primary = template.match(/<div class="primary-measure-actions">[\s\S]*?<\/div>/)[0];
+  for (const id of ['append-bar', 'delete-bar']) {
+    const button = primary.match(new RegExp(`<button id="${id}"[\\s\\S]*?<\\/button>`))[0];
+    assert.match(button, /class="icon/);
     assert.match(button, /:aria-label="t\('/);
     assert.match(button, /:title=/);
-    assert.match(button, /aria-hidden="true" \/><span v-if="!mobile">/);
     assert.equal(template.split(`id="${id}"`).length - 1, 1);
   }
-  assert.match(actions, /@click="requestDeleteMeasure"/);
+  assert.match(template, /<div class="primary-measure-actions">[\s\S]*?<details ref="toolsMenu"/);
+  const actions = template.match(/<Teleport to="#mobile-measure-tools" :disabled="!mobile \|\| compactTools" defer>[\s\S]*?<\/Teleport>/)[0];
+  for (const id of ['insert-bar-before', 'insert-bar-after']) {
+    const button = actions.match(new RegExp(`<button id="${id}"[\\s\\S]*?<\\/button>`))[0];
+    assert.match(button, /:class="\{ icon: mobile && !compactTools \}"/);
+    assert.match(button, /:aria-label="t\('/);
+    assert.match(button, /:title=/);
+    assert.match(button, /aria-hidden="true" \/><span v-if="!mobile \|\| compactTools">/);
+    assert.equal(template.split(`id="${id}"`).length - 1, 1);
+  }
+  assert.doesNotMatch(actions, /id="append-bar"|id="delete-bar"/);
+  assert.match(primary, /@click="studio.appendBar"/);
+  assert.match(primary, /@click="studio.requestDeleteBar"/);
   assert.match(descriptor.styles[0].content, /\.mobile-measure-tools button\.icon\{width:28px;min-width:28px;height:28px;min-height:28px;/);
 });
 
@@ -2370,7 +2474,7 @@ test('one single-line toolbar retains priority controls and collapses secondary 
   const tools = descriptor.template.content.match(/<div ref="toolbar" class="lane-head editor-tools editor-bar"[^>]*>[\s\S]*?(?=\s*<Teleport to="body">\s*<dialog ref="deleteDialog")/)[0];
   assert.equal(descriptor.template.content.split('class="lane-head editor-tools editor-bar"').length - 1, 1);
   assert.doesNotMatch(tools, /音乐波形|振幅/);
-  for (const id of ['bar-number', 'undo', 'redo', 'insert-bar-before', 'insert-bar-after', 'delete-bar', 'snap-division', 'custom-snap', 'follow-playback', 'view']) {
+  for (const id of ['bar-number', 'undo', 'redo', 'insert-bar-before', 'insert-bar-after', 'append-bar', 'delete-bar', 'snap-division', 'follow-playback', 'view']) {
     assert.ok(tools.includes(`id="${id}"`), id);
     assert.equal(descriptor.template.content.split(`id="${id}"`).length - 1, id === 'follow-playback' ? 2 : 1);
   }
@@ -2380,10 +2484,15 @@ test('one single-line toolbar retains priority controls and collapses secondary 
   assert.match(zoom, /v-if="mobile && compactTools" ref="zoomMenu"/);
   assert.match(zoom, /id="view" v-model.number="controls.zoom"/);
   assert.match(descriptor.styles[0].content, /\.editor-history\{[^}]*padding-right:6px;border-right:1px solid var\(--line\)\}/);
-  assert.match(tools, /id="bar-number"[\s\S]*id="snap-division"[\s\S]*id="undo"[\s\S]*id="redo"[\s\S]*<details ref="toolsMenu"[\s\S]*id="custom-snap"[\s\S]*id="view"[\s\S]*id="insert-bar-before"[\s\S]*id="insert-bar-after"[\s\S]*id="delete-bar"[\s\S]*id="follow-playback"/);
-  assert.match(tools, /v-show="controls.snapChoice === 'custom'"/);
-  assert.match(tools, /min="1" max="768"/);
-  assert.match(tools, /@change="studio.setSnap\(Number\(controls.customSnap\)\)"/);
+  assert.match(tools, /id="bar-number"[\s\S]*id="snap-division"[\s\S]*id="undo"[\s\S]*id="redo"[\s\S]*id="append-bar"[\s\S]*id="delete-bar"[\s\S]*<details ref="toolsMenu"[\s\S]*id="view"[\s\S]*id="insert-bar-before"[\s\S]*id="insert-bar-after"[\s\S]*id="follow-playback"/);
+  assert.doesNotMatch(tools, /id="custom-snap"/);
+  assert.match(tools, /type="text" inputmode="numeric" role="combobox"/);
+  assert.match(tools, /<input id="snap-division"[^>]*aria-controls="snap-presets"[^>]*:value="controls.snap"/);
+  assert.match(tools, /<input id="snap-division"[^>]*@click="openSnap"/);
+  assert.ok(descriptor.styles[0].content.indexOf('.snap-options button[data-active=true]') > descriptor.styles[0].content.indexOf('.zoom-options button:hover'), 'selected presets must override ordinary hover styling');
+  assert.match(tools, /id="append-bar"[\s\S]*?<span class="primary-action-label">/);
+  assert.match(descriptor.styles[0].content, /@container\(min-width:840px\)\{\.primary-measure-actions>\.icon\{width:auto;/);
+  assert.match(tools, /id="snap-presets"[^>]*role="listbox"/);
   assert.match(tools, /id="view"[\s\S]*<label v-else class="follow-control"><input id="follow-playback" v-model="state.followPlayback" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"><\/span>[\s\S]*<\/label>\s*<\/div><\/details>\s*<\/div>$/);
   assert.match(descriptor.styles[0].content, /\.follow-control input:checked\+\.switch-track\{background:var\(--green\)\}/);
   assert.match(descriptor.styles[0].content, /\.follow-control input:checked\+\.switch-track::before\{transform:translateX\(12px\)\}/);
@@ -2580,23 +2689,49 @@ test('mobile inspector keyboard navigation wraps, supports endpoints and leaves 
   assert.match(descriptor.styles[0].content, /\.inspector-tab-panel\{[^}]*min-height:0;overflow:auto;overscroll-behavior:contain/);
 });
 
-test('selecting custom snap opens secondary tools before focusing and presets retain direct snapping', async () => {
+test('snap combobox keyboard navigation selects presets, scrolls active options and preserves IME input', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
-  const source = descriptor.scriptSetup.content.match(/async function snapChange\(\) \{[\s\S]*?\n\}/)[0];
-  const controls = { snapChoice: 'custom' }, toolsOpen = { value: false }, hover = { value: {} }, calls = [];
-  const handler = runInNewContext(`${source}; snapChange`, {
-    controls, toolsOpen, hover,
-    customSnap: { value: { focus() { assert.equal(toolsOpen.value, true); calls.push('focus'); } } },
-    nextTick: async () => { calls.push('tick'); },
-    studio: { setSnap(value) { calls.push(value); } }
+  const source = descriptor.scriptSetup.content.match(/function snapKeydown\(event\) \{[\s\S]*?\n\}/)[0];
+  const snapOptionsOpen = ref(false), activeSnap = ref(0), controls = { snap: 16 }, selected = [];
+  let scrolled = 0, blurred = 0;
+  const handler = runInNewContext(`${source}; snapKeydown`, {
+    snapOptionsOpen, activeSnap, controls, snaps: SNAP_DIVISIONS,
+    openSnap() { snapOptionsOpen.value = true; activeSnap.value = SNAP_DIVISIONS.indexOf(controls.snap); },
+    chooseSnap(value) { selected.push(value); snapOptionsOpen.value = false; },
+    snapOptions: { value: { querySelector: () => ({ scrollIntoView() { scrolled++; } }) } },
+    nextTick: callback => callback()
   });
-  await handler();
-  assert.equal(hover.value, null);
-  assert.deepEqual(calls, ['tick', 'focus']);
-  controls.snapChoice = '24'; toolsOpen.value = false; calls.length = 0;
-  await handler();
-  assert.deepEqual(calls, [24]);
-  assert.equal(toolsOpen.value, false);
+  const press = (key, extra = {}) => {
+    const event = { key, target: { value: '99', blur() { blurred++; } }, preventDefault() {}, stopPropagation() {}, ...extra };
+    handler(event); return event;
+  };
+  press('ArrowDown'); assert.equal(snapOptionsOpen.value, true);
+  press('ArrowDown'); press('Enter'); assert.deepEqual(selected, [24]);
+  press('ArrowUp'); press('End'); assert.equal(activeSnap.value, SNAP_DIVISIONS.length - 1);
+  press('ArrowDown'); assert.equal(activeSnap.value, 0);
+  const escape = press('Escape'); assert.equal(snapOptionsOpen.value, false); assert.equal(escape.target.value, '16');
+  press('Enter'); assert.equal(blurred, 1);
+  press('ArrowDown', { isComposing: true }); assert.equal(snapOptionsOpen.value, false);
+  press('ArrowDown'); press('Tab'); assert.equal(snapOptionsOpen.value, false);
+  assert.ok(scrolled >= 5);
+});
+
+test('the editable snap preset input applies custom values directly and resets invalid values', () => {
+  const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
+  const source = descriptor.scriptSetup.content.match(/function snapChange\(event\) \{[\s\S]*?\n\}/)[0];
+  const controls = { snap: 16 }, hover = { value: {} }, calls = [];
+  const handler = runInNewContext(`${source}; snapChange`, {
+    controls, hover,
+    studio: { setSnap(value) { calls.push(value); if (Number.isInteger(value) && value >= 1 && value <= 768) controls.snap = value; } }
+  });
+  for (const [value, expected] of [['24', 24], ['192', 192], ['768', 768], ['1', 1], ['0', 1], ['769', 1], ['1.5', 1], ['', 1]]) {
+    const event = { target: { value } };
+    handler(event);
+    assert.equal(hover.value, null);
+    assert.equal(calls.at(-1), Number(value));
+    assert.equal(event.target.value, String(expected));
+    assert.equal(controls.snap, expected);
+  }
 });
 
 test('compact playback menu closes on Escape and returns focus without changing playback', () => {
@@ -2643,7 +2778,7 @@ test('branch lists combine route filtering and condition editors while structura
   assert.equal(dialogs.length, 1);
   const [action] = dialogs;
   const manager = descriptor.template.content.slice(descriptor.template.content.indexOf('<div class="branch-manager"'));
-  assert.match(descriptor.template.content, /class="route-segments branch-route-filter" role="group" :aria-label="t\('路线筛选'\)"/);
+  assert.match(descriptor.template.content, /class="route-segments branch-route-filter" role="group" :aria-label="t\('分歧筛选'\)"/);
   assert.match(descriptor.template.content, /:aria-pressed="uniform === route"[^>]*@click="studio.changeAllBranches\(route\)"/);
   assert.match(manager, /studio.changeBranch\(branch.index, route\)/);
   assert.match(manager, /locate\(branch\)/);
@@ -2657,7 +2792,7 @@ test('branch lists combine route filtering and condition editors while structura
   assert.match(action, /mode === 'create'/);
   assert.match(action, /mode === 'remove'/);
   assert.doesNotMatch(action, /mode === 'condition'|mode === 'removeRoute'/);
-  assert.doesNotMatch(descriptor.template.content, /branch-manager-help|创建、删除分歧及路线，编辑判定条件。|BPM、拍号和延迟在所有路线的对应小节及落点同步/);
+  assert.doesNotMatch(descriptor.template.content, /branch-manager-help|创建、删除分歧，编辑判定条件。|BPM、拍号和延迟在所有分歧的对应小节及落点同步/);
   assert.match(manager, /@click="removeRoute\(branch, route\)"/);
   assert.match(descriptor.styles[0].content, /\.branch-route-card\{position:relative\}/);
   assert.match(descriptor.styles[0].content, /\.branch-route-card \.route-select:not\(:disabled\)::after\{content:'';position:absolute;inset:0\}/);
@@ -2743,9 +2878,14 @@ test('branch management keeps measure details in the title and places route acti
   assert.match(styles, /\.branch-route-card\.missing\{[^}]*background:#[0-9a-f]{6};/);
   assert.doesNotMatch(styles, /\.branch-route-card\.missing\{[^}]*background:transparent/);
   assert.match(styles, /\.branch-route-card\.missing\{border-style:dashed;/);
-  assert.match(styles, /\.branch-route-card\[data-route\]\.selected\{border-color:var\(--route-color\);border-left-width:3px;border-right-width:3px;padding:6px 8px;box-shadow:none\}/);
+  assert.match(styles, /\.branch-route-card\[data-route\]\.selected\{border-color:var\(--route-color\);border-left-width:3px;border-right-width:3px;padding:6px 8px;box-shadow:none;background:color-mix\(in srgb,var\(--route-color\) 20%,white\)\}/);
+  for (const [route, background] of [['N', '#fafafb'], ['E', '#f7faff'], ['M', '#fff8fc']]) {
+    assert.ok(styles.includes(`.branch-route-card[data-route=${route}]:not(.missing){background:${background};`));
+  }
   assert.match(styles, /\.branch-manager \.branch-route-card\.selected\{padding:6px 3px\}/);
-  assert.match(styles, /\.branch-route-card:has\(\.route-select:not\(:disabled\)\):is\(:hover,:focus-within\)\{background:color-mix\(in srgb,var\(--route-hover-background\) 90%,var\(--route-color\)\);border-color:var\(--route-color\)\}/);
+  assert.match(styles, /\.branch-route-card:has\(\.route-select:not\(:disabled\)\):hover\{background:color-mix\(in srgb,var\(--route-hover-background\) 90%,var\(--route-color\)\);border-color:var\(--route-color\)\}/);
+  assert.match(styles, /\.branch-route-card:has\(:focus-visible\)\{outline:2px solid var\(--route-color\);outline-offset:2px\}/);
+  assert.doesNotMatch(styles, /\.branch-route-card[^{}]*:focus-within/);
   assert.match(styles, /\.branch-route-card \.route-select:hover:not\(:disabled\),\.branch-route-card \.route-remove:hover:not\(:disabled\)\{background:transparent\}/);
   assert.doesNotMatch(styles, /\.branch-route-card \.route-(?:select|remove):hover[^}]*background:#ffffff80/);
   assert.doesNotMatch(descriptor.scriptSetup.content + cards, /route-check|\bCheck\b/);
@@ -2762,9 +2902,9 @@ test('branch management keeps measure details in the title and places route acti
   assert.match(cards, /:disabled="state.invalid \|\| \(!branch.routes.includes\(route\) && !branch.barCount\)"/);
   assert.match(cards, /@click="branch.routes.includes\(route\) \? studio.changeBranch\(branch.index, route\) : edit\(branch, 'route', route\)"/);
   assert.doesNotMatch(cards, /route-create-hint|<a\b/);
-  assert.match(cards, /:aria-label="t\('删除路线 \{p0\}', \{ p0: route \}\)" @click="removeRoute\(branch, route\)"><X \/><\/button>/);
+  assert.match(cards, /:aria-label="t\('删除分歧 \{p0\}', \{ p0: route \}\)" @click="removeRoute\(branch, route\)"><X \/><\/button>/);
   assert.match(cards, /t\('创建分歧 - \{p0\}', \{ p0: t\(names\[route\]\) \}\)/);
-  assert.doesNotMatch(cards, /创建路线|\{\{ route \}\}/);
+  assert.doesNotMatch(cards, /\{\{ route \}\}/);
   assert.doesNotMatch(cards, /<Trash2|t\('删除'\)/);
 });
 
@@ -2823,7 +2963,7 @@ test('branch creation groups equal-width route and source fields and displays er
   assert.doesNotMatch(removal, /<select|type="submit"/);
   assert.match(removal, /@click="removeBranch\(route\)"/);
   assert.match(removal, /@click="removeBranch\(''\)"/);
-  assert.match(removal, /v-if="mode === 'remove-last'"[\s\S]*删除最后一条路线将同时删除整个分歧，小节和指令保留。/);
+  assert.match(removal, /v-if="mode === 'remove-last'"[\s\S]*删除最后一条分歧将同时删除整个分歧，小节和指令保留。/);
   assert.doesNotMatch(descriptor.scriptSetup.content, /\bconfirm\s*\(/);
   const form = template.match(/<form v-if="mode"[\s\S]*?<\/form>/)[0];
   assert.match(form, /class="branch-route-error" role="alert"[\s\S]*?<\/p>\s*<div class="branch-form-actions">/);

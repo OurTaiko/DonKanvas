@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { Plus } from '@lucide/vue';
 import { t } from './i18n.js';
 import { NOTE_TYPES, longNoteSpans } from './note-model.js';
 import { measureStart } from './loop.js';
@@ -11,6 +12,7 @@ const props = defineProps({
   noteIndex: { type: Number, default: null },
   visibleIndices: { type: Array, default: () => [] },
   disabled: Boolean,
+  appendable: Boolean,
   unavailable: { type: Function, default: () => false },
   measureTitle: { type: Function, default: null }
 });
@@ -24,7 +26,7 @@ const miniNotes = computed(() => {
     return [item.index, notes.slice(0, 10)];
   }));
 });
-const emit = defineEmits(['activate', 'select', 'toggle', 'preview']);
+const emit = defineEmits(['activate', 'select', 'toggle', 'preview', 'append']);
 const measures = ref(null), measureDrag = ref(null);
 const dragSelection = computed(() => measureDrag.value?.dragged
   ? [Math.min(measureDrag.value.start, measureDrag.value.end) + 1, Math.max(measureDrag.value.start, measureDrag.value.end) + 1]
@@ -107,16 +109,19 @@ onBeforeUnmount(cancelDrag);
     <button v-for="item in props.bars" :key="item.index" type="button" :data-measure-index="item.index" :disabled="props.disabled || props.unavailable(item)" :title="props.measureTitle?.(item) ?? (props.visibleIndices.includes(item.index) ? t('当前视图内的小节') : undefined)" :class="{ active: item.index === props.activeIndex, gogo: item.gogo, 'in-selection': measureSelected(item.index), 'in-view': props.visibleIndices.includes(item.index), 'loop-preview': measureDrag?.dragged && measureSelected(item.index) }" :aria-label="t('小节 {p0}', { p0: item.index + 1 }) + (item.index === props.noteIndex ? ` · ${t('已选音符所在小节')}` : '') + (props.visibleIndices.includes(item.index) ? ` · ${t('当前视图内的小节')}` : '')" :aria-current="item.index === props.activeIndex ? 'location' : undefined" :aria-pressed="measureSelected(item.index)" @click="viewMeasure($event, item.index)" @dblclick="doubleClick($event, item.index)">
       <span>{{ String(item.index + 1).padStart(3, '0') }}</span><span class="mini-notes"><i v-for="(note, index) in miniNotes.get(item.index)" :key="index" :data-note="note" :title="t(NOTE_TYPES.find(type => type.value === note).name)" :class="{ blue: '24B'.includes(note), roll: '56'.includes(note), balloon: note === '7', special: note === '9' }"></i></span>
     </button>
+    <button v-if="props.appendable" type="button" class="append-measure" :disabled="props.disabled || !props.bars.length" :aria-label="t('末尾追加小节')" :title="t('末尾追加小节（Shift+Enter）')" @click="emit('append')"><Plus aria-hidden="true" /></button>
   </div>
 </template>
 
 <style scoped>
-.measure-grid{user-select:none;touch-action:pan-y;grid-template-columns:repeat(auto-fill,minmax(56px,1fr))}.measure-grid.dragging,.measure-grid.dragging button{cursor:crosshair}.measure-grid button.loop-preview{outline:1px solid var(--green);outline-offset:-1px}
+.measure-grid{user-select:none;touch-action:pan-y;grid-template-columns:repeat(auto-fill,minmax(56px,1fr))}.measure-grid.dragging,.measure-grid.dragging button{cursor:crosshair}.measure-grid button.loop-preview{outline:1px solid var(--selection);outline-offset:-1px}
 .measure-grid button{padding:7px}
-.measure-grid button.active{background:#fff;border-color:var(--line);color:inherit}
-.measure-grid button.in-selection{box-shadow:inset 0 3px 0 var(--green)}
+.measure-grid .append-measure{min-height:44px;display:grid;place-items:center;border-style:dashed;color:var(--green)}
+.append-measure svg{width:18px;height:18px}
+.measure-grid button.active{background:var(--selection-soft);border-color:var(--selection-line);color:var(--selection-ink)}
+.measure-grid button.in-selection{box-shadow:inset 0 3px 0 var(--selection)}
 .measure-grid .mini-notes{width:40px;max-width:100%;justify-content:center;gap:1px;overflow:visible}
 .measure-grid .mini-notes i{width:3px;min-width:3px;flex:0 0 3px}
-.measure-grid button.active .mini-notes,.measure-grid button.in-view .mini-notes{background:#e3edf3;box-shadow:0 0 0 4px #e3edf3;border-radius:2px}
-.measure-grid .mini-notes i.roll{background:#e6b800}.measure-grid .mini-notes i.balloon{background:#f07800}.measure-grid .mini-notes i.special{background:#ff78ae}
+.measure-grid button.in-view .mini-notes{background:#dceee2;box-shadow:0 0 0 4px #dceee2;border-radius:2px}
+.measure-grid .mini-notes i.roll{background:#e6b800}.measure-grid .mini-notes i.balloon{background:#f07800}.measure-grid .mini-notes i.special{background:#ff78ae}.measure-grid button:hover:not(:disabled){background:#edf5ef}
 </style>

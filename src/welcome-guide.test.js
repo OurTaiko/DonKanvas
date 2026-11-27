@@ -18,6 +18,21 @@ function guide(storage) {
   return { ...model, mounted };
 }
 
+test('long-press instructions avoid precise timing in every language and animation label', () => {
+  const model = guide({ getItem: () => '1' });
+  for (const device of ['touch', 'desktop']) {
+    model.device.value = device;
+    for (const step of model.steps.value) for (const key of [step.title, step.description, step.hint]) {
+      for (const text of [key, ...translations[key] ?? []]) {
+        assert.doesNotMatch(text, /\d+\s*(?:ms\b|milliseconds?|毫秒|ミリ秒|밀리초)/i);
+      }
+    }
+  }
+  const { descriptor } = parse(readFileSync(new URL('WelcomeGuide.vue', import.meta.url), 'utf8'));
+  assert.match(descriptor.template.content, /t\('长按'\)/);
+  assert.doesNotMatch(descriptor.template.content, /\d+\s*ms\b/i);
+});
+
 test('guide opens once, selects a device, navigates and can be reopened', () => {
   const values = new Map();
   const storage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value) };
@@ -26,7 +41,7 @@ test('guide opens once, selects a device, navigates and can be reopened', () => 
   assert.equal(model.dialog.value.open, true);
   assert.equal(model.device.value, '');
   model.device.value = 'touch';
-  assert.equal(model.steps.value.length, 9);
+  assert.equal(model.steps.value.length, 10);
   model.next();
   assert.equal(model.step.value, 1);
   model.previous(); model.previous();
@@ -56,6 +71,23 @@ test('guide still opens when storage is unavailable and lesson text is localized
     }
   }
   assert.doesNotThrow(() => model.close());
+});
+
+test('append precedes note entry and shows a blank final measure with its start selected', () => {
+  const model = guide({ getItem: () => '1' });
+  for (const device of ['touch', 'desktop']) {
+    model.device.value = device;
+    const append = model.steps.value.findIndex(item => item.scene === 'append');
+    assert.equal(append, model.steps.value.findIndex(item => item.scene === 'note') - 1);
+    model.step.value = append; model.phase.value = 0;
+    assert.equal(model.miniNotes.value.length, 6); assert.equal(model.demo.value.noteSelected, false);
+    model.phase.value = 2;
+    assert.equal(model.demo.value.pressed, true); assert.equal(model.demo.value.key, 'Shift+Enter');
+    model.phase.value = 3;
+    assert.equal(model.miniNotes.value.length, 7); assert.equal(model.miniNotes.value.at(-1).length, 0);
+    assert.equal(model.demo.value.notes.length, 0); assert.equal(model.demo.value.noteSelected, true);
+    assert.equal(model.demo.value.selection, 25); assert.equal(model.demo.value.overviewWindow, 68);
+  }
 });
 
 test('key demonstrations change selection, grid, seeking and playback independently', () => {
@@ -349,7 +381,7 @@ test('range demonstration holds one pointer through a continuous drag before rel
   assert.doesNotMatch(descriptor.template.content, /demo.pointerMeasure/);
 });
 
-test('mini notes follow note replacements while viewing and loop selection leave measure backgrounds neutral', () => {
+test('mini notes follow replacements while blue selections stay distinct from viewport shading', () => {
   const model = guide({ getItem: () => '1' });
   model.device.value = 'desktop';
   model.step.value = model.steps.value.findIndex(item => item.scene === 'note');
@@ -360,7 +392,7 @@ test('mini notes follow note replacements while viewing and loop selection leave
   assert.equal(model.miniNotes.value[0].length, 3);
   const { descriptor } = parse(readFileSync(new URL('WelcomeGuide.vue', import.meta.url), 'utf8'));
   const styles = descriptor.styles.map(item => item.content).join('\n');
-  assert.match(styles, /\.mock-measure.in-view \.mock-mini-notes\{background:#e3edf3/);
-  assert.match(styles, /\.mock-navigation>\.mock-measure.selected\{box-shadow:inset 0 2px #438d64\}/);
+  assert.match(styles, /\.mock-measure.in-view \.mock-mini-notes\{background:#dceee2/);
+  assert.match(styles, /\.mock-navigation>\.mock-measure.selected\{box-shadow:inset 0 2px var\(--selection\)\}/);
   assert.doesNotMatch(descriptor.template.content, /class="mock-toolbar"|class="mock-measures"/);
 });

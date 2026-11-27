@@ -2,7 +2,7 @@
 import { t, message, formatMessage, languages, locale, localePreference, initializeLocale, setLocale } from './i18n.js';
 import { getIntroPath, getPageMetadata } from './locales.js';
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
-import { Plus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, WandSparkles, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser, ListMusic, SquareMousePointer, ListChecks, TextCursorInput, SquareDashed, ArrowLeftToLine, ArrowLeft, ArrowRight, Map, CircleOff } from '@lucide/vue';
+import { Plus, ListPlus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, WandSparkles, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser, ListMusic, SquareMousePointer, ListChecks, TextCursorInput, SquareDashed, ArrowLeftToLine, ArrowLeft, ArrowRight, Map, CircleOff } from '@lucide/vue';
 import { GitBranch } from '@lucide/vue';
 import { useStudio, formatTime } from './useStudio.js';
 import productIcon from './assets/icon.png';
@@ -135,14 +135,15 @@ watch(fileError, async error => {
   if (!appDisposed && !fileErrorDialog.value.open) fileErrorDialog.value.showModal();
 }, { flush: 'post' });
 const measureActions = computed(() => [
-  { label: '前插小节', icon: BetweenHorizontalStart, action: () => studio.insertBar('before'), disabled: !studio.bar.value || state.invalid },
-  { label: '后插小节', icon: BetweenHorizontalEnd, action: () => studio.insertBar('after'), disabled: !studio.bar.value || state.invalid },
-  { label: '删除小节', icon: Trash2, action: studio.deleteBar, disabled: !studio.bar.value || state.invalid || state.chart.bars.length < 2 },
+  { label: '末尾追加小节', icon: ListPlus, action: studio.appendBar, disabled: !studio.bar.value || state.invalid },
+  { label: '前插小节', icon: BetweenHorizontalStart, action: () => studio.insertBar('before'), disabled: !state.selectedCell || state.invalid },
+  { label: '后插小节', icon: BetweenHorizontalEnd, action: () => studio.insertBar('after'), disabled: !state.selectedCell || state.invalid },
+  { label: '删除小节', icon: Trash2, action: studio.requestDeleteBar, disabled: !studio.canDeleteMeasures.value },
   { label: '清空本小节', icon: Eraser, action: studio.clearBar, disabled: !studio.bar.value || state.invalid }
 ]);
 const shortcutGroups = [
   { title: '文件', items: [['Ctrl+Alt+N', '新建谱面'], ['Ctrl+O', '打开谱面'], ['Ctrl+S', '保存'], ['Ctrl+Shift+S', '另存为'], ['Ctrl+Alt+W', '关闭谱面']] },
-  { title: '编辑与播放', items: [['Ctrl+Z', '撤销'], ['Ctrl+Shift+Z', '重做'], ['Ctrl+C', '复制小节'], ['Ctrl+V', '粘贴小节'], ['Ctrl+A', '选择全部小节'], ['Ctrl+Shift+A', '选择正在查看的小节'], ['Space', '播放 / 暂停'], ['1–9', '设置音符（对应音符按钮）'], ['- / =', '双人咚 / 双人咔'], ['0 / Delete / Backspace', '清空音符'], ['A / D', '前后移动选中位置'], ['W / S', '增加 / 减少吸附等分'], ['Esc', '取消音符选择']] },
+  { title: '编辑与播放', items: [['Ctrl+Z', '撤销'], ['Ctrl+Shift+Z', '重做'], ['Shift+Enter', '末尾追加小节'], ['Ctrl+C', '复制小节'], ['Ctrl+V', '粘贴小节'], ['Ctrl+A', '选择全部小节'], ['Ctrl+Shift+A', '选择正在查看的小节'], ['Space', '播放 / 暂停'], ['1–9', '设置音符（对应音符按钮）'], ['- / =', '双人咚 / 双人咔'], ['0 / Delete / Backspace', '清空音符'], ['A / D', '前后移动选中位置'], ['W / S', '增加 / 减少吸附等分'], ['Esc', '取消音符选择']] },
   { title: '时间轴导航', items: [['Q / E', '播放位置后退 / 前进一小节'], ['← / →', '左右平移可视区域'], ['PageUp / PageDown', '向前 / 向后滚动一页'], ['Home / End', '跳到开头 / 结尾']] }
 ];
 const selectionDialog = ref(null), selectionKind = ref('measures'), selectionDraft = ref([1, 1]), selectionError = ref(null);
@@ -452,6 +453,7 @@ async function dropFiles(event) {
         <summary id="shortcuts-toggle" :title="t('快捷键帮助')" :aria-label="t('快捷键帮助')" aria-controls="shortcuts-panel"><Keyboard aria-hidden="true" /><span>{{ t('快捷键帮助') }}</span><ChevronDown aria-hidden="true" /></summary>
         <div id="shortcuts-panel" class="project-panel shortcut-panel" role="region" :aria-label="t('快捷键帮助')" tabindex="0">
           <h2>{{ t('快捷键帮助') }}</h2>
+          <p>{{ t('手机和平板连接实体键盘后，也可使用全部快捷键。') }}</p>
           <section v-for="group in shortcutGroups" :key="group.title">
             <h3>{{ t(group.title) }}</h3>
             <dl><div v-for="[keys, label] in group.items" :key="keys"><dt>{{ t(label) }}</dt><dd><kbd>{{ keys }}</kbd></dd></div></dl>
@@ -500,7 +502,7 @@ async function dropFiles(event) {
       <p>{{ t('从正在查看的第 {p0} 小节开始粘贴 {p1} 个小节。', { p0: state.selected + 1, p1: state.copiedMeasures?.length ?? 0 }) }}</p>
       <label class="paste-option"><input v-model="pasteMode" type="radio" name="paste-mode" value="overwrite">{{ t('覆盖现有小节（不足时在末尾续接）') }}</label>
       <label class="paste-option"><input v-model="pasteMode" type="radio" name="paste-mode" value="insert">{{ t('在查看小节之前插入新小节') }}</label>
-      <p>{{ t('复制音符、指令和气球次数，仅限当前显示路线，不复制分歧结构。剪贴板可在当前页面的文件标签间共用。') }}</p>
+      <p>{{ t('复制音符、指令和气球次数，仅限当前显示分歧，不复制分歧结构。剪贴板可在当前页面的文件标签间共用。') }}</p>
       <p v-if="pasteError" class="error" role="alert">{{ formatMessage(pasteError) }}</p>
       <div class="selection-dialog-actions"><button type="button" @click="pasteDialog.close()">{{ t('取消') }}</button><button type="submit" class="primary">{{ t('粘贴') }}</button></div>
     </form>

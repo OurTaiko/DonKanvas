@@ -40,7 +40,7 @@ export function setMeasureBranch(text, chart, bar, operation, parser) {
   if (operation.type === 'create') {
     const last = operation.last, route = operation.route;
     if (!Number.isInteger(last) || last < bar.index || last >= chart.bars.length) throw new LocalizedError(message('小节区间无效。'));
-    if (!BRANCH_ROUTES.includes(route)) throw new LocalizedError(message('分歧路线选择无效。'));
+    if (!BRANCH_ROUTES.includes(route)) throw new LocalizedError(message('分歧选择无效。'));
     const end = chart.bars[last].comma + 1;
     if (chart.bars.slice(bar.index, last + 1).some(item => item.branchIndex !== null) ||
       /^[\t ]*#(?:BRANCHSTART|BRANCHEND|N|E|M)\b/mi.test(text.slice(boundary, end))) {
@@ -69,7 +69,7 @@ export function setMeasureBranch(text, chart, bar, operation, parser) {
   if (!branch) throw new LocalizedError(message('请先在前面的小节插入分歧开始。'));
   const sections = branchSections(text, branch);
   function disable(keep = branch.route) {
-    if (keep !== null && !branch.routes.includes(keep)) throw new LocalizedError(message('分歧路线选择无效。'));
+    if (keep !== null && !branch.routes.includes(keep)) throw new LocalizedError(message('分歧选择无效。'));
     const selected = sections.find(item => item.route === (keep ?? branch.route));
     const headerEnd = branch.start + text.slice(branch.start).match(/^[^\r\n]*/)[0].length;
     routes.splice(index, 1);
@@ -78,7 +78,7 @@ export function setMeasureBranch(text, chart, bar, operation, parser) {
   if (operation.type === 'disable') return disable();
   if (operation.type === 'remove') return disable(operation.keep);
   if (operation.type === 'route') {
-    if (!BRANCH_ROUTES.includes(operation.route)) throw new LocalizedError(message('分歧路线选择无效。'));
+    if (!BRANCH_ROUTES.includes(operation.route)) throw new LocalizedError(message('分歧选择无效。'));
     const section = sections.find(item => item.route === operation.route);
     if (section) {
       if (branch.routes.length === 1) return disable(operation.clearLast ? null : branch.route);
@@ -89,7 +89,7 @@ export function setMeasureBranch(text, chart, bar, operation, parser) {
     const at = sections.find(item => item.route === 'BRANCHEND')?.start ?? branch.end;
     const source = operation.source === undefined || operation.source === null ? branch.route : operation.source;
     const current = sections.find(item => item.route === source);
-    if (!current || !BRANCH_ROUTES.includes(source)) throw new LocalizedError(message('分歧路线选择无效。'));
+    if (!current || !BRANCH_ROUTES.includes(source)) throw new LocalizedError(message('分歧选择无效。'));
     return replace(at, at, [`${newline}#${operation.route}${newline}`, ...sourceChunks(current.bodyStart, current.end, operation.source === null), newline]);
   }
   if (operation.type === 'end') {
