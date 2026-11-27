@@ -2,12 +2,15 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import { VitePWA } from 'vite-plugin-pwa';
 import { parse, serialize } from 'parse5';
-import { getPageMetadata, getPageURL, pageLocales } from './src/locales.js';
+import { getIntroPath, getPageMetadata, getPageURL, pageLocales } from './src/locales.js';
+import { renderIntroPage, renderSitemap } from './src/seo-pages.js';
 
 function localizePage(html, code) {
   const document = parse(html);
   const metadata = getPageMetadata(code);
   const values = {
+    'application-name': metadata.name,
+    'og:site_name': metadata.name,
     description: metadata.description,
     'og:title': metadata.title,
     'og:description': metadata.socialDescription,
@@ -32,7 +35,7 @@ function localizePage(html, code) {
     if (node.tagName === 'link' && attributes.rel === 'canonical') setAttribute('href', getPageURL(code));
     if (node.tagName === 'script' && attributes.type === 'application/ld+json') {
       const application = JSON.parse(node.childNodes.map(child => child.value).join(''));
-      Object.assign(application, { description: metadata.applicationDescription, inLanguage: code, url: getPageURL(code) });
+      Object.assign(application, { name: metadata.name, alternateName: metadata.alternateName, description: metadata.applicationDescription, inLanguage: code, url: getPageURL(code) });
       setText(JSON.stringify(application));
     }
     if (node.tagName === 'head') {
@@ -57,12 +60,26 @@ function localizedPages() {
   return {
     name: 'localized-seo-pages',
     enforce: 'post',
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        if (!['GET', 'HEAD'].includes(request.method)) return next();
+        const path = request.url.split('?')[0].slice(1);
+        const code = Object.keys(pageLocales).find(language => getIntroPath(language) === path);
+        if (!code && path !== 'sitemap.xml') return next();
+        response.setHeader('Content-Type', code ? 'text/html; charset=utf-8' : 'application/xml; charset=utf-8');
+        response.end(request.method === 'HEAD' ? '' : code ? renderIntroPage(code) : renderSitemap());
+      });
+    },
     generateBundle(_options, bundle) {
       const html = String(bundle['index.html'].source);
       bundle['index.html'].source = localizePage(html, 'zh-CN');
       for (const code of Object.keys(pageLocales).filter(code => code !== 'zh-CN')) {
         this.emitFile({ type: 'asset', fileName: `index.${code}.html`, source: localizePage(html, code) });
       }
+      for (const code of Object.keys(pageLocales)) {
+        this.emitFile({ type: 'asset', fileName: getIntroPath(code), source: renderIntroPage(code) });
+      }
+      this.emitFile({ type: 'asset', fileName: 'sitemap.xml', source: renderSitemap() });
     }
   };
 }
@@ -78,13 +95,13 @@ export default defineConfig({
       includeAssets: ['icons/*.png'],
       manifest: {
         id: './',
-        name: 'DonKanvas',
-        short_name: 'DonKanvas',
-        description: 'A local-first TJA chart and audio editor.',
+        name: getPageMetadata('zh-CN').name,
+        short_name: getPageMetadata('zh-CN').name,
+        description: getPageMetadata('zh-CN').applicationDescription,
         lang: 'zh-CN',
         start_url: './',
         scope: './',
-        display: 'standalone',
+        display: 'fullscreen',
         theme_color: '#16745b',
         background_color: '#f5f7f4',
         icons: [

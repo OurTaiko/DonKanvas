@@ -61,9 +61,18 @@ test('page titles and SEO metadata follow initialization and every language swit
     for (const language of languages) {
       setLocale(language.code, storage, root);
       const metadata = getPageMetadata(language.code);
+      const productName = { 'zh-CN': '咚咔绘板', 'zh-TW': '咚咔繪板', ja: 'ドンカッボード', ko: '동캇보드', en: 'DonKanvas' }[language.code];
+      const displayName = language.code === 'en' ? productName : `${productName} · DonKanvas`;
+      assert.equal(metadata.name, productName);
+      assert.equal(t('咚咔绘板'), productName);
+      assert.equal(t('咚咔绘板 · DonKanvas'), displayName);
+      assert.ok(document.title.startsWith(`${displayName} - `));
+      assert.equal([...document.title.matchAll(/DonKanvas/g)].length, 1);
       assert.equal(root.lang, language.code);
       assert.equal(document.title, metadata.title);
       for (const [selector, value] of [
+        ['meta[name="application-name"]', productName],
+        ['meta[property="og:site_name"]', productName],
         ['meta[name="description"]', metadata.description],
         ['meta[property="og:title"]', metadata.title],
         ['meta[property="og:description"]', metadata.socialDescription],
@@ -76,7 +85,9 @@ test('page titles and SEO metadata follow initialization and every language swit
       const application = JSON.parse(structuredData.textContent);
       assert.equal(application.description, metadata.applicationDescription);
       assert.equal(application.inLanguage, language.code);
-      assert.equal(application.name, 'DonKanvas');
+      assert.equal(application.name, productName);
+      assert.equal(application.alternateName, language.code === 'en' ? undefined : 'DonKanvas');
+      assert.equal(Object.hasOwn(application, 'alternateName'), language.code !== 'en');
       assert.equal(application.url, getPageURL(language.code));
       assert.equal(elements.get('link[rel="canonical"]').href, application.url);
       assert.equal(elements.get('meta[property="og:url"]').content, application.url);
@@ -815,13 +826,18 @@ test('the project popover shows only draft failures and retains project links an
   assert.doesNotMatch(project, /t\('本地会话'\)/);
   assert.match(project, /t\(state.saveState\)/);
   assert.match(project, /© 2026 Dafrok/);
+  assert.match(project, /<p>{{ t\('咚咔绘板 · DonKanvas'\) }}<\/p>/);
+  assert.match(header, /:alt="t\('咚咔绘板'\)"/);
   const links = [...project.matchAll(/<a\b([^>]*)>/g)].map(match => match[1]);
-  assert.equal(links.length, 3);
+  assert.equal(links.length, 4);
   for (const [index, url] of ['https://github.com/OurTaiko/DonKanvas', 'https://github.com/OurTaiko', 'https://github.com/OurTaiko/DonKanvas/blob/HEAD/LICENSE'].entries()) {
     assert.ok(links[index].includes(`href="${url}"`));
     assert.match(links[index], /target="_blank"/);
     assert.match(links[index], /rel="noopener noreferrer"/);
   }
+  assert.match(links[3], /getIntroPath\(locale\)/);
+  assert.match(links[3], /target="_blank"/);
+  assert.match(links[3], /rel="noopener noreferrer"/);
   assert.match(readFileSync(new URL('../LICENSE', import.meta.url), 'utf8'), /^MIT License/);
   assert.match(project, /MIT 开源协议/);
 });

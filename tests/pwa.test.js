@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { build } from 'vite';
 import { parse } from 'parse5';
-import { getPageMetadata, getPageURL, pageLocales } from '../src/locales.js';
+import { getIntroPath, getIntroURL, getPageMetadata, getPageURL, pageLocales } from '../src/locales.js';
 import { checkPwaUpdate, activatePwaUpdate, waitForPwaRegistration } from '../src/pwa.js';
 
 test('startup checks wait for registration readiness and reject a mismatched deployment scope', async () => {
@@ -105,26 +105,35 @@ test('production PWA assets are installable and precached at root and subdirecto
       }
     }
 
-    assert.equal(manifest.name, 'DonKanvas');
-    assert.equal(manifest.short_name, 'DonKanvas');
-    assert.match(html, /<title>DonKanvas - 在线 TJA 太鼓谱面编辑器<\/title>/);
-    assert.match(html, /name="application-name" content="DonKanvas"/);
-    assert.match(html, /name="description" content="DonKanvas[^"\n]+TJA[^"\n]+"/);
+    assert.equal(manifest.name, '咚咔绘板');
+    assert.equal(manifest.short_name, '咚咔绘板');
+    assert.equal(manifest.lang, 'zh-CN');
+    assert.match(html, /<title>咚咔绘板 · DonKanvas - 在线 TJA 太鼓谱面编辑器<\/title>/);
+    assert.match(html, /name="application-name" content="咚咔绘板"/);
+    assert.match(html, /name="description" content="咚咔绘板[^"\n]+TJA[^"\n]+"/);
     assert.match(html, /name="robots" content="index, follow, max-image-preview:large"/);
     const canonicalURL = 'https://ourtaiko.github.io/DonKanvas/';
     assert.ok(html.includes(`rel="canonical" href="${canonicalURL}"`));
     assert.ok(html.includes(`property="og:url" content="${canonicalURL}"`));
     assert.ok(html.includes(`property="og:image" content="${canonicalURL}icons/icon-512.png"`));
     assert.ok(html.includes(`name="twitter:image" content="${canonicalURL}icons/icon-512.png"`));
-    assert.match(html, /property="og:title" content="DonKanvas - 在线 TJA 太鼓谱面编辑器"/);
-    assert.match(html, /name="twitter:title" content="DonKanvas - 在线 TJA 太鼓谱面编辑器"/);
+    assert.match(html, /property="og:title" content="咚咔绘板 · DonKanvas - 在线 TJA 太鼓谱面编辑器"/);
+    assert.match(html, /name="twitter:title" content="咚咔绘板 · DonKanvas - 在线 TJA 太鼓谱面编辑器"/);
     assert.match(html, /name="twitter:card" content="summary"/);
     const structuredData = JSON.parse(html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1]);
     assert.equal(structuredData['@context'], 'https://schema.org');
     assert.equal(structuredData['@type'], 'WebApplication');
-    assert.equal(structuredData.name, 'DonKanvas');
+    assert.equal(structuredData.name, '咚咔绘板');
     assert.equal(structuredData.url, canonicalURL);
     assert.equal(structuredData.isAccessibleForFree, true);
+    const sitemap = parse(await readFile(join(outDir, 'sitemap.xml'), 'utf8'));
+    const locations = [];
+    function collectLocations(node) {
+      if (node.tagName === 'loc') locations.push(node.childNodes.map(child => child.value || '').join(''));
+      for (const child of node.childNodes || []) collectLocations(child);
+    }
+    collectLocations(sitemap);
+    assert.deepEqual(locations.sort(), Object.keys(pageLocales).flatMap(code => [getPageURL(code), getIntroURL(code)]).sort());
     for (const code of Object.keys(pageLocales)) {
       const filename = code === 'zh-CN' ? 'index.html' : `index.${code}.html`;
       const page = parse(await readFile(join(outDir, filename), 'utf8'));
@@ -138,9 +147,23 @@ test('production PWA assets are installable and precached at root and subdirecto
       const text = node => node.childNodes.map(child => child.value || '').join('');
       const meta = key => elements.find(node => node.tagName === 'meta' && (attribute(node, 'name') === key || attribute(node, 'property') === key));
       const metadata = getPageMetadata(code);
+      const productName = { 'zh-CN': '咚咔绘板', 'zh-TW': '咚咔繪板', ja: 'ドンカッボード', ko: '동캇보드', en: 'DonKanvas' }[code];
+      const displayName = code === 'en' ? productName : `${productName} · DonKanvas`;
+      const deviceAndControlTerms = {
+        'zh-CN': ['手机', '平板', '桌面', '触控手势', '键盘快捷键'],
+        en: ['phones', 'tablets', 'desktops', 'touch gestures', 'keyboard shortcuts'],
+        ja: ['スマートフォン', 'タブレット', 'デスクトップ', 'タッチジェスチャー', 'キーボードショートカット'],
+        'zh-TW': ['手機', '平板', '桌面', '觸控手勢', '鍵盤快捷鍵'],
+        ko: ['스마트폰', '태블릿', '데스크톱', '터치 제스처', '키보드 단축키']
+      }[code];
+      for (const value of [metadata.description, metadata.socialDescription, metadata.applicationDescription]) {
+        for (const term of deviceAndControlTerms) assert.ok(value.includes(term), `${code} metadata must mention ${term}`);
+      }
       assert.equal(attribute(elements.find(node => node.tagName === 'html'), 'lang'), code);
       assert.equal(text(elements.find(node => node.tagName === 'title')), metadata.title);
       for (const [key, value] of Object.entries({
+        'application-name': productName,
+        'og:site_name': productName,
         description: metadata.description,
         'og:title': metadata.title,
         'og:description': metadata.socialDescription,
@@ -160,6 +183,9 @@ test('production PWA assets are installable and precached at root and subdirecto
         assert.equal(attribute(alternate, 'href'), getPageURL(language === 'x-default' ? 'zh-CN' : language));
       }
       const application = JSON.parse(text(elements.find(node => node.tagName === 'script' && attribute(node, 'type') === 'application/ld+json')));
+      assert.equal(application.name, productName);
+      assert.equal(application.alternateName, code === 'en' ? undefined : 'DonKanvas');
+      assert.equal(Object.hasOwn(application, 'alternateName'), code !== 'en');
       assert.equal(application.inLanguage, code);
       assert.equal(application.description, metadata.applicationDescription);
       assert.equal(application.url, getPageURL(code));
@@ -171,8 +197,63 @@ test('production PWA assets are installable and precached at root and subdirecto
         }
       }
       assert.ok(worker.includes(filename), `${filename} must be available offline`);
+      const introName = getIntroPath(code);
+      const intro = parse(await readFile(join(outDir, introName), 'utf8'));
+      const introElements = [];
+      function collectIntro(node) {
+        if (node.tagName) introElements.push(node);
+        for (const child of node.childNodes || []) collectIntro(child);
+      }
+      collectIntro(intro);
+      const introTitle = text(introElements.find(node => node.tagName === 'title'));
+      assert.ok(introTitle.endsWith(` - ${displayName}`));
+      assert.equal([...introTitle.matchAll(/DonKanvas/g)].length, 1);
+      assert.equal(attribute(introElements.find(node => node.tagName === 'meta' && attribute(node, 'property') === 'og:site_name'), 'content'), productName);
+      assert.equal(text(introElements.find(node => node.tagName === 'header').childNodes.find(node => node.tagName === 'p')), displayName);
+      const introApplication = JSON.parse(text(introElements.find(node => node.tagName === 'script' && attribute(node, 'type') === 'application/ld+json')));
+      assert.equal(introApplication.about.name, productName);
+      assert.equal(introApplication.about.alternateName, code === 'en' ? undefined : 'DonKanvas');
+      assert.equal(Object.hasOwn(introApplication.about, 'alternateName'), code !== 'en');
+      assert.equal(attribute(introElements.find(node => node.tagName === 'html'), 'lang'), code);
+      assert.equal(introElements.filter(node => node.tagName === 'h1').length, 1);
+      assert.match(text(introElements.find(node => node.tagName === 'h1')), /TJA/);
+      const introduction = text(introElements.find(node => node.tagName === 'header').childNodes.find(node => node.tagName === 'p' && text(node).includes('TJA')));
+      for (const term of deviceAndControlTerms) assert.ok(introduction.includes(term), `${code} visible introduction must mention ${term}`);
+      const controls = introElements.find(node => attribute(node, 'id') === 'devices-and-controls');
+      assert.ok(controls, `${code} must have a visible device and controls section`);
+      const instructions = controls.childNodes.filter(node => node.tagName === 'p').map(text).join('\n');
+      for (const shortcut of ['1–9', 'A/D', 'Ctrl+S', 'Ctrl+Z', 'Command']) {
+        assert.ok(instructions.includes(shortcut), `${code} must explain ${shortcut}`);
+      }
+      assert.equal(introElements.filter(node => node.tagName === 'li').length, 6, 'features and steps must exist without JavaScript');
+      assert.equal(introElements.filter(node => node.tagName === 'h3').length, 3, 'FAQs must be visible without interaction');
+      assert.equal(attribute(introElements.find(node => node.tagName === 'link' && attribute(node, 'rel') === 'canonical'), 'href'), getIntroURL(code));
+      const introAlternates = introElements.filter(node => node.tagName === 'link' && attribute(node, 'rel') === 'alternate');
+      assert.equal(introAlternates.length, 6);
+      for (const language of [...Object.keys(pageLocales), 'x-default']) {
+        assert.equal(attribute(introAlternates.find(node => attribute(node, 'hreflang') === language), 'href'), getIntroURL(language === 'x-default' ? 'zh-CN' : language));
+      }
+      const introLinks = introElements.filter(node => node.tagName === 'a');
+      for (const language of Object.keys(pageLocales)) {
+        assert.ok(introLinks.some(node => attribute(node, 'href') === `./${getIntroPath(language)}` && attribute(node, 'hreflang') === language));
+      }
+      assert.equal(attribute(introLinks.find(node => attribute(node, 'aria-current') === 'page'), 'lang'), code);
+      assert.equal(attribute(introLinks.find(node => attribute(node, 'class') === 'start'), 'href'), code === 'zh-CN' ? './' : filename);
+      assert.ok(introElements.filter(node => node.tagName === 'script').every(node => attribute(node, 'type') === 'application/ld+json'), 'intro pages must not boot or redirect to the editor');
+      for (const base of ['https://example.com/', 'https://example.com/DonKanvas/']) {
+        for (const node of introElements) {
+          const href = attribute(node, 'href');
+          if (href && !URL.canParse(href)) {
+            const resolved = new URL(href, new URL(introName, base));
+            assert.ok(resolved.href.startsWith(base), href);
+            const relative = resolved.pathname.slice(new URL(base).pathname.length);
+            await readFile(join(outDir, relative || 'index.html'));
+          }
+        }
+      }
+      assert.ok(worker.includes(introName), `${introName} must be available offline`);
     }
-    assert.equal(manifest.display, 'standalone');
+    assert.equal(manifest.display, 'fullscreen');
     for (const size of [192, 512]) {
       const icon = manifest.icons.find(icon => icon.sizes === `${size}x${size}`);
       assert.ok(icon, `missing ${size}px installation icon`);

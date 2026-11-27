@@ -74,6 +74,8 @@ export function updateDocumentMetadata(root) {
   const metadata = getPageMetadata(locale.value);
   document.title = metadata.title;
   for (const [selector, key] of Object.entries({
+    'meta[name="application-name"]': 'name',
+    'meta[property="og:site_name"]': 'name',
     'meta[name="description"]': 'description',
     'meta[property="og:title"]': 'title',
     'meta[property="og:description"]': 'socialDescription',
@@ -89,6 +91,8 @@ export function updateDocumentMetadata(root) {
   const structuredData = document.querySelector('script[type="application/ld+json"]');
   if (structuredData) {
     const application = JSON.parse(structuredData.textContent);
+    application.name = metadata.name;
+    application.alternateName = metadata.alternateName;
     application.description = metadata.applicationDescription;
     application.inLanguage = locale.value;
     application.url = canonicalURL;

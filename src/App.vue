@@ -1,5 +1,6 @@
 <script setup>
-import { t, message, formatMessage, LocalizedError, languages, localePreference, initializeLocale, setLocale } from './i18n.js';
+import { t, message, formatMessage, LocalizedError, languages, locale, localePreference, initializeLocale, setLocale } from './i18n.js';
+import { getIntroPath } from './locales.js';
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, shallowRef, watch } from 'vue';
 import { Plus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser, ListMusic, SquareMousePointer, ListChecks, TextCursorInput, Flag, SquareDashed, ArrowLeftToLine, ArrowLeft, ArrowRight, Map, CircleOff } from '@lucide/vue';
 import { GitBranch } from '@lucide/vue';
@@ -419,7 +420,7 @@ async function dropFiles(event) {
 
 <template>
   <header>
-    <div class="brand"><img class="product-icon" :src="productIcon" alt="DonKanvas" width="24" height="24"></div>
+    <div class="brand"><img class="product-icon" :src="productIcon" :alt="t('咚咔绘板')" width="24" height="24"></div>
     <div class="file-actions">
       <details ref="fileMenu" class="file-popover" @toggle="positionPopover($event.target)" @keydown="popoverKeydown($event, fileMenu)">
         <summary id="file-toggle" :title="t('文件')" :aria-label="t('文件')" aria-controls="file-menu"><span>{{ t('文件') }}</span></summary>
@@ -495,8 +496,9 @@ async function dropFiles(event) {
       <details ref="projectMenu" class="project-popover" @toggle="toggleSettingsSection" @keydown="popoverKeydown($event, projectMenu)">
         <summary id="project-toggle" :title="t('关于')" :aria-label="t('关于')" aria-controls="project-menu"><Info aria-hidden="true" /><span>{{ t('关于') }}</span><ChevronDown aria-hidden="true" /></summary>
         <div id="project-menu" class="project-panel">
+          <p>{{ t('咚咔绘板 · DonKanvas') }}</p>
           <p v-if="draftUnavailable" id="save-state" role="alert" class="error">{{ t(state.saveState) }}</p>
-          <nav class="project-links" :aria-label="t('项目信息')"><a href="https://github.com/OurTaiko/DonKanvas" target="_blank" rel="noopener noreferrer" :title="t('GitHub 仓库')">GitHub</a><a href="https://github.com/OurTaiko" target="_blank" rel="noopener noreferrer" :title="t('开源组织')">OurTaiko</a><a href="https://github.com/OurTaiko/DonKanvas/blob/HEAD/LICENSE" target="_blank" rel="noopener noreferrer">{{ t('MIT 开源协议') }}</a></nav>
+          <nav class="project-links" :aria-label="t('项目信息')"><a href="https://github.com/OurTaiko/DonKanvas" target="_blank" rel="noopener noreferrer" :title="t('GitHub 仓库')">GitHub</a><a href="https://github.com/OurTaiko" target="_blank" rel="noopener noreferrer" :title="t('开源组织')">OurTaiko</a><a href="https://github.com/OurTaiko/DonKanvas/blob/HEAD/LICENSE" target="_blank" rel="noopener noreferrer">{{ t('MIT 开源协议') }}</a><a :href="`./${getIntroPath(locale)}`" target="_blank" rel="noopener noreferrer">{{ t('应用介绍与使用指南') }}</a></nav>
           <small>© 2026 Dafrok</small>
         </div>
       </details>
