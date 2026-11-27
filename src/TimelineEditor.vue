@@ -114,10 +114,6 @@ function measureSelected(index) {
   const selected = measurePreview.value ?? range.value;
   return Boolean(selected && index + 1 >= selected[0] && index + 1 <= selected[1]);
 }
-function toggleMeasure(index) {
-  if (range.value && index + 1 >= range.value[0] && index + 1 <= range.value[1]) studio.clearLoop();
-  else studio.setLoop(index + 1, index + 1);
-}
 const viewport = ref(null), viewportWidth = studio.timelineWidth;
 const snaps = SNAP_DIVISIONS;
 const zooms = [0.5, 0.75, 1.5, 2, 2.5, 3, 3.5, 4];
@@ -616,7 +612,7 @@ onUnmounted(() => {
     <div class="measure-heading">
       <SectionHeading :icon="Map" :title="t('全局导航')">
         <output v-if="range" id="selection-summary">{{ t('已选小节：{p0}–{p1}', { p0: range[0], p1: range[1] }) }}</output>
-        <template #actions><button v-if="range || state.loopAnchor !== null" type="button" class="clear-measure-selection clear-selection" :title="t('取消选择')" :aria-label="t('取消选择')" @click="studio.clearLoop"><X aria-hidden="true" />{{ t('取消选择') }}</button></template>
+        <template #actions><button v-if="range" type="button" class="clear-measure-selection clear-selection" :title="t('取消选择')" :aria-label="t('取消选择')" @click="studio.clearLoop"><X aria-hidden="true" />{{ t('取消选择') }}</button></template>
         <template #description>
           <div class="chart-statistics" :aria-label="t('谱面统计')">
             <span class="bar-count"><b id="bar-count">{{ state.chart.bars.length }}</b> {{ t('小节') }}</span>
@@ -628,9 +624,8 @@ onUnmounted(() => {
           </div>
         </template>
       </SectionHeading>
-      <output v-if="state.loopAnchor !== null" id="measure-loop-anchor">{{ t('已标记第 {p0} 小节，再按 F 完成区间选择，Esc 取消。', { p0: state.loopAnchor + 1 }) }}</output>
     </div>
-    <MeasureGrid id="measures" :key="state.activeId" :bars="state.chart?.bars || []" :selection="range" :active-index="selectedTiming?.bar.index ?? null" :visible-indices="visibleMeasureIndices" :anchor-index="state.loopAnchor" :note-index="state.selectedCell?.bar" :disabled="state.invalid" @activate="studio.select" @select="studio.setLoop" @toggle="toggleMeasure" @preview="measurePreview = $event" />
+    <MeasureGrid id="measures" :key="state.activeId" :bars="state.chart?.bars || []" :selection="range" :active-index="selectedTiming?.bar.index ?? null" :visible-indices="visibleMeasureIndices" :note-index="state.selectedCell?.bar" :disabled="state.invalid" @activate="studio.select" @select="studio.setLoop" @toggle="range && studio.clearLoop()" @preview="measurePreview = $event" />
   </section>
   </Teleport>
       </div>
@@ -667,7 +662,6 @@ onUnmounted(() => {
 .timeline-frame{position:relative;isolation:isolate}
 .timeline-frame:focus-within::after{content:'';position:absolute;inset:0;z-index:1;border:2px solid var(--green);pointer-events:none}
 .timeline-frame .timeline-wrap:focus{outline:none}
-#measure-loop-anchor{font-size:11px;color:var(--green);font-variant-numeric:tabular-nums}
 #selection-summary{font-size:11px;color:var(--green)}
 .clear-selection{height:20px;min-height:20px;padding:0 5px;gap:3px;flex-shrink:0;border:1px solid var(--line);border-radius:4px;background:#fff;color:#5f6e65;font-family:inherit;font-size:12px;font-weight:400;line-height:18px;white-space:nowrap;transform:translateY(-1px)}
 .clear-selection svg{width:12px;height:12px}

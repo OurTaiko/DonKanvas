@@ -10,7 +10,7 @@ defineProps({ collapsed: Boolean });
 const emit = defineEmits(['toggle', 'navigate']);
 const courses = ref(null), metadata = ref(null), toggleButton = ref(null), error = ref(false);
 const fieldGroups = [
-  { label: '基本信息', expanded: true, fields: SONG_FIELDS.filter(field => !field.localized) },
+  { label: '基本信息', expanded: false, fields: SONG_FIELDS.filter(field => !field.localized) },
   { label: '多语言信息', expanded: false, fields: SONG_FIELDS.filter(field => field.localized) }
 ];
 watch(() => state.activeId, () => { error.value = false; });
@@ -35,7 +35,7 @@ defineExpose({ focusTree: () => courses.value.focusTree(), focusSection, focusTo
     </div>
     <nav v-if="collapsed" class="workspace-icons" :aria-label="t('歌曲工作区')"><button type="button" class="icon" :title="t('歌曲信息')" :aria-label="t('歌曲信息')" @click="emit('navigate', 'metadata')"><Info aria-hidden="true" /></button><button type="button" class="icon" :title="t('难度与模式')" :aria-label="t('难度与模式')" @click="emit('navigate', 'courses')"><Layers aria-hidden="true" /></button></nav>
     <template v-else>
-    <details ref="metadata" class="metadata-editor">
+    <details ref="metadata" class="metadata-editor" open>
       <summary class="workspace-section-summary"><Info class="metadata-icon" aria-hidden="true" /><b>{{ t('歌曲信息') }}</b><ChevronDown class="workspace-section-chevron" aria-hidden="true" /></summary>
       <form novalidate @submit.prevent>
         <details v-for="group in fieldGroups" :key="group.label" class="metadata-group" :open="group.expanded">

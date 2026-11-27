@@ -922,7 +922,8 @@ test('shortcut help is accessible without a chart and documents implemented bind
   assert.match(help, /id="shortcuts-panel"[\s\S]*role="region"[\s\S]*tabindex="0"/);
   assert.match(help, /v-for="group in shortcutGroups"/);
   assert.doesNotMatch(help, /v-if="state.chart"/);
-  for (const keys of ['Ctrl+Alt+N', 'Ctrl+O', 'Ctrl+S', 'Ctrl+Shift+S', 'Ctrl+Alt+W', 'Ctrl+Z', 'Ctrl+Shift+Z', 'Space', '1–9', '- / =', '0 / Delete / Backspace', 'A / D', 'W / S', 'Q / E', 'F', 'Shift+F', '← / →', 'Esc', 'PageUp / PageDown', 'Home / End']) assert.ok(descriptor.scriptSetup.content.includes(`'${keys}'`), keys);
+  for (const keys of ['Ctrl+Alt+N', 'Ctrl+O', 'Ctrl+S', 'Ctrl+Shift+S', 'Ctrl+Alt+W', 'Ctrl+Z', 'Ctrl+Shift+Z', 'Space', '1–9', '- / =', '0 / Delete / Backspace', 'A / D', 'W / S', 'Q / E', '← / →', 'Esc', 'PageUp / PageDown', 'Home / End']) assert.ok(descriptor.scriptSetup.content.includes(`'${keys}'`), keys);
+  assert.doesNotMatch(descriptor.scriptSetup.content, /\['F',|Shift\+F/);
   assert.doesNotMatch(descriptor.scriptSetup.content, /'A \/ B'/);
   const { descriptor: measure } = parse(readFileSync(new URL('MeasureEditor.vue', import.meta.url), 'utf8'));
   const palette = measure.template.content.match(/<div id="palette"[\s\S]*?<\/div>/)[0];
@@ -933,15 +934,14 @@ test('shortcut help is accessible without a chart and documents implemented bind
   assert.match(help, /macOS：文件/);
 });
 
-test('global navigation displays the pending F loop endpoint and documents cancellation', () => {
+test('global navigation removes the endpoint marker workflow and cancels ranges on double click', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'keyboard-loop-selection' });
-  assert.match(descriptor.template.content, /<output v-if="state.loopAnchor !== null" id="measure-loop-anchor">/);
-  assert.match(descriptor.template.content, /p0: state.loopAnchor \+ 1/);
-  assert.match(descriptor.template.content, /:anchor-index="state.loopAnchor"/);
+  assert.doesNotMatch(descriptor.scriptSetup.content + descriptor.template.content, /loopAnchor|markLoop|anchor-index/);
+  assert.match(descriptor.template.content, /@toggle="range && studio.clearLoop\(\)"/);
   assert.doesNotMatch(descriptor.template.content, /measure-loop-range|measure-loop-hint|循环范围：第|单击跳转，拖动或按两次 F/);
   const grid = parse(readFileSync(new URL('MeasureGrid.vue', import.meta.url), 'utf8')).descriptor;
-  assert.match(grid.styles[0].content, /\.measure-grid button.loop-anchor\{outline:2px dashed var\(--green\)/);
+  assert.doesNotMatch(grid.scriptSetup.content + grid.template.content + grid.styles[0].content, /anchorIndex|loop-anchor/);
 });
 
 test('all snap grids draw dashed subdivisions and solid meter beats without duplicate guides', () => {
@@ -1117,19 +1117,19 @@ test('the selection menu owns measure and note operations; playback has no indep
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'clear-loop-action' });
   const menu = descriptor.template.content.match(/<details ref="selectionMenu"[\s\S]*?<\/details>/)[0];
-  const expectedIcons = ['SquareMousePointer', 'ListChecks', 'TextCursorInput', 'Flag', 'SquareDashed', 'ArrowLeftToLine', 'ArrowLeft', 'ArrowRight', 'LocateFixed', 'CircleOff'];
+  const expectedIcons = ['SquareMousePointer', 'ListChecks', 'TextCursorInput', 'SquareDashed', 'ArrowLeftToLine', 'ArrowLeft', 'ArrowRight', 'LocateFixed', 'CircleOff'];
   const buttons = [...menu.matchAll(/<button\b[\s\S]*?<\/button>/g)].map(match => match[0]);
   assert.deepEqual(buttons.map(button => button.match(/<([A-Z]\w*) aria-hidden="true"\s*\/>/)[1]), expectedIcons);
   const icons = await import('@lucide/vue');
   for (const name of expectedIcons) assert.ok(icons[name], `${name} must be an available Lucide icon`);
   assert.match(menu, /studio.setLoop\(state.selected \+ 1, state.selected \+ 1\)/);
   assert.match(menu, /studio.setLoop\(1, state.chart.bars.length\)/);
-  assert.match(menu, /runSelectionAction\(studio.markLoop\)[\s\S]*<kbd aria-hidden="true">F/);
-  assert.match(menu, /runSelectionAction\(studio.clearLoop\)[\s\S]*Shift\+F/);
+  assert.doesNotMatch(menu, /markLoop|Shift\+F/);
+  assert.match(menu, /runSelectionAction\(studio.clearLoop\)/);
   assert.match(menu, /studio.selectAdjacentNote\(-1\)/); assert.match(menu, /studio.selectAdjacentNote\(1\)/);
   assert.match(menu, /runSelectionAction\(studio.clearNoteSelection\)/);
   assert.doesNotMatch(descriptor.template.content, /id="loop"|id="loop-first"|id="loop-last"|controls.loop/);
-  assert.match(descriptor.scriptSetup.content, /\['Shift\+F', '取消小节选择'\]/);
+  assert.match(menu, /双击全局导航中的小节取消选择/);
 });
 
 test('shared measure grids preview and commit pointer ranges without consuming ordinary clicks or selecting another grid', () => {
@@ -1181,11 +1181,56 @@ test('shared measure grids preview and commit pointer ranges without consuming o
   handlers.cancelDrag(event()); assert.equal(measureDrag.value, null); assert.equal(writes.length, count);
   drag(0, 2); hit = null;
   handlers.finishDrag(event({ clientX: 100 })); assert.deepEqual(writes.at(-1), [1, 3]);
-  assert.match(script, /watch\(\(\) => \[props.bars, props.disabled\], \(\) => cancelDrag\(\), \{ flush: 'sync' \}\)/);
+  assert.match(script, /watch\(\(\) => \[props.bars, props.disabled\], \(\) => \{ lastTouchTap = null; cancelDrag\(\); \}, \{ flush: 'sync' \}\)/);
   assert.match(descriptor.template.content, /@pointercancel="cancelDrag" @lostpointercapture="cancelDrag"/);
   assert.match(descriptor.template.content, /@click.capture="captureClick"/);
   assert.match(descriptor.template.content, /:data-measure-index="item.index"/);
   assert.match(descriptor.template.content, /@click="viewMeasure\(\$event, item.index\)"/);
+});
+
+test('shared grid recognizes desktop and touch double clicks without duplicate, drag or canceled activations', () => {
+  const { descriptor } = parse(readFileSync(new URL('MeasureGrid.vue', import.meta.url), 'utf8'));
+  const script = descriptor.scriptSetup.content;
+  const source = script.slice(script.indexOf('let suppressMeasureClick = false;'), script.indexOf('\nwatch(() => [props.bars'));
+  const captured = new Set(), writes = [], measureDrag = { value: null };
+  const buttons = Array.from({ length: 3 }, (_, index) => {
+    const button = { dataset: { measureIndex: String(index) }, setPointerCapture: id => captured.add(id), hasPointerCapture: id => captured.has(id), releasePointerCapture: id => captured.delete(id) };
+    button.closest = () => button;
+    return button;
+  });
+  let hit = buttons[0];
+  const props = { disabled: false, bars: Array(3).fill({}), unavailable: () => false };
+  const handlers = runInNewContext(`${source}; ({ startDrag, finishDrag, cancelDrag, doubleClick, captureClick })`, {
+    props, measureDrag, measures: { value: { contains: button => buttons.includes(button) } },
+    document: { elementFromPoint: () => hit }, emit: (name, ...args) => writes.push([name, ...args])
+  });
+  const event = (time, extra = {}) => ({ isPrimary: true, button: 0, pointerId: 1, pointerType: 'touch', clientX: 0, clientY: 0, timeStamp: time, target: hit, ...extra });
+  function tap(index, time, duration = 30) {
+    hit = buttons[index]; handlers.startDrag(event(time)); handlers.finishDrag(event(time + duration));
+  }
+  tap(0, 0); assert.equal(writes.length, 0);
+  tap(0, 150); assert.deepEqual(writes, [['toggle', 0]]);
+  handlers.doubleClick(event(200), 0); assert.equal(writes.length, 1);
+  let prevented = false;
+  handlers.captureClick({ detail: 1, preventDefault() { prevented = true; }, stopPropagation() {} });
+  assert.equal(prevented, true);
+  handlers.doubleClick(event(900, { pointerType: 'mouse' }), 2);
+  assert.deepEqual(writes.at(-1), ['toggle', 2]);
+  const count = writes.length;
+  tap(0, 1200); tap(1, 1350); assert.equal(writes.length, count);
+  tap(1, 1800); assert.equal(writes.length, count);
+  tap(1, 2300, 400); tap(1, 2750); assert.equal(writes.length, count);
+  hit = buttons[1]; handlers.startDrag(event(2900)); handlers.cancelDrag(event(2930));
+  tap(1, 3000); assert.equal(writes.length, count);
+  hit = buttons[1]; handlers.startDrag(event(3200)); hit = buttons[2]; handlers.finishDrag(event(3230, { clientX: 30 }));
+  assert.deepEqual(writes.at(-1), ['select', 2, 3]);
+  tap(2, 3300); assert.equal(writes.at(-1)[0], 'select');
+  props.disabled = true; handlers.doubleClick(event(5000, { pointerType: 'mouse' }), 0);
+  assert.equal(writes.at(-1)[0], 'select');
+  props.disabled = false; props.unavailable = () => true;
+  handlers.doubleClick(event(5500, { pointerType: 'mouse' }), 0);
+  assert.equal(writes.at(-1)[0], 'select');
+  assert.equal(captured.size, 0);
 });
 
 test('shared grid publishes transient Canvas previews and clears them without changing the saved selection', () => {
@@ -1211,18 +1256,18 @@ test('shared grid publishes transient Canvas previews and clears them without ch
   } finally { for (const stop of stops) stop(); }
 });
 
-test('Shift-click chooses an inclusive range from the viewed measure or pending F anchor without navigating', () => {
+test('Shift-click chooses an inclusive range from the viewed measure or selection without navigating', () => {
   const { descriptor } = parse(readFileSync(new URL('MeasureGrid.vue', import.meta.url), 'utf8'));
-  const props = { activeIndex: 2, anchorIndex: null, bars: Array(4).fill({}), unavailable: () => false }, ranges = [], views = [];
+  const props = { activeIndex: 2, bars: Array(4).fill({}), unavailable: () => false }, ranges = [], views = [];
   const viewMeasure = runInNewContext(`(${descriptor.scriptSetup.content.match(/function viewMeasure\(event, index\) \{[\s\S]*?\n\}/)[0]})`, {
     props, emit: (name, ...args) => name === 'select' ? ranges.push(args) : views.push(...args)
   });
   viewMeasure({ shiftKey: false }, 1); assert.deepEqual(views, [1]); assert.equal(ranges.length, 0);
   viewMeasure({ shiftKey: true }, 0); assert.deepEqual(ranges.at(-1), [1, 3]); assert.deepEqual(views, [1]);
-  props.anchorIndex = 1;
+  props.activeIndex = 1;
   viewMeasure({ shiftKey: true }, 3); assert.deepEqual(ranges.at(-1), [2, 4]);
   assert.match(descriptor.template.content, /:aria-pressed="measureSelected\(item.index\)"/);
-  props.activeIndex = null; props.anchorIndex = null; props.selection = [2, 3];
+  props.activeIndex = null; props.selection = [2, 3];
   viewMeasure({ shiftKey: true }, 0); assert.deepEqual(ranges.at(-1), [1, 2]);
   props.unavailable = () => true;
   viewMeasure({ shiftKey: true }, 3); viewMeasure({ shiftKey: false }, 0);
@@ -1231,17 +1276,18 @@ test('Shift-click chooses an inclusive range from the viewed measure or pending 
   assert.doesNotMatch(descriptor.template.content + descriptor.styles[0].content, /note-selected/);
 });
 
-test('global navigation keeps viewing, looping and double-click toggles outside the shared grid', () => {
+test('global navigation double clicks clear any range but never select a new range', () => {
   const { descriptor } = parse(readFileSync(new URL('TimelineEditor.vue', import.meta.url), 'utf8'));
   const range = ref([2, 3]), ranges = [];
   let cleared = 0;
-  const toggle = runInNewContext(`(${descriptor.scriptSetup.content.match(/function toggleMeasure\(index\) \{[\s\S]*?\n\}/)[0]})`, {
-    range, studio: { clearLoop: () => cleared++, setLoop: (...args) => ranges.push(args) }
+  const clearBinding = descriptor.template.content.match(/<MeasureGrid id="measures"[^>]*@toggle="([^"]+)"/)[1];
+  const toggle = runInNewContext(`() => { ${clearBinding} }`, {
+    get range() { return range.value; }, studio: { clearLoop: () => cleared++, setLoop: (...args) => ranges.push(args) }
   });
   toggle(1); assert.equal(cleared, 1); assert.equal(ranges.length, 0);
-  toggle(3); assert.deepEqual(ranges.at(-1), [4, 4]);
-  range.value = null; toggle(0); assert.deepEqual(ranges.at(-1), [1, 1]);
-  assert.match(descriptor.template.content, /<MeasureGrid[^>]*:selection="range"[^>]*:active-index="selectedTiming\?\.bar.index \?\? null"[^>]*:anchor-index="state.loopAnchor"[^>]*:note-index="state.selectedCell\?\.bar"[^>]*@activate="studio.select" @select="studio.setLoop" @toggle="toggleMeasure"/);
+  toggle(3); assert.equal(cleared, 2); assert.equal(ranges.length, 0);
+  range.value = null; toggle(0); assert.equal(cleared, 2); assert.equal(ranges.length, 0);
+  assert.match(descriptor.template.content, /<MeasureGrid[^>]*:selection="range"[^>]*:active-index="selectedTiming\?\.bar.index \?\? null"[^>]*:note-index="state.selectedCell\?\.bar"[^>]*@activate="studio.select" @select="studio.setLoop" @toggle="range && studio.clearLoop\(\)"/);
   const binding = descriptor.template.content.match(/<MeasureGrid id="measures"[^>]*:active-index="([^"]+)"/)[1];
   const context = { selectedTiming: null, state: { selected: 2, position: 6, viewStart: 4 } };
   const activeIndex = runInNewContext(`() => (${binding})`, context);
@@ -1278,7 +1324,8 @@ test('navigation marks only measures intersecting the viewport independently of 
   assert.match(grid.styles[0].content, /grid-template-columns:repeat\(auto-fill,minmax\(56px,1fr\)\)/);
   assert.match(grid.styles[0].content, /\.measure-grid button\{padding:7px\}/);
   assert.match(grid.styles[0].content, /\.measure-grid \.mini-notes i\{width:3px;min-width:3px;flex:0 0 3px\}/);
-  assert.match(grid.styles[0].content, /\.measure-grid button.in-view \.mini-notes\{background:#e3edf3;box-shadow:0 0 0 4px #e3edf3;border-radius:2px\}/);
+  assert.match(grid.styles[0].content, /\.measure-grid button.active\{background:#fff;border-color:var\(--line\);color:inherit\}/);
+  assert.match(grid.styles[0].content, /\.measure-grid button.active \.mini-notes,\.measure-grid button.in-view \.mini-notes\{background:#e3edf3;box-shadow:0 0 0 4px #e3edf3;border-radius:2px\}/);
 });
 
 test('mini notes distinguish percussion, rolls, balloons and special rolls', () => {
@@ -1339,7 +1386,7 @@ test('the header keeps title and history while global navigation contains full-c
   assert.match(heading, /<output v-if="range" id="selection-summary">/);
   assert.doesNotMatch(heading, /音符所在小节|selected-note-label/);
   assert.match(timeline, /:aria-describedby="range \? 'selection-summary' : undefined"/);
-  assert.match(heading, /<button v-if="range \|\| state.loopAnchor !== null"[^>]*:title="t\('取消选择'\)" :aria-label="t\('取消选择'\)" @click="studio.clearLoop"><X aria-hidden="true" \/>{{ t\('取消选择'\) }}<\/button>/);
+  assert.match(heading, /<button v-if="range"[^>]*:title="t\('取消选择'\)" :aria-label="t\('取消选择'\)" @click="studio.clearLoop"><X aria-hidden="true" \/>{{ t\('取消选择'\) }}<\/button>/);
   assert.doesNotMatch(heading, /id="total-notes"/);
   assert.match(navigation, /<div class="chart-statistics"[\s\S]*id="total-notes"[\s\S]*stats.all/);
   const ids = ['bar-count', 'total-notes', 'chart-don-count', 'chart-ka-count', 'chart-roll-seconds', 'chart-balloon-hits'];
@@ -2868,6 +2915,9 @@ test('the independent song sidebar edits metadata while empty songs expose creat
   assert.match(sidebar.template.content, /:data-song-field="field.key"/);
   assert.match(sidebar.template.content, /@change="updateMetadata\(field.key, \$event\)"/);
   assert.match(sidebar.template.content, /class="metadata-group" :open="group.expanded"/);
+  assert.match(sidebar.template.content, /<details ref="metadata" class="metadata-editor" open>/);
+  assert.match(sidebar.scriptSetup.content, /label: '基本信息', expanded: false/);
+  assert.match(sidebar.scriptSetup.content, /label: '多语言信息', expanded: false/);
   assert.match(sidebar.scriptSetup.content, /label: '多语言信息'/);
   assert.match(sidebar.scriptSetup.content, /SONG_FIELDS.filter\(field => field.localized\)/);
   const app = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8')).descriptor;
@@ -2877,7 +2927,10 @@ test('the independent song sidebar edits metadata while empty songs expose creat
   assert.match(app.template.content, /v-for="course in COURSE_NAMES"/);
   assert.match(app.template.content, /:data-create-course="course"/);
   assert.match(app.template.content, /studio.createCourse\(\{ course, player: 'single', style: 'Single', level: 1 \}\)/);
-  assert.match(app.template.content, /v-else id="empty-new-chart"[^>]*@click="studio.newChart"/);
+  assert.match(app.template.content, /v-else class="empty-start-actions"[\s\S]*id="empty-welcome-guide"[^>]*class="primary"[^>]*@click="welcomeGuide.open\(\)"/);
+  assert.match(app.template.content, /class="welcome-intro"[\s\S]*t\('欢迎使用 \{p0\}', \{ p0: productMetadata.name \}\)[\s\S]*初次使用？通过快速上手[\s\S]*id="empty-welcome-guide"[\s\S]*t\('开始上手'\)[\s\S]*class="welcome-files"[\s\S]*id="empty-new-chart"[\s\S]*id="empty-open-chart"/);
+  assert.match(app.template.content, /id="empty-new-chart"[^>]*@click="studio.newChart"/);
+  assert.match(app.template.content, /id="empty-open-chart"[^>]*@click="runFileAction\(chooseCharts\)"/);
   assert.doesNotMatch(app.template.content, /workspace.focusTree\(\)|选择难度与模式/);
   assert.match(app.template.content, /id="menu-undo"[^>]*:disabled="!state.undo.length"/);
   assert.match(app.template.content, /id="menu-redo"[^>]*:disabled="!state.redo.length"/);

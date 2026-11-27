@@ -8,7 +8,6 @@ const props = defineProps({
   bars: { type: Array, required: true },
   selection: { type: Array, default: null },
   activeIndex: { type: Number, default: null },
-  anchorIndex: { type: Number, default: null },
   noteIndex: { type: Number, default: null },
   visibleIndices: { type: Array, default: () => [] },
   disabled: Boolean,
@@ -39,11 +38,16 @@ function measureSelected(index) {
 function viewMeasure(event, index) {
   if (props.disabled || props.unavailable(props.bars[index])) return;
   if (event.shiftKey) {
-    const anchor = props.anchorIndex ?? props.activeIndex ?? (props.selection ? props.selection[0] - 1 : index);
+    const anchor = props.activeIndex ?? (props.selection ? props.selection[0] - 1 : index);
     emit('select', Math.min(anchor, index) + 1, Math.max(anchor, index) + 1);
   } else emit('activate', index);
 }
 let suppressMeasureClick = false;
+let lastTouchTap = null, suppressDoubleClickUntil = -Infinity;
+function doubleClick(event, index) {
+  if (props.disabled || props.unavailable(props.bars[index]) || event.timeStamp <= suppressDoubleClickUntil) return;
+  emit('toggle', index);
+}
 function measureAt(event) {
   const button = document.elementFromPoint(event.clientX, event.clientY)?.closest('button[data-measure-index]');
   return button && !button.disabled && measures.value?.contains(button) ? Number(button.dataset.measureIndex) : null;
@@ -54,7 +58,7 @@ function startDrag(event) {
   const index = measureAt(event);
   if (index === null) return;
   const capture = event.target.closest('button[data-measure-index]');
-  measureDrag.value = { pointerId: event.pointerId, start: index, end: index, x: event.clientX, y: event.clientY, dragged: false, capture };
+  measureDrag.value = { pointerId: event.pointerId, pointerType: event.pointerType, time: event.timeStamp, start: index, end: index, x: event.clientX, y: event.clientY, dragged: false, capture };
   capture.setPointerCapture(event.pointerId);
 }
 function moveDrag(event) {
@@ -67,6 +71,7 @@ function moveDrag(event) {
 function cancelDrag(event) {
   const drag = measureDrag.value;
   if (!drag || event && event.pointerId !== drag.pointerId) return;
+  if (event) lastTouchTap = null;
   suppressMeasureClick = drag.dragged;
   measureDrag.value = null;
   if (drag.capture.hasPointerCapture(drag.pointerId)) drag.capture.releasePointerCapture(drag.pointerId);
@@ -76,7 +81,14 @@ function finishDrag(event) {
   if (!drag || drag.pointerId !== event.pointerId) return;
   moveDrag(event);
   cancelDrag();
-  if (drag.dragged) emit('select', Math.min(drag.start, drag.end) + 1, Math.max(drag.start, drag.end) + 1);
+  if (drag.dragged) { lastTouchTap = null; emit('select', Math.min(drag.start, drag.end) + 1, Math.max(drag.start, drag.end) + 1); }
+  else if (drag.pointerType === 'touch' && event.timeStamp - drag.time <= 350) {
+    if (lastTouchTap && lastTouchTap.index === drag.start && event.timeStamp - lastTouchTap.time <= 350 && Math.hypot(event.clientX - lastTouchTap.x, event.clientY - lastTouchTap.y) <= 24) {
+      lastTouchTap = null; suppressMeasureClick = true;
+      suppressDoubleClickUntil = event.timeStamp + 500;
+      emit('toggle', drag.start);
+    } else lastTouchTap = { index: drag.start, time: event.timeStamp, x: event.clientX, y: event.clientY };
+  } else lastTouchTap = null;
 }
 function keydown(event) {
   if (event.key !== 'Escape' || !measureDrag.value) return;
@@ -86,13 +98,13 @@ function captureClick(event) {
   if (suppressMeasureClick && event.detail !== 0) { event.preventDefault(); event.stopPropagation(); }
   suppressMeasureClick = false;
 }
-watch(() => [props.bars, props.disabled], () => cancelDrag(), { flush: 'sync' });
+watch(() => [props.bars, props.disabled], () => { lastTouchTap = null; cancelDrag(); }, { flush: 'sync' });
 onBeforeUnmount(cancelDrag);
 </script>
 
 <template>
   <div ref="measures" class="measure-grid" :class="{ dragging: measureDrag?.dragged }" @pointerdown="startDrag" @pointermove="moveDrag" @pointerup="finishDrag" @pointercancel="cancelDrag" @lostpointercapture="cancelDrag" @keydown="keydown" @click.capture="captureClick">
-    <button v-for="item in props.bars" :key="item.index" type="button" :data-measure-index="item.index" :disabled="props.disabled || props.unavailable(item)" :title="props.measureTitle?.(item) ?? (props.visibleIndices.includes(item.index) ? t('当前视图内的小节') : undefined)" :class="{ active: item.index === props.activeIndex, gogo: item.gogo, 'loop-anchor': item.index === props.anchorIndex, 'in-selection': measureSelected(item.index), 'in-view': props.visibleIndices.includes(item.index), 'loop-preview': measureDrag?.dragged && measureSelected(item.index) }" :aria-label="t('小节 {p0}', { p0: item.index + 1 }) + (item.index === props.noteIndex ? ` · ${t('已选音符所在小节')}` : '') + (props.visibleIndices.includes(item.index) ? ` · ${t('当前视图内的小节')}` : '')" :aria-current="item.index === props.activeIndex ? 'location' : undefined" :aria-pressed="measureSelected(item.index)" @click="viewMeasure($event, item.index)" @dblclick="emit('toggle', item.index)">
+    <button v-for="item in props.bars" :key="item.index" type="button" :data-measure-index="item.index" :disabled="props.disabled || props.unavailable(item)" :title="props.measureTitle?.(item) ?? (props.visibleIndices.includes(item.index) ? t('当前视图内的小节') : undefined)" :class="{ active: item.index === props.activeIndex, gogo: item.gogo, 'in-selection': measureSelected(item.index), 'in-view': props.visibleIndices.includes(item.index), 'loop-preview': measureDrag?.dragged && measureSelected(item.index) }" :aria-label="t('小节 {p0}', { p0: item.index + 1 }) + (item.index === props.noteIndex ? ` · ${t('已选音符所在小节')}` : '') + (props.visibleIndices.includes(item.index) ? ` · ${t('当前视图内的小节')}` : '')" :aria-current="item.index === props.activeIndex ? 'location' : undefined" :aria-pressed="measureSelected(item.index)" @click="viewMeasure($event, item.index)" @dblclick="doubleClick($event, item.index)">
       <span>{{ String(item.index + 1).padStart(3, '0') }}</span><span class="mini-notes"><i v-for="(note, index) in miniNotes.get(item.index)" :key="index" :data-note="note" :title="t(NOTE_TYPES.find(type => type.value === note).name)" :class="{ blue: '24B'.includes(note), roll: '56'.includes(note), balloon: note === '7', special: note === '9' }"></i></span>
     </button>
   </div>
@@ -101,10 +113,10 @@ onBeforeUnmount(cancelDrag);
 <style scoped>
 .measure-grid{user-select:none;touch-action:pan-y;grid-template-columns:repeat(auto-fill,minmax(56px,1fr))}.measure-grid.dragging,.measure-grid.dragging button{cursor:crosshair}.measure-grid button.loop-preview{outline:1px solid var(--green);outline-offset:-1px}
 .measure-grid button{padding:7px}
-.measure-grid button.loop-anchor{outline:2px dashed var(--green);outline-offset:-2px}
+.measure-grid button.active{background:#fff;border-color:var(--line);color:inherit}
 .measure-grid button.in-selection{box-shadow:inset 0 3px 0 var(--green)}
 .measure-grid .mini-notes{width:40px;max-width:100%;justify-content:center;gap:1px;overflow:visible}
 .measure-grid .mini-notes i{width:3px;min-width:3px;flex:0 0 3px}
-.measure-grid button.in-view .mini-notes{background:#e3edf3;box-shadow:0 0 0 4px #e3edf3;border-radius:2px}
+.measure-grid button.active .mini-notes,.measure-grid button.in-view .mini-notes{background:#e3edf3;box-shadow:0 0 0 4px #e3edf3;border-radius:2px}
 .measure-grid .mini-notes i.roll{background:#e6b800}.measure-grid .mini-notes i.balloon{background:#f07800}.measure-grid .mini-notes i.special{background:#ff78ae}
 </style>

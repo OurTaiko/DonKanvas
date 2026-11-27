@@ -2409,17 +2409,16 @@ test('decoded audio is runtime-only and restore requires manually loading it aga
   } finally { restored.cleanup(); }
 });
 
-test('clearing loops removes range and pending markers without seeking, selecting, editing or starting playback and persists the clear', async () => {
+test('clearing loops removes range without seeking, selecting, editing or starting playback and persists the clear', async () => {
   const saved = new Map(), mounted = mountStudio(saved);
   const { studio, handlers } = mounted;
   try {
     await studio.openChart(file()); studio.setLoop(1, 2, true);
     studio.selectCell({ bar: 1, numerator: 1, denominator: 4, divisions: 16 }); studio.seek(2.5);
     studio.panTimeline(1); studio.state.followPlayback = false;
-    handlers.get('keydown')({ key: 'f', preventDefault() {} });
     const cell = studio.state.selectedCell, command = studio.state.commandCell, source = studio.state.source, start = studio.state.viewStart;
     studio.clearLoop();
-    assert.equal(studio.state.customLoop, null); assert.equal(studio.state.loopAnchor, null);
+    assert.equal(studio.state.customLoop, null);
     near(studio.state.position, 2.5); assert.equal(studio.state.playing, false);
     assert.equal(studio.state.selectedCell, cell); assert.equal(studio.state.commandCell, command);
     assert.equal(studio.state.source, source); assert.equal(studio.state.viewStart, start); assert.equal(studio.state.followPlayback, false);
@@ -2445,92 +2444,20 @@ test('clearing an active loop continues from the exact playback position beyond 
   } finally { cleanup(); }
 });
 
-test('Shift+F clears confirmed and pending loops, ignores repeats and preserves native typing, dialogs, composition and modifiers', async () => {
+test('removed F shortcuts preserve ranges and native events including physical IME keys', async () => {
   const { studio, handlers, cleanup } = mountStudio();
-  const press = overrides => handlers.get('keydown')({ key: 'F', shiftKey: true, preventDefault() {}, ...overrides });
-  const native = overrides => press({ preventDefault() { assert.fail('Native Shift+F must be preserved'); }, ...overrides });
-  try {
-    native(); await studio.openChart(file()); native();
-    studio.setLoop(1, 2, true);
-    for (const activeElement of [
-      ...['INPUT', 'TEXTAREA', 'SELECT'].map(tagName => ({ tagName })),
-      { tagName: 'DIV', isContentEditable: true }, { tagName: 'BUTTON', closest: () => ({}) }
-    ]) { document.activeElement = activeElement; native(); }
-    document.activeElement = null;
-    for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'isComposing']) native({ [modifier]: true });
-    press({ repeat: true }); assert.deepEqual(studio.state.customLoop, [1, 2]);
-    press(); assert.equal(studio.range.value, null);
-    handlers.get('keydown')({ key: 'f', preventDefault() {} }); assert.equal(studio.state.loopAnchor, 0);
-    press(); assert.equal(studio.state.loopAnchor, null);
-    studio.setLoop(1, 2, true); studio.editSource('unfinished');
-    press(); assert.equal(studio.state.customLoop, null); assert.equal(studio.state.source, 'unfinished'); assert.equal(studio.state.invalid, true);
-  } finally { cleanup(); }
-});
-
-test('F selects inclusive forward, reverse and single-measure loops without altering notes or starting paused playback', async () => {
-  const { studio, handlers, saved, cleanup } = mountStudio();
-  const press = overrides => handlers.get('keydown')({ key: 'f', preventDefault() {}, ...overrides });
-  const source = chart.replace('2000,', '2000,\n3000,\n4000,');
-  try {
-    await studio.openChart(file('four.tja', source));
-    studio.setLoop(2, 3);
-    studio.selectCell({ bar: 1, numerator: 1, denominator: 4, divisions: 16 });
-    const position = studio.state.position, cell = studio.state.selectedCell;
-    press();
-    assert.equal(studio.state.loopAnchor, 1);
-    assert.equal(studio.state.position, position); assert.equal(studio.state.selectedCell, cell);
-    assert.deepEqual(studio.range.value, [2, 3]); assert.equal(studio.state.playing, false);
-    press({ repeat: true }); assert.equal(studio.state.loopAnchor, 1);
-    studio.select(3); press({ key: 'F' });
-    assert.deepEqual(studio.range.value, [2, 4]); assert.equal(studio.state.loopAnchor, null);
-    assert.equal(studio.state.playing, false);
-    assert.equal(studio.state.position, position); assert.equal(studio.state.selectedCell, cell);
-    studio.select(3); press(); studio.select(0); press();
-    assert.deepEqual(studio.range.value, [1, 4]);
-    studio.select(2); press(); press();
-    assert.deepEqual(studio.range.value, [3, 3]); assert.equal(studio.state.position, position);
-    assert.equal(studio.state.text, source); assert.equal(studio.state.undo.length, 0);
-    assert.ok(!JSON.stringify(workspace(saved)).includes('loopAnchor'));
-  } finally { cleanup(); }
-});
-
-test('F preserves native inputs, dialogs, modifiers and composition, and needs a valid measure', async () => {
-  const { studio, handlers, cleanup } = mountStudio();
-  const native = overrides => handlers.get('keydown')({ key: 'f', preventDefault() { assert.fail('Native F must be preserved'); }, ...overrides });
-  try {
-    native(); studio.newChart(); native();
-    await studio.openChart(file());
-    for (const activeElement of [
-      ...['INPUT', 'TEXTAREA', 'SELECT'].map(tagName => ({ tagName })),
-      { tagName: 'DIV', isContentEditable: true },
-      { tagName: 'BUTTON', closest: () => ({}) }
-    ]) { document.activeElement = activeElement; native(); }
-    document.activeElement = null;
-    for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'isComposing']) native({ [modifier]: true });
-    assert.equal(studio.state.loopAnchor, null);
-    handlers.get('keydown')({ key: 'f', repeat: true, preventDefault() {} });
-    assert.equal(studio.state.loopAnchor, null);
-    studio.editSource('unfinished'); native();
-    assert.equal(studio.state.loopAnchor, null); assert.equal(studio.state.invalid, true);
-    assert.equal(studio.state.text, chart); assert.equal(studio.state.undo.length, 0);
-  } finally { cleanup(); }
-});
-
-test('IME physical F keys select and clear ranges for Process, legacy 229 and composing events', async () => {
-  const { studio, handlers, cleanup } = mountStudio();
-  const press = overrides => handlers.get('keydown')({ key: 'Process', code: 'KeyF', preventDefault() {}, ...overrides });
   try {
     await studio.openChart(file());
-    for (const event of [{}, { key: 'f', keyCode: 229 }, { key: 'f', isComposing: true }, { key: 'Unidentified', isComposing: true }]) {
-      studio.select(0); press(event);
-      assert.equal(studio.state.loopAnchor, 0);
-      press({ ...event, repeat: true }); assert.equal(studio.state.loopAnchor, 0);
-      studio.select(1); press(event);
-      assert.deepEqual(studio.range.value, [1, 2]); assert.equal(studio.state.loopAnchor, null);
-      press({ ...event, shiftKey: true }); assert.equal(studio.range.value, null);
+    for (const range of [null, [1, 2]]) {
+      if (range) studio.setLoop(...range); else studio.clearLoop();
+      for (const shiftKey of [false, true]) for (const repeat of [false, true]) {
+        for (const event of [{ key: 'f' }, { key: 'F' }, { key: 'Process', code: 'KeyF', isComposing: true }, { key: 'f', code: 'KeyF', keyCode: 229 }]) {
+          handlers.get('keydown')({ ...event, shiftKey, repeat, preventDefault() { assert.fail('F is not an editor shortcut'); } });
+          handlers.get('keyup')({ ...event, shiftKey });
+          assert.deepEqual(studio.range.value, range);
+        }
+      }
     }
-    assert.equal(studio.state.text, chart); assert.equal(studio.state.undo.length, 0);
-    assert.equal(studio.state.playing, false);
   } finally { cleanup(); }
 });
 
@@ -2573,12 +2500,12 @@ test('IME physical shortcuts preserve native text entry, dialogs, blocked editin
     studio.state.editorBlocked = true; native(); studio.state.editorBlocked = false;
     for (const code of [undefined, '', 'Unidentified', 'Enter']) native({ code });
     for (const modifier of ['ctrlKey', 'metaKey', 'altKey']) native({ [modifier]: true });
-    assert.equal(studio.state.loopAnchor, null); assert.equal(studio.state.text, chart);
+    assert.equal(studio.range.value, null); assert.equal(studio.state.text, chart);
     assert.equal(studio.state.undo.length, 0);
   } finally { cleanup(); }
 });
 
-test('keyup-only IME letters select ranges, navigate, change snap and seek', async () => {
+test('keyup-only IME letters navigate, change snap and seek without F range shortcuts', async () => {
   const { studio, handlers, cleanup } = mountStudio();
   const release = (key, extra = {}) => handlers.get('keyup')({ key, code: `Key${key.toUpperCase()}`, preventDefault() {}, ...extra });
   try {
@@ -2590,9 +2517,9 @@ test('keyup-only IME letters select ranges, navigate, change snap and seek', asy
     release('a'); near(studio.cell.value.numerator / studio.cell.value.denominator, 0);
     release('e'); near(studio.state.position, 2);
     release('q'); near(studio.state.position, 0);
-    release('f'); assert.equal(studio.state.loopAnchor, 0); assert.equal(studio.range.value, null);
-    studio.select(1); release('f'); assert.deepEqual(studio.range.value, [1, 2]);
-    release('f', { shiftKey: true }); assert.equal(studio.range.value, null);
+    release('f'); assert.equal(studio.range.value, null);
+    studio.setLoop(1, 2); release('f'); assert.deepEqual(studio.range.value, [1, 2]);
+    release('f', { shiftKey: true }); assert.deepEqual(studio.range.value, [1, 2]);
     assert.equal(studio.state.text, chart); assert.equal(studio.state.undo.length, 0);
   } finally { cleanup(); }
 });
@@ -2693,15 +2620,15 @@ test('paired keydown and keyup do not execute twice and lost releases reset on b
       handlers.get('keyup')(event('w')); assert.equal(studio.controls.snap, 24);
       handlers.get('keydown')(event('s', extra));
       handlers.get('keyup')(event('s')); assert.equal(studio.controls.snap, 16);
-      handlers.get('keydown')(event('f', extra));
-      handlers.get('keydown')(event('f', { ...extra, repeat: true }));
-      handlers.get('keyup')(event('f'));
-      assert.equal(studio.state.loopAnchor, 0); assert.equal(studio.range.value, null);
-      studio.clearLoop();
+      handlers.get('keydown')(event('e', extra));
+      handlers.get('keydown')(event('e', { ...extra, repeat: true }));
+      handlers.get('keyup')(event('e'));
+      near(studio.state.position, 2);
+      handlers.get('keyup')(event('q')); near(studio.state.position, 0);
     }
-    handlers.get('keydown')(event('f')); studio.clearLoop();
+    handlers.get('keydown')(event('w')); assert.equal(studio.controls.snap, 24);
     handlers.get('blur')();
-    handlers.get('keyup')(event('f')); assert.equal(studio.state.loopAnchor, 0);
+    handlers.get('keyup')(event('w')); assert.equal(studio.controls.snap, 32);
   } finally { cleanup(); }
 });
 
@@ -2719,50 +2646,7 @@ test('keyup fallback preserves native typing and does not trigger after focus le
     document.activeElement = null; native();
     for (const flag of ['ctrlKey', 'metaKey', 'altKey', 'defaultPrevented', 'repeat']) native({ [flag]: true });
     studio.state.editorBlocked = true; native();
-    assert.equal(studio.state.loopAnchor, null); assert.equal(studio.state.text, chart);
-  } finally { cleanup(); }
-});
-
-test('unfinished F markers cancel on Escape, document changes, course or branch switches, edits and other loop operations', async () => {
-  const { studio, handlers, cleanup } = mountStudio();
-  const mark = () => { handlers.get('keydown')({ key: 'f', preventDefault() {} }); assert.equal(studio.state.loopAnchor, studio.state.selected); };
-  try {
-    await studio.openChart(file('branches.tja', branchChart));
-    const first = studio.state.activeId;
-    studio.selectCell({ bar: 0, numerator: 1, denominator: 4, divisions: 16 });
-    mark();
-    handlers.get('keydown')({ key: 'Escape', preventDefault() {} });
-    assert.equal(studio.state.loopAnchor, null); assert.ok(studio.state.selectedCell);
-    assert.equal(studio.state.customLoop, null);
-    mark(); await studio.openChart(file('second.tja')); assert.equal(studio.state.loopAnchor, null);
-    mark(); studio.switchChart(first); assert.equal(studio.state.loopAnchor, null);
-    mark(); studio.changeCourse(1); assert.equal(studio.state.loopAnchor, null);
-    studio.changeCourse(0);
-    mark(); studio.changeBranch(0, 'E'); assert.equal(studio.state.loopAnchor, null);
-    mark(); studio.applySettings({ bpm: 140 }); assert.equal(studio.state.loopAnchor, null);
-    mark(); studio.history(); assert.equal(studio.state.loopAnchor, null);
-    mark(); studio.setLoop(1, 2, true); assert.equal(studio.state.loopAnchor, null);
-    mark(); studio.loopCurrent(); assert.equal(studio.state.loopAnchor, null);
-    mark(); studio.editSource('unfinished'); assert.equal(studio.state.loopAnchor, null);
-  } finally { cleanup(); }
-});
-
-test('F leaves active playback untouched at the first endpoint and loops through the entire last measure after the second', async () => {
-  const { studio, handlers, mock, ticks, cleanup } = mountStudio();
-  const { context } = fakeAudio(mock);
-  const press = () => handlers.get('keydown')({ key: 'f', preventDefault() {} });
-  try {
-    await studio.openChart(file()); await nextTick();
-    await studio.play();
-    context.currentTime = .535; ticks.frame(); near(studio.state.position, .5);
-    press(); assert.equal(studio.state.playing, true); near(studio.state.position, .5);
-    assert.equal(studio.range.value, null);
-    studio.state.selected = 1; press(); await nextTick(); await Promise.resolve();
-    assert.equal(studio.state.playing, true);
-    assert.deepEqual(studio.range.value, [1, 2]); near(studio.state.position, 0);
-    context.currentTime = 3.07; ticks.frame(); near(studio.state.position, 2.5);
-    context.currentTime = 5.07; ticks.frame(); near(studio.state.position, .5);
-    assert.equal(studio.state.text, chart); assert.equal(studio.state.undo.length, 0);
+    assert.equal(studio.range.value, null); assert.equal(studio.state.text, chart);
   } finally { cleanup(); }
 });
 

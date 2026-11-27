@@ -31,7 +31,7 @@ export const formatTime = value => {
 };
 
 export function useStudio() {
-  const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, playing: false, loopAnchor: null, copiedMeasures: null, pasteRequest: 0, closeRequest: null, editorBlocked: false, fileErrors: [], branchRouteWarning: null, saveState: '尚未打开谱面', noticeMessage: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', get notice() { return formatMessage(this.noticeMessage); }, error: false });
+  const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, playing: false, copiedMeasures: null, pasteRequest: 0, closeRequest: null, editorBlocked: false, fileErrors: [], branchRouteWarning: null, saveState: '尚未打开谱面', noticeMessage: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', get notice() { return formatMessage(this.noticeMessage); }, error: false });
   let nextDocumentId = 1, viewAnimation = null, reloadApproved = false;
   const controls = reactive({ hits: true, rate: 1, volume: MIX_DEFAULTS.music, hitVolume: MIX_DEFAULTS.hits, view: 'auto', zoom: 1, snap: GRID_DIVISIONS, snapChoice: '16', customSnap: GRID_DIVISIONS });
   const bar = computed(() => state.chart?.bars[state.selected]);
@@ -486,7 +486,7 @@ export function useStudio() {
       first = Math.max(1, Math.min(state.chart.bars.length, first));
       last = Math.max(1, Math.min(state.chart.bars.length, last));
       const resolved = resolveLoop(state.chart.bars, first, last, Infinity);
-      const playing = state.playing; pause(); state.loopAnchor = null; state.customLoop = [first, last];
+      const playing = state.playing; pause(); state.customLoop = [first, last];
       if (persist()) notice(message('已选择第 {p0}–{p1} 小节；播放时重复该区间。', { p0: first, p1: last }));
       if (playing) void play(resolved.start);
       return true;
@@ -499,14 +499,9 @@ export function useStudio() {
   }
   function clearLoop() {
     const playing = state.playing, position = currentTime();
-    pause(); state.customLoop = null; state.loopAnchor = null;
+    pause(); state.customLoop = null;
     if (persist()) notice(message('已取消小节选择，播放将继续到结束。'));
     if (playing) void play(position);
-  }
-  function markLoop() {
-    if (!bar.value || state.invalid) { notice(message('请先选择有效的小节。'), true); return; }
-    if (state.loopAnchor === null) state.loopAnchor = state.selected;
-    else setLoop(Math.min(state.loopAnchor, state.selected) + 1, Math.max(state.loopAnchor, state.selected) + 1);
   }
   function stop() {
     pause();
@@ -802,7 +797,6 @@ export function useStudio() {
   function setDivision(value) { guard(() => { requireValid(); commit(replaceBarWithBalloons(state.text, state.chart, bar.value, resizeNotes(bar.value.notes, value))); }); }
   function clearBar() { guard(() => { requireValid(); commit(replaceBarWithBalloons(state.text, state.chart, bar.value, '0'.repeat(bar.value.notes.length))); }); }
   function setBalloon(value) { return guard(() => { requireValid(); if (state.selectedCell) commit(setBalloonCount(state.text, state.chart, state.selectedCell, value)); return true; }); }
-  watch(() => [state.activeId, state.chart, state.invalid], () => { state.loopAnchor = null; }, { flush: 'sync' });
   watch(() => controls.rate, () => { if (state.playing) void play(currentTime()); });
   watch(() => controls.volume, value => { if (gain) gain.gain.value = value / 100; });
   watch(() => controls.hitVolume, value => {
@@ -829,8 +823,8 @@ export function useStudio() {
     if (event.code === 'Space' || event.key === ' ') return ' ';
     if (/^(Digit|Numpad)[0-9]$/.test(event.code)) return event.code.slice(-1);
     if (/^[0-9]$/.test(event.key)) return event.key;
-    return /^Key[WSADQEF]$/.test(event.code) ? event.code.slice(3).toLowerCase()
-      : /^[wsadqef]$/i.test(event.key) ? event.key.toLowerCase() : null;
+    return /^Key[WSADQE]$/.test(event.code) ? event.code.slice(3).toLowerCase()
+      : /^[wsadqe]$/i.test(event.key) ? event.key.toLowerCase() : null;
   }
   function keydown(event) {
     const key = shortcutKey(event);
@@ -872,8 +866,7 @@ export function useStudio() {
       }
       return;
     }
-    if (key === 'escape' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !inDialog && (state.loopAnchor !== null || state.selectedCell)) {
-      if (state.loopAnchor !== null) { event.preventDefault(); state.loopAnchor = null; return; }
+    if (key === 'escape' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !inDialog && state.selectedCell) {
       event.preventDefault(); viewAnimation = null; clearNoteSelection(); return;
     }
     const note = NOTE_TYPES.find(type => (type.shortcut ?? type.value) === key)?.value ?? (['delete', 'backspace'].includes(key) ? '0' : null);
@@ -883,14 +876,6 @@ export function useStudio() {
       if (!event.repeat) { if (state.playing) pause(); else void play(); }
     }
     else if ((event.ctrlKey || event.metaKey) && key === 'z') { event.preventDefault(); history(event.shiftKey); }
-    else if (key === 'f' && event.shiftKey && bar.value && (state.customLoop || state.loopAnchor !== null) && !event.ctrlKey && !event.metaKey && !event.altKey && !inDialog) {
-      event.preventDefault(); if (!event.repeat) clearLoop();
-    }
-    else if (key === 'f' && bar.value && !state.invalid && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !inDialog) {
-      event.preventDefault();
-      if (event.repeat) return;
-      markLoop();
-    }
     else if (note !== null && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !inDialog && state.selectedCell && !state.invalid) {
       event.preventDefault(); if (!event.repeat) chooseNote(note);
     }
@@ -935,5 +920,5 @@ export function useStudio() {
     pause(); void context?.close(); document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup);
     window.removeEventListener('blur', clearShortcutKeys); window.removeEventListener('beforeunload', beforeUnload);
   });
-  return { state, controls, bar, spans, visible, viewSpan, viewBeats, timelineWidth, timelineScale, timelineBounds, timelineScrollBounds, chartStats, stats, cell, command, measureCommand, selectedTiming, currentTiming, range, duration, metadata, notice, reportFileError, pause, play, stop, seek, seekMeasure, panTimeline, select, selectCell, moveCell, selectNote, selectAdjacentNote, clearNoteSelection, setCommandPosition, applySettings, applyBranchSource, applyMeasureBranch, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, clearLoop, markLoop, loopCurrent, setSnap, changeCourse, createCourse, removeCourse, createPlayerCharts, setLevel, changeAllBranches, changeBranch, openChart, openCharts, openAudio, newChart, switchChart, closeChart, insertBar, deleteBar, copyMeasures, requestPaste, pasteMeasures, reloadForUpdate, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
+  return { state, controls, bar, spans, visible, viewSpan, viewBeats, timelineWidth, timelineScale, timelineBounds, timelineScrollBounds, chartStats, stats, cell, command, measureCommand, selectedTiming, currentTiming, range, duration, metadata, notice, reportFileError, pause, play, stop, seek, seekMeasure, panTimeline, select, selectCell, moveCell, selectNote, selectAdjacentNote, clearNoteSelection, setCommandPosition, applySettings, applyBranchSource, applyMeasureBranch, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, clearLoop, loopCurrent, setSnap, changeCourse, createCourse, removeCourse, createPlayerCharts, setLevel, changeAllBranches, changeBranch, openChart, openCharts, openAudio, newChart, switchChart, closeChart, insertBar, deleteBar, copyMeasures, requestPaste, pasteMeasures, reloadForUpdate, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
 }
