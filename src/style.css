@@ -1,16 +1,17 @@
 :root{--selection:#2457d6;--selection-soft:#edf2fc;--selection-line:#b7c9f0;--selection-ink:#24488e;accent-color:var(--green)}
-dialog{--dialog-width:420px;width:min(var(--dialog-width),calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:auto;overscroll-behavior:contain;padding:20px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
+dialog{--dialog-width:420px;--dialog-padding:20px;width:min(var(--dialog-width),calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:auto;overscroll-behavior:contain;padding:var(--dialog-padding);border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);box-sizing:border-box;box-shadow:0 16px 48px #202a2826}
 dialog::backdrop{background:#202a2870}
 dialog h2{margin:0 0 16px;font-size:16px;line-height:1.4;overflow-wrap:anywhere}
 dialog p:not(.selection-help){margin:0;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
 dialog p:not(.selection-help)+p{margin-top:12px}
 dialog :is(.branch-dialog-heading,.delete-measure-heading){display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}
 dialog :is(.branch-dialog-heading,.delete-measure-heading) h2{margin:0;min-width:0}
-dialog :is(.branch-dialog-heading,.delete-measure-heading)>.icon{width:28px;min-width:28px;height:28px;min-height:28px;padding:5px;border:0}
-dialog :is(.branch-dialog-heading,.delete-measure-heading)>.icon svg{width:16px;height:16px}
-dialog :is(.selection-dialog-actions,.course-dialog-actions,.branch-form-actions,.delete-measure-actions){display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-top:20px}
-dialog :is(.selection-dialog-actions,.course-dialog-actions,.branch-form-actions,.delete-measure-actions) button{min-height:34px;padding:6px 12px;font-size:12px;line-height:20px;white-space:normal}
-@media(max-width:600px){dialog{padding:16px}}
+dialog :is(.branch-dialog-heading,.delete-measure-heading,.guide-header)>.icon{width:28px;min-width:28px;height:28px;min-height:28px;padding:5px;border:0}
+dialog :is(.branch-dialog-heading,.delete-measure-heading,.guide-header)>.icon svg{width:16px;height:16px}
+dialog :is(.selection-dialog-actions,.course-dialog-actions,.branch-form-actions,.delete-measure-actions,.guide-actions){display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-top:20px}
+dialog :is(.selection-dialog-actions,.course-dialog-actions,.branch-form-actions,.delete-measure-actions,.guide-actions) button{min-height:34px;padding:6px 12px;font-size:12px;line-height:20px;white-space:normal}
+dialog :is(.selection-dialog-actions,.course-dialog-actions,.branch-form-actions,.delete-measure-actions,.guide-actions) button svg{width:16px;height:16px}
+@media(max-width:600px){dialog{--dialog-padding:16px}}
 dialog button:is(.delete-action,.danger,.danger-action,#delete-measure-confirm){border:1px solid #bd3b30!important;background:#fff0ee;color:#b42318}
 dialog button:is(.delete-action,.danger,.danger-action,#delete-measure-confirm):hover:not(:disabled){background:#ffe0db;color:#961b11;border-color:#b42318!important}
 dialog button:is(.delete-action,.danger,.danger-action,#delete-measure-confirm):active:not(:disabled){background:#ffd0c8}

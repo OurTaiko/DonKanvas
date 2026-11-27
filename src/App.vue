@@ -434,10 +434,13 @@ async function dropFiles(event) {
         </div>
       </details>
     </div>
-    <select v-if="mobileLandscape" id="opened-chart-select" v-model="activeDocument" class="landscape-chart-picker" :aria-label="t(state.documents.length ? '已打开谱面' : '尚未打开谱面')" :title="state.documents.length ? state.filename || t('已打开谱面') : t('尚未打开谱面')" :disabled="!state.documents.length">
+    <div v-if="mobileLandscape" class="landscape-chart-controls" role="group" :aria-label="t('已打开谱面')">
+    <select id="opened-chart-select" v-model="activeDocument" class="landscape-chart-picker" :aria-label="t(state.documents.length ? '已打开谱面' : '尚未打开谱面')" :title="state.documents.length ? state.filename || t('已打开谱面') : t('尚未打开谱面')" :disabled="!state.documents.length">
       <option v-if="!state.documents.length" :value="state.activeId">{{ t('尚未打开谱面') }}</option>
       <option v-for="document in state.documents" :key="document.id" :value="document.id">{{ document.id === state.activeId ? state.filename : document.filename }}{{ (document.id === state.activeId ? state.dirty || state.invalid : document.dirty || document.invalid) ? ' *' : '' }}</option>
     </select>
+    <button id="landscape-close-chart" type="button" class="icon" :aria-label="state.chart ? t('关闭 {p0}', { p0: state.filename }) : t('关闭谱面')" :title="t('关闭谱面（Ctrl+Alt+W）')" :disabled="!state.chart || state.saving" @click="studio.closeChart(state.activeId)"><X aria-hidden="true" /></button>
+    </div>
     <details ref="settingsMenu" class="settings-popover" @toggle="positionPopover($event.target)" @keydown="popoverKeydown($event, settingsMenu)">
       <summary id="settings-toggle" class="icon" :title="t('设置')" :aria-label="t('设置')" aria-controls="settings-panel"><Settings2 aria-hidden="true" /><span v-if="draftUnavailable" class="status-dot session-dot error" aria-hidden="true"></span></summary>
       <div id="settings-panel" class="settings-panel" role="group" :aria-label="t('设置')" tabindex="0">
@@ -627,9 +630,11 @@ async function dropFiles(event) {
 #app{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
 header{position:relative;z-index:40;height:38px;min-height:38px;padding:3px 8px;gap:6px;flex-shrink:0;flex-wrap:nowrap;justify-content:flex-start;user-select:none}
 header :is(input,textarea){user-select:text}
-.file-actions:has(~.landscape-chart-picker){flex-shrink:0}
-.landscape-chart-picker{flex:0 1 280px;width:280px;max-width:280px;min-width:0;margin-left:auto;height:30px;padding:4px 8px;border:1px solid var(--line);border-radius:4px;background:#fff;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.landscape-chart-picker+.settings-popover{margin-left:0}
+.file-actions:has(~.landscape-chart-controls){flex-shrink:0}
+.landscape-chart-controls{display:flex;align-items:center;flex:0 1 280px;width:280px;max-width:280px;min-width:0;margin-left:auto;height:30px;border:1px solid var(--line);border-radius:4px;background:#fff}
+.landscape-chart-picker{flex:1;min-width:0;width:100%;max-width:none;height:28px;padding:4px 8px;border:0;border-radius:3px 0 0 3px;background:#fff;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.landscape-chart-controls>.icon{flex-shrink:0;width:30px;min-width:30px;height:28px;min-height:28px;padding:5px;border:0;border-left:1px solid var(--line);border-radius:0 3px 3px 0}
+.landscape-chart-controls+.settings-popover{margin-left:0}
 .brand{flex-shrink:0}.product-icon{border-radius:5px;display:block}
 .workspace-section-summary{display:flex;align-items:center;gap:7px;padding:12px 14px;cursor:pointer;font-size:12px;list-style:none}.workspace-section-summary::-webkit-details-marker{display:none}.workspace-section-summary>svg{width:14px;height:14px;flex-shrink:0}.workspace-section-summary>svg:first-child{color:var(--green)}.workspace-section-summary>.workspace-section-chevron{width:12px;height:12px;margin-left:auto;transform:rotate(-90deg)}details[open]>.workspace-section-summary{color:var(--green)}details[open]>.workspace-section-summary>.workspace-section-chevron{transform:none}.workspace-section-summary:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
 .workspace-section-summary>b,.workspace-section-summary>h2{min-width:0;margin:0;font:inherit;font-weight:700;overflow-wrap:anywhere}
@@ -670,9 +675,10 @@ main{display:flex;flex:1;min-height:0;max-width:none;margin:0;padding:0}
 @media(max-width:900px){.studio-panel-body:has(#timeline){grid-template-rows:auto minmax(0,max-content) minmax(0,1fr)}.editor-core:has(#timeline) .editor-scroll{display:flex;overflow:hidden}.editor-core:has(#timeline) .workspace{flex:1;min-width:0;min-height:0}}
 .inspector-tabs{display:flex;flex-shrink:0;border-bottom:1px solid var(--line);background:var(--paper)}.inspector-tabs>[role=tab]{flex:1;min-width:0;min-height:34px;padding:4px;border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;font-size:12px}.inspector-tabs>[aria-selected=true]{border-bottom-color:var(--green);color:var(--green);background:#fff}
 .inspector-tab-panel{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}.inspector-tab-panel>.measure-editor{overflow:visible;border:0}.inspector-tab-panel>.cell-inspector,.inspector-tab-panel>.branch-context{border:0}
-.studio-panel-body.mobile-landscape,.studio-panel-body.mobile-landscape:has(.measure-editor),.studio-panel-body.mobile-landscape:has(#timeline){grid-template-columns:44px minmax(0,1fr) minmax(210px,28%);grid-template-rows:minmax(0,1fr)}
+.studio-panel-body.mobile-landscape,.studio-panel-body.mobile-landscape:has(>.song-workspace),.studio-panel-body.mobile-landscape:has(.measure-editor),.studio-panel-body.mobile-landscape:has(#timeline){grid-template-columns:44px minmax(0,1fr) minmax(210px,28%);grid-template-rows:minmax(0,1fr)}
 main:has(.mobile-landscape){padding-bottom:0}
 .studio-panel-body.mobile-landscape.workspace-collapsed,.studio-panel-body.mobile-landscape.workspace-collapsed:has(.measure-editor){grid-template-columns:44px minmax(0,1fr) minmax(210px,28%)}
+.studio-panel-body.mobile-landscape:has(>.song-workspace):not(:has(#timeline)){grid-template-columns:44px minmax(0,1fr)}
 .studio-panel-body.mobile-landscape>.song-workspace{grid-column:1;grid-row:1;width:100%;height:100%;border-right:1px solid var(--line);overflow-y:auto}
 .studio-panel-body.mobile-landscape>.song-workspace.collapsed{width:44px;overflow:hidden}
 .studio-panel-body.mobile-landscape>.song-workspace.workspace-drawer{position:fixed;top:var(--workspace-top);left:0;bottom:0;z-index:60;width:min(300px,calc(100vw - 44px));height:calc(100dvh - var(--workspace-top));box-shadow:6px 0 24px #202a2830}

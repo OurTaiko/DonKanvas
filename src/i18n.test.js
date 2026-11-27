@@ -2635,7 +2635,7 @@ test('landscape keeps top menus and switches open charts through a single-line d
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'landscape-chart-picker' });
   const header = descriptor.template.content.match(/<header>[\s\S]*?<\/header>/)[0];
-  assert.match(header, /<select v-if="mobileLandscape" id="opened-chart-select" v-model="activeDocument"/);
+  assert.match(header, /<div v-if="mobileLandscape" class="landscape-chart-controls" role="group" :aria-label="t\('已打开谱面'\)">\s*<select id="opened-chart-select" v-model="activeDocument"/);
   assert.match(header, /:aria-label="t\(state.documents.length \? '已打开谱面' : '尚未打开谱面'\)"/);
   assert.match(header, /:title="state.documents.length \? state.filename \|\| t\('已打开谱面'\) : t\('尚未打开谱面'\)"/);
   assert.match(header, /<option v-if="!state.documents.length"[^>]*>\{\{ t\('尚未打开谱面'\) \}\}<\/option>/);
@@ -2643,13 +2643,19 @@ test('landscape keeps top menus and switches open charts through a single-line d
   assert.match(header, /<option v-for="document in state.documents"[^>]*:value="document.id"/);
   assert.match(header, /document.dirty \|\| document.invalid/);
   assert.ok(header.indexOf('id="opened-chart-select"') < header.indexOf('ref="settingsMenu"'));
-  assert.match(descriptor.styles[0].content, /\.file-actions:has\(~\.landscape-chart-picker\)\{flex-shrink:0\}/);
-  assert.match(descriptor.styles[0].content, /\.landscape-chart-picker\+\.settings-popover\{margin-left:0\}/);
+  assert.match(header, /<button id="landscape-close-chart"[^>]*:disabled="!state.chart \|\| state.saving"[^>]*@click="studio.closeChart\(state.activeId\)"[^>]*><X aria-hidden="true" \/><\/button>\s*<\/div>/);
+  assert.match(descriptor.styles[0].content, /\.file-actions:has\(~\.landscape-chart-controls\)\{flex-shrink:0\}/);
+  assert.match(descriptor.styles[0].content, /\.landscape-chart-controls\+\.settings-popover\{margin-left:0\}/);
+  assert.match(descriptor.styles[0].content, /\.landscape-chart-controls\{display:flex;[^}]*min-width:0;[^}]*border:1px solid var\(--line\);border-radius:4px;/);
+  assert.match(descriptor.styles[0].content, /\.landscape-chart-controls>\.icon\{[^}]*border-left:1px solid var\(--line\);/);
+  assert.match(descriptor.styles[0].content, /\.landscape-chart-picker\{[^}]*max-width:none;/);
   assert.match(descriptor.template.content, /<nav class="chart-tabs" v-show="!mobileLandscape"/);
   assert.doesNotMatch(descriptor.template.content, /mobile-menu-panel/);
   assert.match(descriptor.styles[0].content, /\.landscape-chart-picker\{[^}]*min-width:0;[^}]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis/);
   assert.ok(descriptor.styles[0].content.includes('.studio-panel-body.mobile-landscape:not(:has(>.song-workspace)){grid-template-columns:minmax(0,1fr)}'));
   assert.ok(descriptor.styles[0].content.includes('.studio-panel-body.mobile-landscape:not(:has(>.song-workspace))>.editor-core{grid-column:1 / -1}'));
+  assert.match(descriptor.styles[0].content, /\.studio-panel-body\.mobile-landscape:has\(>\.song-workspace\),[^{}]*\{[^}]*grid-template-rows:minmax\(0,1fr\)\}/);
+  assert.ok(descriptor.styles[0].content.includes('.studio-panel-body.mobile-landscape:has(>.song-workspace):not(:has(#timeline)){grid-template-columns:44px minmax(0,1fr)}'));
   const calls = [], state = { activeId: 12 };
   const studio = { switchChart(id) { calls.push(id); state.activeId = id; } };
   const source = descriptor.scriptSetup.content.match(/const activeDocument = computed\([^\n]+;/)[0];
@@ -2975,17 +2981,28 @@ test('branch creation groups equal-width route and source fields and displays er
 
 test('all modal shells share typography, spacing, responsive geometry and action styling', () => {
   const styles = readFileSync(new URL('style.css', import.meta.url), 'utf8');
-  assert.match(styles, /dialog\{--dialog-width:420px;[^}]*max-height:calc\(100dvh - 24px\);[^}]*padding:20px;[^}]*border-radius:8px;/);
+  assert.match(styles, /dialog\{--dialog-width:420px;--dialog-padding:20px;[^}]*max-height:calc\(100dvh - 24px\);[^}]*padding:var\(--dialog-padding\);[^}]*border-radius:8px;/);
+  assert.match(styles, /dialog\{[^}]*box-sizing:border-box;box-shadow:0 16px 48px #202a2826\}/);
   assert.match(styles, /dialog h2\{margin:0 0 16px;font-size:16px;line-height:1.4;/);
   assert.match(styles, /dialog p:not\(\.selection-help\)\{margin:0;font-size:12px;line-height:1.7;/);
   assert.match(styles, /dialog::backdrop\{background:#202a2870\}/);
-  assert.match(styles, /\.selection-dialog-actions,\.course-dialog-actions,\.branch-form-actions,\.delete-measure-actions\)\{[^}]*flex-wrap:wrap;[^}]*margin-top:20px/);
-  assert.match(styles, /@media\(max-width:600px\)\{dialog\{padding:16px\}\}/);
-  for (const file of ['App.vue', 'CourseControls.vue', 'BranchControls.vue', 'TimelineEditor.vue']) {
+  assert.match(styles, /\.selection-dialog-actions,\.course-dialog-actions,\.branch-form-actions,\.delete-measure-actions,\.guide-actions\)\{[^}]*flex-wrap:wrap;[^}]*margin-top:20px/);
+  assert.match(styles, /\.guide-actions\) button\{min-height:34px;padding:6px 12px;font-size:12px;line-height:20px;/);
+  assert.match(styles, /\.guide-header\)>\.icon\{width:28px;min-width:28px;height:28px;min-height:28px;/);
+  assert.match(styles, /@media\(max-width:600px\)\{dialog\{--dialog-padding:16px\}\}/);
+  for (const file of ['App.vue', 'CourseControls.vue', 'BranchControls.vue', 'TimelineEditor.vue', 'WelcomeGuide.vue']) {
     const { descriptor } = parse(readFileSync(new URL(file, import.meta.url), 'utf8'));
     compileScript(descriptor, { id: 'shared-modal-shell' });
-    assert.doesNotMatch(descriptor.styles[0].content, /\.(?:selection|course|branch|delete-measure)-dialog\{[^}]*border-radius:/);
-    assert.doesNotMatch(descriptor.styles[0].content, /\.(?:selection|course|branch|delete-measure)-dialog::backdrop/);
+    assert.doesNotMatch(descriptor.styles[0].content, /\.(?:(?:selection|course|branch|delete-measure)-dialog|welcome-guide)\{[^}]*(?:border-radius|box-shadow|background):/);
+    assert.doesNotMatch(descriptor.styles[0].content, /\.(?:(?:selection|course|branch|delete-measure)-dialog|welcome-guide)::backdrop/);
+    if (file === 'WelcomeGuide.vue') {
+      assert.match(descriptor.styles[0].content, /\.welcome-guide\{--dialog-width:560px;padding:0\}/);
+      assert.match(descriptor.styles[0].content, /\.guide-body\{padding:var\(--dialog-padding\)\}/);
+      assert.doesNotMatch(descriptor.styles[0].content, /\.guide-(?:body h2|description)\{[^}]*font-size:/);
+      assert.doesNotMatch(descriptor.styles[0].content, /\.guide-(?:close|back|next|actions button)\{/);
+      assert.match(descriptor.template.content, /class="guide-close icon"/);
+      assert.match(descriptor.template.content, /class="guide-next primary"/);
+    }
   }
 });
 
