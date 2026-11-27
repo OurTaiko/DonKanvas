@@ -11,6 +11,15 @@ function writeCounts(text, courseIndex, counts, fieldName = 'BALLOON') {
   return setCourseHeaderValues(text, courseIndex, counts, fieldName);
 }
 
+function replaceCounts(counts, preceding, before, after) {
+  while (counts.length < preceding + before.length) counts.push(5);
+  const replacements = after.map(position => {
+    const oldIndex = before.indexOf(position);
+    return oldIndex < 0 ? 5 : counts[preceding + oldIndex];
+  });
+  counts.splice(preceding, before.length, ...replacements);
+}
+
 export function balloonIndex(chart, cell) {
   let ordinal = 0;
   const selected = chart.bars[cell.bar];
@@ -214,9 +223,7 @@ export function setBranchSourceWithBalloons(text, chart, cell, source, index, pa
     if (JSON.stringify(before) === JSON.stringify(after)) continue;
     const preceding = chart.allBars.filter(bar => bar.comma < result.start && countField(fields, bar) === field).reduce((sum, bar) => sum + [...bar.notes].filter(note => '79'.includes(note)).length, 0);
     const counts = balloonCounts(result.text, chart.courseIndex, field);
-    while (counts.length < preceding + before.length) counts.push(5);
-    const replacements = after.map(key => before.includes(key) ? counts[preceding + before.indexOf(key)] : 5);
-    counts.splice(preceding, before.length, ...replacements);
+    replaceCounts(counts, preceding, before, after);
     result.text = writeCounts(result.text, chart.courseIndex, counts, field);
   }
   return result;
@@ -229,11 +236,6 @@ function reconcileCounts(edited, chart, bar, notes) {
   if (JSON.stringify(oldPositions) === JSON.stringify(newPositions)) return edited;
   const fields = countFields(edited, chart), field = countField(fields, bar), counts = balloonCounts(edited, chart.courseIndex, field);
   const preceding = (chart.allBars || chart.bars).filter(item => item.comma < bar.comma && countField(fields, item) === field).reduce((total, item) => total + [...item.notes].filter(note => '79'.includes(note)).length, 0);
-  while (counts.length < preceding + oldPositions.length) counts.push(5);
-  const replacements = newPositions.map(position => {
-    const oldIndex = oldPositions.indexOf(position);
-    return oldIndex < 0 ? 5 : counts[preceding + oldIndex];
-  });
-  counts.splice(preceding, oldPositions.length, ...replacements);
+  replaceCounts(counts, preceding, oldPositions, newPositions);
   return writeCounts(edited, chart.courseIndex, counts, field);
 }

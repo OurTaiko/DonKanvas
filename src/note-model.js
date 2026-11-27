@@ -17,6 +17,17 @@ export const NOTE_TYPES = [
   { value: 'B', name: '双人咔', shape: 'ka large duet', shortcut: '=' }
 ];
 
+export function countNotes(notes) {
+  const counts = { don: 0, ka: 0, other: 0, total: 0 };
+  for (const note of notes) {
+    if ('13A'.includes(note)) counts.don++;
+    else if ('24B'.includes(note)) counts.ka++;
+    else if ('56789'.includes(note)) counts.other++;
+    if (note !== '0') counts.total++;
+  }
+  return counts;
+}
+
 export function selectCell(notes, fraction, divisions, tolerance = 0) {
   let closest = -1, distance = Infinity;
   for (let index = 0; index < notes.length; index++) {

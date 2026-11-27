@@ -1,7 +1,7 @@
 <script setup>
-import { t, message, formatMessage, LocalizedError, languages, locale, localePreference, initializeLocale, setLocale } from './i18n.js';
-import { getIntroPath } from './locales.js';
-import { computed, nextTick, onMounted, onUnmounted, provide, ref, shallowRef, watch } from 'vue';
+import { t, message, formatMessage, languages, locale, localePreference, initializeLocale, setLocale } from './i18n.js';
+import { getIntroPath, getPageMetadata } from './locales.js';
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
 import { Plus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser, ListMusic, SquareMousePointer, ListChecks, TextCursorInput, Flag, SquareDashed, ArrowLeftToLine, ArrowLeft, ArrowRight, Map, CircleOff } from '@lucide/vue';
 import { GitBranch } from '@lucide/vue';
 import { useStudio, formatTime } from './useStudio.js';
@@ -14,9 +14,10 @@ import DocumentTitle from './DocumentTitle.vue';
 import PositionIcon from './PositionIcon.vue';
 import { COURSE_NAMES, COURSE_LABELS } from './courses.js';
 import { NOTE_TYPES } from './note-model.js';
-import { checkPwaUpdate, activatePwaUpdate, waitForPwaRegistration } from './pwa.js';
+import { usePwaUpdates } from './pwa.js';
 
 const localeError = initializeLocale();
+const productMetadata = computed(() => getPageMetadata(locale.value));
 const studio = useStudio();
 provide('studio', studio);
 const { state, controls, range, duration } = studio;
@@ -123,7 +124,7 @@ function applyPaste() {
   else pasteError.value = state.noticeMessage;
 }
 const draftUnavailable = computed(() => state.saveState === '草稿存储不可用 · 请及时保存文件');
-const checkingUpdate = ref(false), installingUpdate = ref(false), updateNotice = ref(null), updateError = ref(false), updateVisible = ref(false), pendingUpdate = shallowRef(null);
+const { checkingUpdate, installingUpdate, updateNotice, updateError, updateVisible, pendingUpdate, checkUpdate, installUpdate } = usePwaUpdates(studio);
 let appDisposed = false;
 const fileErrorDialog = ref(null), fileError = computed(() => state.fileErrors[0]);
 watch(fileError, async error => {
@@ -177,42 +178,6 @@ function selectionKeydown(event) {
   } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
     event.preventDefault(); event.stopPropagation();
   }
-}
-async function installUpdate() {
-  if (installingUpdate.value || !pendingUpdate.value) return;
-  installingUpdate.value = true; updateError.value = false; updateVisible.value = true;
-  try {
-    if (state.saving || state.documents.some(item => item.saving)) throw new LocalizedError('请等待所有谱面保存完成后再更新。');
-    if (!confirm(t('发现新版本，是否更新并重启？谱面草稿将保留，音频和文件写回授权需重新载入。'))) {
-      updateNotice.value = message('更新已下载，可稍后重启。'); return;
-    }
-    updateNotice.value = message('正在安装更新并重启…');
-    await activatePwaUpdate(pendingUpdate.value);
-    if (appDisposed) return;
-    if (!studio.reloadForUpdate()) { updateNotice.value = state.noticeMessage; updateError.value = true; }
-  } catch (error) {
-    updateNotice.value = message('检测或安装更新失败：{p0}', { p0: error }); updateError.value = true;
-  } finally { installingUpdate.value = false; }
-}
-async function checkUpdate(passive = false) {
-  if (checkingUpdate.value || installingUpdate.value) return;
-  checkingUpdate.value = true; updateError.value = false;
-  if (!passive) { updateNotice.value = message('正在检测更新…'); updateVisible.value = true; }
-  try {
-    if (import.meta.env.DEV || !('serviceWorker' in navigator)) throw new LocalizedError('此环境不支持 PWA 更新，请使用 HTTPS 部署的生产版本。');
-    const scope = new URL(import.meta.env.BASE_URL, location.href).href;
-    const registration = await waitForPwaRegistration(navigator.serviceWorker, scope);
-    const worker = pendingUpdate.value ?? await checkPwaUpdate(registration);
-    if (appDisposed) return;
-    if (!worker) {
-      if (!passive) updateNotice.value = message('已经是最新版本。');
-      return;
-    }
-    pendingUpdate.value = worker; updateNotice.value = message('发现新版本，可更新并重启。'); updateVisible.value = true;
-    if (!passive) await installUpdate();
-  } catch (error) {
-    if (!appDisposed) { updateNotice.value = message('检测或安装更新失败：{p0}', { p0: error }); updateError.value = true; updateVisible.value = true; }
-  } finally { checkingUpdate.value = false; }
 }
 function changeLanguage(code) {
   const error = setLocale(code);
@@ -420,7 +385,7 @@ async function dropFiles(event) {
 
 <template>
   <header>
-    <div class="brand"><img class="product-icon" :src="productIcon" :alt="t('咚咔绘板')" width="24" height="24"></div>
+    <div class="brand"><img class="product-icon" :src="productIcon" :alt="productMetadata.name" width="24" height="24"></div>
     <div class="file-actions">
       <details ref="fileMenu" class="file-popover" @toggle="positionPopover($event.target)" @keydown="popoverKeydown($event, fileMenu)">
         <summary id="file-toggle" :title="t('文件')" :aria-label="t('文件')" aria-controls="file-menu"><span>{{ t('文件') }}</span></summary>
@@ -496,7 +461,7 @@ async function dropFiles(event) {
       <details ref="projectMenu" class="project-popover" @toggle="toggleSettingsSection" @keydown="popoverKeydown($event, projectMenu)">
         <summary id="project-toggle" :title="t('关于')" :aria-label="t('关于')" aria-controls="project-menu"><Info aria-hidden="true" /><span>{{ t('关于') }}</span><ChevronDown aria-hidden="true" /></summary>
         <div id="project-menu" class="project-panel">
-          <p>{{ t('咚咔绘板 · DonKanvas') }}</p>
+          <p>{{ productMetadata.displayName }}</p>
           <p v-if="draftUnavailable" id="save-state" role="alert" class="error">{{ t(state.saveState) }}</p>
           <nav class="project-links" :aria-label="t('项目信息')"><a href="https://github.com/OurTaiko/DonKanvas" target="_blank" rel="noopener noreferrer" :title="t('GitHub 仓库')">GitHub</a><a href="https://github.com/OurTaiko" target="_blank" rel="noopener noreferrer" :title="t('开源组织')">OurTaiko</a><a href="https://github.com/OurTaiko/DonKanvas/blob/HEAD/LICENSE" target="_blank" rel="noopener noreferrer">{{ t('MIT 开源协议') }}</a><a :href="`./${getIntroPath(locale)}`" target="_blank" rel="noopener noreferrer">{{ t('应用介绍与使用指南') }}</a></nav>
           <small>© 2026 Dafrok</small>

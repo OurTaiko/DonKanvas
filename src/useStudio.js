@@ -5,7 +5,7 @@ import { BRANCH_ROUTES, decodeChart, parseChart, alignBranchRoutes, synchronizeB
 import { createHitBuffer, MIX_DEFAULTS, duckMusic } from './hit-audio.js';
 import { resolveLoop, measureStart, measureEnd } from './loop.js';
 import { GRID_DIVISIONS, MAX_SNAP_DIVISIONS, SNAP_DIVISIONS } from './grid.js';
-import { NOTE_TYPES, cellValue, setCellNote, longNoteSpans } from './note-model.js';
+import { NOTE_TYPES, cellValue, setCellNote, longNoteSpans, countNotes } from './note-model.js';
 import { longHitTimes } from './long-audio.js';
 import { balloonInfo, balloonTotals, setBalloonCount, replaceBarWithBalloons, replaceBarSourceWithBalloons, setBranchSourceWithBalloons, setMeasureBranchWithBalloons, deleteBarWithBalloons, copyMeasures as copyMeasureContent, pasteMeasures as pasteMeasureContent } from './balloon.js';
 import { HISTORY_LIMIT, textDiff, applyDiff } from './history.js';
@@ -64,20 +64,13 @@ export function useStudio() {
     return { bars, start, end, startBeat, endBeat };
   });
   const viewSpan = computed(() => visible.value ? visible.value.end - visible.value.start : 1);
-  const chartStats = computed(() => {
-    const notes = state.chart?.bars.map(bar => bar.notes).join('') || '';
-    return {
-      don: [...notes].filter(note => '13A'.includes(note)).length,
-      ka: [...notes].filter(note => '24B'.includes(note)).length,
-      rollSeconds: spans.value.filter(span => '56'.includes(span.note)).reduce((sum, span) => sum + Math.max(0, span.end - span.start), 0),
-      ...balloonTotals(state.text, state.chart)
-    };
-  });
-  const stats = computed(() => {
-    const notes = [...(bar.value?.notes || '')];
-    return { don: notes.filter(note => '13A'.includes(note)).length, ka: notes.filter(note => '24B'.includes(note)).length, other: notes.filter(note => '56789'.includes(note)).length, total: notes.filter(note => note !== '0').length,
-      all: state.chart?.bars.reduce((sum, item) => sum + [...item.notes].filter(note => note !== '0').length, 0) || 0 };
-  });
+  const chartNoteCounts = computed(() => countNotes(state.chart?.bars.map(bar => bar.notes).join('') || ''));
+  const chartStats = computed(() => ({
+    don: chartNoteCounts.value.don, ka: chartNoteCounts.value.ka,
+    rollSeconds: spans.value.filter(span => '56'.includes(span.note)).reduce((sum, span) => sum + Math.max(0, span.end - span.start), 0),
+    ...balloonTotals(state.text, state.chart)
+  }));
+  const stats = computed(() => ({ ...countNotes(bar.value?.notes || ''), all: chartNoteCounts.value.total }));
   const cell = computed(() => {
     const selected = state.selectedCell, item = selected && state.chart?.bars[selected.bar];
     if (!item) return null;

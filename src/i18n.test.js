@@ -65,7 +65,7 @@ test('page titles and SEO metadata follow initialization and every language swit
       const displayName = language.code === 'en' ? productName : `${productName} · DonKanvas`;
       assert.equal(metadata.name, productName);
       assert.equal(t('咚咔绘板'), productName);
-      assert.equal(t('咚咔绘板 · DonKanvas'), displayName);
+      assert.equal(metadata.displayName, displayName);
       assert.ok(document.title.startsWith(`${displayName} - `));
       assert.equal([...document.title.matchAll(/DonKanvas/g)].length, 1);
       assert.equal(root.lang, language.code);
@@ -826,8 +826,8 @@ test('the project popover shows only draft failures and retains project links an
   assert.doesNotMatch(project, /t\('本地会话'\)/);
   assert.match(project, /t\(state.saveState\)/);
   assert.match(project, /© 2026 Dafrok/);
-  assert.match(project, /<p>{{ t\('咚咔绘板 · DonKanvas'\) }}<\/p>/);
-  assert.match(header, /:alt="t\('咚咔绘板'\)"/);
+  assert.match(project, /<p>{{ productMetadata.displayName }}<\/p>/);
+  assert.match(header, /:alt="productMetadata.name"/);
   const links = [...project.matchAll(/<a\b([^>]*)>/g)].map(match => match[1]);
   assert.equal(links.length, 4);
   for (const [index, url] of ['https://github.com/OurTaiko/DonKanvas', 'https://github.com/OurTaiko', 'https://github.com/OurTaiko/DonKanvas/blob/HEAD/LICENSE'].entries()) {
@@ -881,16 +881,19 @@ test('scrolling or focusing the shared settings panel retains expanded help, whi
 test('startup update checks announce a new release without installing it; unchanged passive checks stay quiet and errors remain explicit', async () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   const script = descriptor.scriptSetup.content;
-  const refs = Object.fromEntries(['checkingUpdate', 'installingUpdate', 'updateError', 'updateVisible', 'pendingUpdate', 'updateNotice'].map(name => [name, { value: null }]));
-  let worker = { state: 'installed' }, failure = null, installed = 0;
-  const source = script.match(/async function checkUpdate\(passive = false\) \{[\s\S]*?\n\}/)[0]
+  let worker = { state: 'installed' }, failure = null, installed = 0, disposed, registration = null, resolveRegistration;
+  const source = readFileSync(new URL('pwa.js', import.meta.url), 'utf8').match(/export function usePwaUpdates\(studio\) \{[\s\S]*?\n\}/)[0]
+    .replace('export function', 'function')
     .replaceAll('import.meta.env.DEV', 'false').replaceAll('import.meta.env.BASE_URL', "'./'");
-  const checkUpdate = runInNewContext(`(${source})`, {
-    ...refs, appDisposed: false, navigator: { serviceWorker: {} }, location: { href: 'https://example.com/web-tja-studio/' }, URL, message, LocalizedError,
-    waitForPwaRegistration: async (_container, scope) => { assert.equal(scope, 'https://example.com/web-tja-studio/'); return {}; },
+  const createUpdates = runInNewContext(`(${source})`, {
+    ref: value => ({ value }), shallowRef: value => ({ value }), onUnmounted: callback => { disposed = callback; },
+    navigator: { serviceWorker: {} }, location: { href: 'https://example.com/web-tja-studio/' }, URL, message, LocalizedError, t, confirm: () => true,
+    waitForPwaRegistration: async (_container, scope) => { assert.equal(scope, 'https://example.com/web-tja-studio/'); return registration ?? {}; },
     checkPwaUpdate: async () => { if (failure) throw failure; return worker; },
-    installUpdate: async () => { installed++; }
+    activatePwaUpdate: async () => { installed++; }
   });
+  const refs = createUpdates({ state: { documents: [] }, reloadForUpdate: () => true });
+  const { checkUpdate } = refs;
   await checkUpdate(true);
   assert.equal(refs.pendingUpdate.value, worker); assert.equal(refs.updateVisible.value, true); assert.equal(installed, 0);
   refs.updateVisible.value = false; await checkUpdate(false); assert.equal(installed, 1);
@@ -900,6 +903,14 @@ test('startup update checks announce a new release without installing it; unchan
   failure = new Error('Offline'); await checkUpdate(true);
   assert.equal(refs.updateVisible.value, true); assert.equal(refs.updateError.value, true);
   assert.equal(refs.updateNotice.value.key, '检测或安装更新失败：{p0}');
+  failure = null; worker = { state: 'installed' }; refs.updateVisible.value = false;
+  registration = new Promise(resolve => { resolveRegistration = resolve; });
+  const pending = checkUpdate(true);
+  disposed(); resolveRegistration({});
+  await pending;
+  assert.equal(refs.pendingUpdate.value, null); assert.equal(refs.updateVisible.value, false);
+  assert.equal(refs.checkingUpdate.value, false); assert.equal(installed, 1);
+  assert.match(script, /usePwaUpdates\(studio\)/);
   assert.match(script, /if \(!import.meta.env.DEV && 'serviceWorker' in navigator\) void checkUpdate\(true\)/);
 });
 

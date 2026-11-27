@@ -6,6 +6,17 @@ export const BRANCH_ROUTES = ['N', 'E', 'M'];
 export const BRANCH_ROUTE_NAMES = { N: '普通', E: '玄人', M: '达人' };
 const TIMING_COMMANDS = ['BPMCHANGE', 'MEASURE', 'DELAY'];
 
+function commandGridLength(length, numerator, denominator) {
+  const gcd = (a, b) => {
+    while (b) [a, b] = [b, a % b];
+    return a;
+  };
+  const reduced = denominator / gcd(numerator, denominator);
+  const result = length / gcd(length, reduced) * reduced;
+  if (result > 65536) throw new LocalizedError(message('指令位置超出 65536 个源码格，无法无损插入。'));
+  return result;
+}
+
 export function decodeChart(bytes) {
   try { return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), encoding: 'UTF-8' }; }
   catch { return { text: new TextDecoder('shift-jis').decode(bytes), encoding: 'Shift-JIS' }; }
@@ -224,13 +235,7 @@ export function synchronizeBranchTiming(text, parser, courseIndex = null, branch
           if (signature(commands) === signature(previous)) return;
           let length = bar.notes.length;
           for (const command of commands) {
-            let a = command.slot, b = template[index].notes.length;
-            while (b) [a, b] = [b, a % b];
-            const denominator = template[index].notes.length / a;
-            a = length; b = denominator;
-            while (b) [a, b] = [b, a % b];
-            length = length / a * denominator;
-            if (length > 65536) throw new LocalizedError(message('指令位置超出 65536 个源码格，无法无损插入。'));
+            length = commandGridLength(length, command.slot, template[index].notes.length);
           }
           const notes = resizeNotes(bar.notes, length), groups = new Map();
           for (const command of commands) {
@@ -383,13 +388,7 @@ export function setPositionSettings(text, chart, cell, settings, parser) {
   let bar = chart.bars[cell.bar];
   if (!bar) throw new LocalizedError(message('小节不存在。'));
   if (Object.values(settings).every(value => value === null) && !Number.isInteger(numerator * bar.notes.length / denominator)) return text;
-  let divisor = numerator, remainder = denominator;
-  while (remainder) [divisor, remainder] = [remainder, divisor % remainder];
-  const reduced = denominator / divisor;
-  divisor = bar.notes.length; remainder = reduced;
-  while (remainder) [divisor, remainder] = [remainder, divisor % remainder];
-  const length = bar.notes.length / divisor * reduced;
-  if (length > 65536) throw new LocalizedError(message('指令位置超出 65536 个源码格，无法无损插入。'));
+  const length = commandGridLength(bar.notes.length, numerator, denominator);
   if (length !== bar.notes.length) {
     text = replaceBar(text, bar, resizeNotes(bar.notes, length));
     bar = parseChart(text, parser, chart.courseIndex, chart.branchRoutes).bars[cell.bar];

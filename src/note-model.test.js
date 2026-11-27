@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NOTE_TYPES, selectCell, cellValue, setCellNote, longNoteSpans } from './note-model.js';
+import { NOTE_TYPES, selectCell, cellValue, setCellNote, longNoteSpans, countNotes } from './note-model.js';
 import { TJAParser } from 'tja';
 import { parseChart } from './chart.js';
 
@@ -11,6 +11,12 @@ test('note choices use compact names while keeping TJA codes and shape distincti
   assert.equal(NOTE_TYPES.find(type => type.value === '6').shape, 'roll large');
   assert.equal(NOTE_TYPES.find(type => type.value === '9').shape, 'balloon special');
   assert.deepEqual(NOTE_TYPES.map(type => type.shortcut ?? type.value), ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '=']);
+});
+
+test('note counts distinguish percussion, cooperative notes, long notes and empty slots', () => {
+  assert.deepEqual(countNotes('0013A24B56789'), { don: 3, ka: 3, other: 5, total: 11 });
+  assert.deepEqual(countNotes('0000'), { don: 0, ka: 0, other: 0, total: 0 });
+  assert.deepEqual(countNotes(''), { don: 0, ka: 0, other: 0, total: 0 });
 });
 
 test('selecting a cell does not change source and reports its current note', () => {

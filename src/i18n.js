@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { translations, getPageMetadata, getPageURL, pageLocales } from './locales.js';
+import { translations, getPageMetadata, getPageURL, getPageMetaTags, getApplicationMetadata } from './locales.js';
 
 export const LOCALE_KEY = 'web-tja-studio-locale';
 export const languages = [
@@ -73,29 +73,16 @@ export function updateDocumentMetadata(root) {
   if (!document) return;
   const metadata = getPageMetadata(locale.value);
   document.title = metadata.title;
-  for (const [selector, key] of Object.entries({
-    'meta[name="application-name"]': 'name',
-    'meta[property="og:site_name"]': 'name',
-    'meta[name="description"]': 'description',
-    'meta[property="og:title"]': 'title',
-    'meta[property="og:description"]': 'socialDescription',
-    'meta[property="og:image:alt"]': 'imageAlt',
-    'meta[name="twitter:title"]': 'title',
-    'meta[name="twitter:description"]': 'socialDescription',
-    'meta[name="twitter:image:alt"]': 'imageAlt'
-  })) document.querySelector(selector)?.setAttribute('content', metadata[key]);
-  document.querySelector('meta[property="og:locale"]')?.setAttribute('content', pageLocales[locale.value]);
+  for (const [key, value] of Object.entries(getPageMetaTags(locale.value))) {
+    const attribute = key.startsWith('og:') ? 'property' : 'name';
+    document.querySelector(`meta[${attribute}="${key}"]`)?.setAttribute('content', value);
+  }
   const canonicalURL = getPageURL(locale.value);
   document.querySelector('link[rel="canonical"]')?.setAttribute('href', canonicalURL);
-  document.querySelector('meta[property="og:url"]')?.setAttribute('content', canonicalURL);
   const structuredData = document.querySelector('script[type="application/ld+json"]');
   if (structuredData) {
     const application = JSON.parse(structuredData.textContent);
-    application.name = metadata.name;
-    application.alternateName = metadata.alternateName;
-    application.description = metadata.applicationDescription;
-    application.inLanguage = locale.value;
-    application.url = canonicalURL;
+    Object.assign(application, getApplicationMetadata(locale.value));
     structuredData.textContent = JSON.stringify(application);
   }
   if (document.defaultView && /\/(?:index(?:\.(?:en|ja|zh-TW|ko))?\.html)?$/.test(document.location.pathname)) {

@@ -15,8 +15,7 @@ export function getIntroURL(code) {
 
 export const pageMetadataKeys = {
   name: '咚咔绘板',
-  displayName: '咚咔绘板 · DonKanvas',
-  title: '咚咔绘板 · DonKanvas - 在线 TJA 太鼓谱面编辑器',
+  title: '在线 TJA 太鼓谱面编辑器',
   description: '咚咔绘板是免费的在线 TJA 太鼓谱面编辑器，支持手机、平板和桌面，以触控手势和键盘快捷键便捷制谱，提供音频波形、分歧编排与播放预览。文件本地处理，无需上传。',
   socialDescription: '手机、平板、桌面均可使用的免费在线 TJA 编辑器。通过触控手势与键盘快捷键高效制谱，结合音频波形编排音符和分歧、播放预览，文件无需上传。',
   imageAlt: '咚咔绘板红色太鼓音符图标',
@@ -26,16 +25,42 @@ export const pageMetadataKeys = {
 export function getPageMetadata(code = 'zh-CN') {
   const index = ['en', 'ja', 'zh-TW', 'ko'].indexOf(code);
   const metadata = Object.fromEntries(Object.entries(pageMetadataKeys).map(([name, key]) => [name, index < 0 ? key : translations[key][index]]));
-  return { ...metadata, alternateName: metadata.name === 'DonKanvas' ? undefined : 'DonKanvas' };
+  const alternateName = metadata.name === 'DonKanvas' ? undefined : 'DonKanvas';
+  const displayName = alternateName ? `${metadata.name} · ${alternateName}` : metadata.name;
+  return { ...metadata, alternateName, displayName, title: `${displayName} - ${metadata.title}` };
+}
+
+export function getPageMetaTags(code) {
+  const metadata = getPageMetadata(code);
+  return {
+    'application-name': metadata.name,
+    'og:site_name': metadata.name,
+    description: metadata.description,
+    'og:title': metadata.title,
+    'og:description': metadata.socialDescription,
+    'og:image:alt': metadata.imageAlt,
+    'og:locale': pageLocales[code],
+    'og:url': getPageURL(code),
+    'twitter:title': metadata.title,
+    'twitter:description': metadata.socialDescription,
+    'twitter:image:alt': metadata.imageAlt
+  };
+}
+
+export function getApplicationMetadata(code) {
+  const metadata = getPageMetadata(code);
+  return {
+    name: metadata.name, alternateName: metadata.alternateName,
+    description: metadata.applicationDescription, inLanguage: code, url: getPageURL(code)
+  };
 }
 
 export const translations = {
   [pageMetadataKeys.name]: ['DonKanvas', 'ドンカッボード', '咚咔繪板', '동캇보드'],
-  [pageMetadataKeys.displayName]: ['DonKanvas', 'ドンカッボード · DonKanvas', '咚咔繪板 · DonKanvas', '동캇보드 · DonKanvas'],
   '应用介绍与使用指南': ['About and getting started', 'アプリ紹介・使い方', '應用介紹與使用指南', '앱 소개 및 사용 안내'],
   '标准': ['Standard', '標準', '標準', '표준'],
   '以标准网格宽度为缩放参考': ['Zoom relative to the standard grid width', '標準のグリッド幅を基準に拡大縮小', '以標準網格寬度為縮放參考', '표준 그리드 너비를 기준으로 확대/축소'],
-  [pageMetadataKeys.title]: ['DonKanvas - Online TJA Chart Editor', 'ドンカッボード · DonKanvas - オンライン TJA 太鼓譜面エディター', '咚咔繪板 · DonKanvas - 線上 TJA 太鼓譜面編輯器', '동캇보드 · DonKanvas - 온라인 TJA 태고 채보 편집기'],
+  [pageMetadataKeys.title]: ['Online TJA Chart Editor', 'オンライン TJA 太鼓譜面エディター', '線上 TJA 太鼓譜面編輯器', '온라인 TJA 태고 채보 편집기'],
   [pageMetadataKeys.description]: ['DonKanvas is a free online TJA editor for Taiko no Tatsujin on phones, tablets and desktops. Edit with touch gestures and keyboard shortcuts, audio waveforms, branching and playback previews. Files stay local; no uploads.', 'ドンカッボードはスマートフォン・タブレット・デスクトップ対応の無料オンライン TJA 太鼓譜面エディターです。タッチジェスチャーとキーボードショートカットで手軽に編集。音声波形・譜面分岐・再生プレビューに対応し、ファイルのアップロードは不要です。', '咚咔繪板是免費的線上 TJA 太鼓譜面編輯器，支援手機、平板和桌面，以觸控手勢和鍵盤快捷鍵輕鬆製譜，提供音訊波形、分歧編排與播放預覽。檔案本機處理，無需上傳。', '동캇보드는 스마트폰, 태블릿, 데스크톱을 지원하는 무료 온라인 TJA 태고 채보 편집기입니다. 터치 제스처와 키보드 단축키로 편리하게 편집하고 오디오 파형, 채보 분기, 재생 미리보기를 활용하세요. 파일은 로컬에서 처리되며 업로드가 필요 없습니다.'],
   [pageMetadataKeys.socialDescription]: ['Create TJA charts on phones, tablets and desktops with touch gestures and keyboard shortcuts. Free visual editing with audio waveforms, branching and playback previews; no uploads.', 'スマートフォン・タブレット・デスクトップで使える無料オンライン TJA エディター。タッチジェスチャーとキーボードショートカットで効率よく譜面作成。音声波形・分岐・再生プレビューに対応し、アップロードは不要です。', '手機、平板、桌面皆可使用的免費線上 TJA 編輯器。透過觸控手勢與鍵盤快捷鍵高效製譜，結合音訊波形編排音符和分歧、播放預覽，檔案無需上傳。', '스마트폰, 태블릿, 데스크톱에서 터치 제스처와 키보드 단축키로 편리하게 TJA 채보를 만드세요. 오디오 파형, 분기, 재생 미리보기를 지원하는 무료 편집기이며 업로드가 필요 없습니다.'],
   [pageMetadataKeys.imageAlt]: ['DonKanvas red taiko note icon', 'ドンカッボードの赤い太鼓音符アイコン', '咚咔繪板紅色太鼓音符圖示', '동캇보드 빨간 태고 음표 아이콘'],

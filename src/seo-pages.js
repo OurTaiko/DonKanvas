@@ -1,4 +1,4 @@
-import { getIntroPath, getIntroURL, getPageMetadata, getPageURL, pageLocales } from './locales.js';
+import { getIntroPath, getIntroURL, getPageMetadata, getPageURL, getApplicationMetadata, pageLocales } from './locales.js';
 
 const content = {
   'zh-CN': {
@@ -119,8 +119,8 @@ ${alternates}
 <link rel="icon" type="image/png" href="./icons/icon-192.png">
 <script type="application/ld+json">${JSON.stringify({
     '@context': 'https://schema.org', '@type': 'WebPage', name: page.heading, url, inLanguage: code,
-    description: page.intro, about: { '@type': 'WebApplication', name: metadata.name, alternateName: metadata.alternateName, url: getPageURL(code),
-      description: metadata.applicationDescription, applicationCategory: 'MultimediaApplication', operatingSystem: 'Web', isAccessibleForFree: true }
+    description: page.intro, about: { '@type': 'WebApplication', ...getApplicationMetadata(code),
+      applicationCategory: 'MultimediaApplication', operatingSystem: 'Web', isAccessibleForFree: true }
   }).replaceAll('<', '\\u003c')}</script>
 <style>
 :root{font-family:system-ui,sans-serif;color:#202a28;background:#f5f7f4;line-height:1.8}

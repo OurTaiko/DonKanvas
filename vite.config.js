@@ -2,25 +2,13 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import { VitePWA } from 'vite-plugin-pwa';
 import { parse, serialize } from 'parse5';
-import { getIntroPath, getPageMetadata, getPageURL, pageLocales } from './src/locales.js';
+import { getIntroPath, getPageMetadata, getPageURL, pageLocales, getPageMetaTags, getApplicationMetadata } from './src/locales.js';
 import { renderIntroPage, renderSitemap } from './src/seo-pages.js';
 
 function localizePage(html, code) {
   const document = parse(html);
   const metadata = getPageMetadata(code);
-  const values = {
-    'application-name': metadata.name,
-    'og:site_name': metadata.name,
-    description: metadata.description,
-    'og:title': metadata.title,
-    'og:description': metadata.socialDescription,
-    'og:image:alt': metadata.imageAlt,
-    'og:locale': pageLocales[code],
-    'og:url': getPageURL(code),
-    'twitter:title': metadata.title,
-    'twitter:description': metadata.socialDescription,
-    'twitter:image:alt': metadata.imageAlt
-  };
+  const values = getPageMetaTags(code);
   function visit(node) {
     const attributes = Object.fromEntries((node.attrs || []).map(attribute => [attribute.name, attribute.value]));
     const setAttribute = (name, value) => {
@@ -35,7 +23,7 @@ function localizePage(html, code) {
     if (node.tagName === 'link' && attributes.rel === 'canonical') setAttribute('href', getPageURL(code));
     if (node.tagName === 'script' && attributes.type === 'application/ld+json') {
       const application = JSON.parse(node.childNodes.map(child => child.value).join(''));
-      Object.assign(application, { name: metadata.name, alternateName: metadata.alternateName, description: metadata.applicationDescription, inLanguage: code, url: getPageURL(code) });
+      Object.assign(application, getApplicationMetadata(code));
       setText(JSON.stringify(application));
     }
     if (node.tagName === 'head') {
@@ -84,6 +72,8 @@ function localizedPages() {
   };
 }
 
+const defaultMetadata = getPageMetadata('zh-CN');
+
 export default defineConfig({
   base: './',
   plugins: [
@@ -95,9 +85,9 @@ export default defineConfig({
       includeAssets: ['icons/*.png'],
       manifest: {
         id: './',
-        name: getPageMetadata('zh-CN').name,
-        short_name: getPageMetadata('zh-CN').name,
-        description: getPageMetadata('zh-CN').applicationDescription,
+        name: defaultMetadata.name,
+        short_name: defaultMetadata.name,
+        description: defaultMetadata.applicationDescription,
         lang: 'zh-CN',
         start_url: './',
         scope: './',
