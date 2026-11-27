@@ -279,7 +279,7 @@ function draw() {
     for (let beat = 0; beat < item.numerator; beat++) { const pos = x(barTimeAt(item, beat / item.numerator)); brush.fillStyle = '#859087'; brush.font = '9px Studio, sans-serif'; brush.fillText(String(beat + 1), pos + 4, height - 4); }
   }
   brush.strokeStyle = '#b7c8bc'; brush.lineWidth = 1; brush.beginPath(); brush.moveTo(TIMELINE_GUTTER, noteY); brush.lineTo(TIMELINE_GUTTER + width, noteY); brush.stroke();
-  for (const span of spans.value) drawLongSpan(brush, span, x, noteY, start, end);
+  for (const span of spans.value) drawLongSpan(brush, span, x, noteY, timeAt(0), timeAt(waveformWidth));
   for (const item of bars) for (let index = 0; index < item.notes.length; index++) {
     const note = item.notes[index]; if (note !== '0') drawNote(brush, note, x(barTimeAt(item, index / item.notes.length)), noteY);
   }

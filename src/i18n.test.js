@@ -159,14 +159,14 @@ test('timeline waveform and note gutters have independent masks while audio boun
     timeAt: beat => beat <= 50 ? beat : 50 + (beat - 50) / 2
   };
   for (const landscape of [false, true]) for (const height of [150, 250, 400]) for (const width of [80, 192]) for (const startBeat of [0, 45, 145]) {
-    const timelineBrush = brush(), overviewBrush = brush(), beats = 20;
+    const timelineBrush = brush(), overviewBrush = brush(), beats = 20, longRanges = [];
     const view = { bars: [], startBeat, start: scale.timeAt(startBeat), end: scale.timeAt(startBeat + beats) };
     const timeline = { value: { style: {} } }, overview = { value: {} };
     const state = { chart: { bars: [] }, buffer: { duration: 100 }, peaks: [...Array(500).fill(.25), ...Array(500).fill(.75)], position: -100 };
     const draw = runInNewContext(`${source}; draw`, {
       props: { landscape }, state, timeline, overview, visible: { value: view }, viewportWidth: { value: width }, viewBeats: { value: beats },
       timelineScale: { value: scale }, timelineBounds: { value: { start: 0, end: 100 } },
-      spans: { value: [] }, hover: { value: null }, TIMELINE_GUTTER, createTimelineViewport, syncScroll() {}, t: text => text,
+      spans: { value: [{}] }, drawLongSpan: (brush, span, x, noteY, start, end) => longRanges.push([start, end]), hover: { value: null }, TIMELINE_GUTTER, createTimelineViewport, syncScroll() {}, t: text => text,
       canvasContext: canvas => ({ brush: canvas === timeline.value ? timelineBrush : overviewBrush, width: width + TIMELINE_GUTTER * 2, height })
     });
     draw();
@@ -184,6 +184,7 @@ test('timeline waveform and note gutters have independent masks while audio boun
     const waveform = timelineBrush.rectangles.filter(rect => rect.color === '#72a592');
     assert.ok(waveform.every(rect => rect.y >= waveArea.y && rect.y + rect.height <= waveArea.y + waveArea.height));
     const projection = createTimelineViewport(scale, view, beats, width), fullWidth = width + TIMELINE_GUTTER * 2;
+    assert.deepEqual(longRanges, [[projection.timeAt(0), projection.timeAt(fullWidth)]]);
     const audiblePixels = Array.from({ length: fullWidth }, (_, x) => x).filter(x => projection.timeAt(x + 1) > 0 && projection.timeAt(x) < 100);
     assert.deepEqual(waveform.map(rect => rect.x), audiblePixels);
     if (startBeat === 45) {

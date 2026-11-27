@@ -14,7 +14,10 @@ export function drawLongSpan(brush, span, x, noteY, start, end) {
   if (balloon) {
     brush.lineWidth = 4; brush.lineCap = 'round'; brush.beginPath(); brush.moveTo(left,noteY); brush.lineTo(right,noteY); brush.stroke();
   } else {
-    brush.lineWidth = 1.5; brush.beginPath(); brush.roundRect(left,noteY - thickness / 2,Math.max(1,right - left),thickness,thickness / 2); brush.fill(); brush.stroke();
+    const radius = thickness / 2;
+    const leftRadius = span.start < start ? 0 : radius, rightRadius = span.end > end ? 0 : radius;
+    const corners = leftRadius === radius && rightRadius === radius ? radius : [leftRadius,rightRadius,rightRadius,leftRadius];
+    brush.lineWidth = 1.5; brush.beginPath(); brush.roundRect(left,noteY - thickness / 2,Math.max(1,right - left),thickness,corners); brush.fill(); brush.stroke();
   }
   brush.restore();
 }

@@ -41,6 +41,24 @@ test('large rolls have a larger round head and a fully rounded thicker body', ()
     assert.ok(body.calls.some(call => call[0] === 'roundRect' && call[4] === thickness && call[5] === thickness / 2));
   }
 });
+test('rolls round only real endpoints and keep clipped ends flat', () => {
+  for (const [note, radius] of [['5', 6.5], ['6', 11.5]]) {
+    for (const [start, end, corners] of [
+      [2, 8, [0, 0, 0, 0]],
+      [0, 8, [radius, 0, 0, radius]],
+      [2, 10, [0, radius, radius, 0]],
+      [0, 10, radius]
+    ]) {
+      const { brush, calls } = recorder();
+      drawLongSpan(brush, { note, start: 0, end: 10, complete: true }, time => time * 10, 30, start, end);
+      const body = calls.find(call => call[0] === 'roundRect');
+      assert.deepEqual(body[5], corners, `${note}: ${start}–${end}`);
+      assert.equal(body[1], start * 10);
+      assert.equal(body[3], (end - start) * 10);
+    }
+  }
+});
+
 test('unfinished spans are dashed and offscreen spans are skipped', () => {
   const unfinished = recorder(), offscreen = recorder();
   drawLongSpan(unfinished.brush,{note:'5',start:0,end:3,complete:false},time => time,30,0,4);
