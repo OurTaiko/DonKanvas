@@ -54,6 +54,15 @@ function* countedBalloons(text, chart, fields) {
   }
 }
 
+export function balloonNoteCounts(text, chart) {
+  const counts = new Map();
+  if (!chart?.bars.length) return counts;
+  for (const { bar, index, count } of countedBalloons(text, chart, countFields(text, chart))) {
+    counts.set(`${bar.comma}:${index}`, count);
+  }
+  return counts;
+}
+
 export function balloonInfo(text, chart, cell) {
   const selected = chart.bars[cell.bar];
   if (!selected) return { ordinal: -1 };

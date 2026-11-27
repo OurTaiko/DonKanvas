@@ -26,18 +26,18 @@ export function noteHitRadius(note) {
   return '346AB'.includes(note) ? 14 : '79'.includes(note) ? 16 : note === '8' ? 9 : 10;
 }
 
-export function drawNoteSelection(brush, note, pos, noteY) {
+export function drawNoteSelection(brush, note, pos, noteY, balloonCount) {
   brush.save();
   brush.strokeStyle = '#2457d6'; brush.lineWidth = 1;
   brush.setLineDash([]);
   brush.beginPath(); brush.moveTo(pos, 23); brush.lineTo(pos, noteY); brush.stroke();
   if (note === '0') {
     brush.setLineDash([3, 3]); brush.beginPath(); brush.arc(pos, noteY, 7, 0, Math.PI * 2); brush.stroke();
-  } else drawNote(brush, note, pos, noteY, true);
+  } else drawNote(brush, note, pos, noteY, true, balloonCount);
   brush.restore();
 }
 
-export function drawNote(brush, note, pos, noteY, selected = false) {
+export function drawNote(brush, note, pos, noteY, selected = false, balloonCount) {
   brush.save();
   brush.lineWidth = 2; brush.strokeStyle = selected ? '#2457d6' : '#fff';
   if ('79'.includes(note)) {
@@ -49,8 +49,15 @@ export function drawNote(brush, note, pos, noteY, selected = false) {
     else brush.ellipse(pos,noteY - 1,12,11,0,0,Math.PI * 2);
     brush.fill(); brush.stroke();
     brush.fillStyle = ink;
-    for (const offset of [-4,4]) { brush.beginPath(); brush.arc(pos + offset,noteY - 3,1.5,0,Math.PI * 2); brush.fill(); }
-    brush.strokeStyle = ink; brush.lineWidth = 1.5; brush.beginPath(); brush.arc(pos,noteY + 1,4,0,Math.PI); brush.stroke();
+    if (Number.isSafeInteger(balloonCount) && balloonCount > 0) {
+      brush.save();
+      brush.font = 'bold 11px Studio, sans-serif'; brush.textAlign = 'center'; brush.textBaseline = 'middle';
+      brush.fillText(String(balloonCount),pos,noteY,20);
+      brush.restore();
+    } else {
+      for (const offset of [-4,4]) { brush.beginPath(); brush.arc(pos + offset,noteY - 3,1.5,0,Math.PI * 2); brush.fill(); }
+      brush.strokeStyle = ink; brush.lineWidth = 1.5; brush.beginPath(); brush.arc(pos,noteY + 1,4,0,Math.PI); brush.stroke();
+    }
   } else if (note === '8') {
     brush.fillStyle = '#57685f'; brush.beginPath(); brush.moveTo(pos,noteY - 10); brush.lineTo(pos + 8,noteY); brush.lineTo(pos,noteY + 10); brush.lineTo(pos - 8,noteY); brush.closePath(); brush.fill(); brush.stroke();
   } else if ('56'.includes(note)) {

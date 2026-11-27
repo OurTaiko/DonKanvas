@@ -23,6 +23,25 @@ test('balloons have bright flat faces, distinct round and rounded-square bodies,
     assert.ok(!result.calls.some(call => call[0] === 'fillText'));
   }
 });
+test('balloon hit counts are centered inside the note and survive selection', () => {
+  for (const note of ['7', '9']) for (const count of [1, 24, 999, 123456]) {
+    for (const selected of [false, true]) {
+      const { brush, calls, styles } = recorder();
+      if (selected) drawNoteSelection(brush, note, 100, 60, count);
+      else drawNote(brush, note, 100, 60, false, count);
+      assert.deepEqual(calls.find(call => call[0] === 'fillText'), ['fillText', String(count), 100, 60, 20]);
+      assert.ok(styles.some(([name, value]) => name === 'textAlign' && value === 'center'));
+      assert.ok(styles.some(([name, value]) => name === 'textBaseline' && value === 'middle'));
+      assert.equal(calls.some(call => call[0] === 'arc' && call[3] === 1.5), false);
+    }
+  }
+  for (const count of [undefined, 0, -1, 1.5, NaN, Infinity]) {
+    const { brush, calls } = recorder();
+    drawNote(brush, '7', 100, 60, false, count);
+    assert.equal(calls.some(call => call[0] === 'fillText'), false);
+  }
+});
+
 test('roll draws a connected capsule while balloon draws a rounded duration guide', () => {
   const roll = recorder(), balloon = recorder();
   const span = {note:'5',start:0,end:3,complete:true};

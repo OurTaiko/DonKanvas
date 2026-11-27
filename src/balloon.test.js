@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TJAParser } from 'tja';
 import { parseChart } from './chart.js';
-import { balloonCounts, balloonIndex, setBalloonCount, replaceBarWithBalloons, replaceBarSourceWithBalloons, copyMeasures, pasteMeasures } from './balloon.js';
+import { balloonCounts, balloonIndex, balloonNoteCounts, balloonInfo, setBalloonCount, replaceBarWithBalloons, replaceBarSourceWithBalloons, copyMeasures, pasteMeasures } from './balloon.js';
 
 const source = 'TITLE:Test\nBPM:120\nCOURSE:Oni\nBALLOON:12,24 // keep\n#START\n7080,\n9080,\n#END\nCOURSE:Easy\nBALLOON:30\n#START\n7080,\n#END\n';
 test('balloons map to counts in chart order and stay scoped to the current course', () => {
@@ -14,6 +14,19 @@ test('balloons map to counts in chart order and stay scoped to the current cours
   assert.ok(edited.includes('// keep'));
   assert.equal(parseChart(edited, TJAParser).bars[1].notes, '9080');
 });
+test('rendered balloon counts match inspector counts across courses and branch pools', () => {
+  const branch = 'TITLE:Branch\nBPM:120\nCOURSE:Oni\nBALLOON:5\nBALLOONNOR:11,12\nBALLOONEXP:21,22\nBALLOONMAS:31,32\n#START\n7080,\n#BRANCHSTART p,50,80\n#N\n7080,\n9080,\n#E\n7080,\n9080,\n#M\n7080,\n9080,\n#BRANCHEND\n#END\n';
+  for (const [text, course, routes] of [[source, 0, []], [source, 1, []], [branch, 0, ['N']], [branch, 0, ['E']], [branch, 0, ['M']], [source.replace('12,24', '12'), 0, []]]) {
+    const chart = parseChart(text, TJAParser, course, routes);
+    const counts = balloonNoteCounts(text, chart);
+    for (const bar of chart.bars) for (let index = 0; index < bar.notes.length; index++) {
+      if (!'79'.includes(bar.notes[index])) continue;
+      assert.equal(counts.get(`${bar.comma}:${index}`), balloonInfo(text, chart, { bar: bar.index, numerator: index, denominator: bar.notes.length }).count);
+    }
+  }
+  assert.equal(balloonNoteCounts('', null).size, 0);
+});
+
 test('missing BALLOON header is inserted with the original newline format', () => {
   const text = source.split('COURSE:Easy')[0].replace('BALLOON:12,24 // keep\n', '').replaceAll('\n', '\r\n');
   const chart = parseChart(text, TJAParser);

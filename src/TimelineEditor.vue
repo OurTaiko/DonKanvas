@@ -11,6 +11,7 @@ import { measureStart, measureEnd } from './loop.js';
 import { SNAP_DIVISIONS } from './grid.js';
 import { NOTE_TYPES, selectCell, cellValue } from './note-model.js';
 import { drawLongSpan, drawNote, drawNoteSelection, noteHitRadius } from './note-render.js';
+import { balloonNoteCounts } from './balloon.js';
 import { createTimelineViewport, TIMELINE_GUTTER } from './timeline.js';
 import { formatTime } from './useStudio.js';
 
@@ -81,6 +82,7 @@ const balloonHits = computed(() => {
   const { balloon, special } = chartStats.value;
   return balloon === null || special === null ? null : balloon + special;
 });
+const balloonNotes = computed(() => balloonNoteCounts(state.text, state.chart));
 const positionSummary = computed(() => {
   const timing = selectedTiming.value;
   if (!timing) return null;
@@ -281,11 +283,11 @@ function draw() {
   brush.strokeStyle = '#b7c8bc'; brush.lineWidth = 1; brush.beginPath(); brush.moveTo(TIMELINE_GUTTER, noteY); brush.lineTo(TIMELINE_GUTTER + width, noteY); brush.stroke();
   for (const span of spans.value) drawLongSpan(brush, span, x, noteY, timeAt(0), timeAt(waveformWidth));
   for (const item of bars) for (let index = 0; index < item.notes.length; index++) {
-    const note = item.notes[index]; if (note !== '0') drawNote(brush, note, x(barTimeAt(item, index / item.notes.length)), noteY);
+    const note = item.notes[index]; if (note !== '0') drawNote(brush, note, x(barTimeAt(item, index / item.notes.length)), noteY, false, balloonNotes.value.get(`${item.comma}:${index}`));
   }
   if (state.selectedCell) {
     const selected = state.selectedCell, item = bars.find(item => item.index === selected.bar);
-    if (item) drawNoteSelection(brush, cellValue(item.notes, selected), x(barTimeAt(item, selected.numerator / selected.denominator)), noteY);
+    if (item) drawNoteSelection(brush, cellValue(item.notes, selected), x(barTimeAt(item, selected.numerator / selected.denominator)), noteY, balloonNotes.value.get(`${item.comma}:${selected.numerator * item.notes.length / selected.denominator}`));
   }
   if (hover.value) {
     const item = bars.find(item => item.index === hover.value.bar);
