@@ -891,7 +891,7 @@ export function useStudio() {
         panTimeline(scale.timeAt(start + (key === 'arrowleft' ? -1 : 1) * viewBeats.value / 8), true, true);
       } else if (key === 'a' || key === 'd') moveCell(key === 'a' ? -1 : 1);
       else {
-        const next = key === 'w' ? SNAP_DIVISIONS.find(value => value > controls.snap) ?? MAX_SNAP_DIVISIONS : SNAP_DIVISIONS.findLast(value => value < controls.snap) ?? 1;
+        const next = key === 'w' ? SNAP_DIVISIONS.find(value => value > controls.snap) ?? SNAP_DIVISIONS.at(-1) : SNAP_DIVISIONS.findLast(value => value < controls.snap) ?? 1;
         setSnap(next); controls.snapChoice = SNAP_DIVISIONS.includes(next) ? String(next) : 'custom';
       }
     }

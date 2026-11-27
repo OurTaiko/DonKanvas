@@ -12,6 +12,7 @@ import { NOTE_TYPES, longNoteSpans } from './note-model.js';
 import { createTimelineViewport, TIMELINE_GUTTER } from './timeline.js';
 import { measureStart, measureEnd } from './loop.js';
 import { formatTime } from './useStudio.js';
+import { SNAP_DIVISIONS } from './grid.js';
 import { languages, locale, localePreference, matchLocale, detectLocale, initializeLocale, setLocale, LOCALE_KEY, t, message, formatMessage, LocalizedError } from './i18n.js';
 
 const reset = () => { locale.value = 'zh-CN'; localePreference.value = 'auto'; };
@@ -282,16 +283,18 @@ function touchSelectionHarness() {
   const source = script.slice(script.indexOf('const touchGuide = ref(false);'), script.indexOf('let overviewDrag = null;'));
   const timers = new Map(), moves = [], scrolls = [], captures = new Set(), playback = [], selections = [], pans = [];
   const state = reactive({ chart: { bars: [] }, selectedCell: { bar: 0 }, invalid: false, editorBlocked: false, playing: false, position: 0 });
+  const controls = reactive({ snap: 16, snapChoice: '16', customSnap: 16 });
   let now = 0, timerId = 0;
   const target = {
     setPointerCapture: id => captures.add(id),
     hasPointerCapture: id => captures.has(id),
     releasePointerCapture: id => captures.delete(id)
   };
-  const handlers = runInNewContext(`${source}; ({ startTouchSelection, moveTouchSelection, finishTouchSelection, cancelTouchSelection, touchGuide, pointerDown, pointerMove, cancelWaveformHold })`, {
-    props: { landscape: false }, ref, watch, state, hover: ref(null),
+  const handlers = runInNewContext(`${source}; ({ startTouchSelection, moveTouchSelection, finishTouchSelection, cancelTouchSelection, touchGuide, pointerDown, pointerMove, cancelWaveformHold, controls })`, {
+    props: { landscape: false }, ref, watch, state, controls, snaps: SNAP_DIVISIONS, hover: ref(null),
     studio: {
       moveCell: direction => moves.push(direction),
+      setSnap: value => { controls.snap = value; controls.customSnap = value; },
       seek: time => { state.position = time; playback.push(['seek', time]); },
       seekMeasure: direction => { state.position += direction * 2; playback.push(['measure', direction]); },
       panTimeline: (time, manual) => { pans.push([time, manual]); if (manual) state.followPlayback = false; },
@@ -401,6 +404,47 @@ test('touch long press guides selection and converts horizontal distance to reve
   touch.finishTouchSelection(touch.event(124));
   assert.equal(touch.touchGuide.value, false); assert.equal(touch.captures.size, 0);
   touch.moveTouchSelection(touch.event(196)); assert.equal(touch.moves.length, 5);
+});
+
+test('touch long press adjusts grids vertically and locks one axis until release', () => {
+  const touch = touchSelectionHarness();
+  touch.startTouchSelection(touch.event(), true); touch.advance(450);
+  touch.moveTouchSelection(touch.event(110, { clientY: 53 }));
+  assert.equal(touch.controls.snap, 16);
+  touch.moveTouchSelection(touch.event(110, { clientY: 52 }));
+  assert.equal(touch.controls.snap, 24);
+  assert.equal(touch.controls.snapChoice, '24');
+  touch.moveTouchSelection(touch.event(220, { clientY: -44 }));
+  assert.equal(touch.controls.snap, 48);
+  assert.deepEqual(touch.moves, []);
+  touch.moveTouchSelection(touch.event(220, { clientY: 100 }));
+  assert.equal(touch.controls.snap, 16);
+  touch.finishTouchSelection(touch.event());
+  touch.startTouchSelection(touch.event(), true); touch.advance(450);
+  touch.moveTouchSelection(touch.event(124, { clientY: 110 }));
+  touch.moveTouchSelection(touch.event(148, { clientY: 220 }));
+  assert.deepEqual(touch.moves, [1, 1]);
+  assert.equal(touch.controls.snap, 16);
+});
+
+test('touch grid adjustment supports custom grids and clamps at shortcut limits', () => {
+  const touch = touchSelectionHarness();
+  touch.controls.snap = 7;
+  touch.startTouchSelection(touch.event(), true); touch.advance(450);
+  touch.moveTouchSelection(touch.event(100, { clientY: 52 }));
+  assert.equal(touch.controls.snap, 8);
+  touch.moveTouchSelection(touch.event(100, { clientY: -908 }));
+  assert.equal(touch.controls.snap, 128);
+  assert.equal(touch.controls.snapChoice, '128');
+  assert.equal(touch.controls.customSnap, 128);
+  touch.controls.snap = 200;
+  touch.moveTouchSelection(touch.event(100, { clientY: -956 }));
+  assert.equal(touch.controls.snap, 128);
+  touch.moveTouchSelection(touch.event(100, { clientY: 532 }));
+  assert.equal(touch.controls.snap, 1);
+  assert.equal(touch.controls.snapChoice, 'custom');
+  assert.equal(touch.controls.customSnap, 1);
+  assert.deepEqual(touch.moves, []);
 });
 
 test('ordinary touch swipes browse without activating selection adjustment and canceled holds stay inactive', () => {
@@ -628,7 +672,8 @@ test('overview dragging pans continuously without seeking or changing selections
   ]) assert.ok(canvas.includes(`@${eventName}="${handler}"`));
   assert.doesNotMatch(canvas, /@click=/);
   assert.match(descriptor.template.content, /^\s*<div class="workspace">\s*<section class="editor">/);
-  assert.match(descriptor.template.content, /<\/canvas><\/div><\/div><div v-if="touchGuide" class="touch-selection-guide"[^>]*><ChevronsLeft[^>]*\/><ChevronsRight[^>]*\/><\/div><\/div>\s*<section class="overview">[\s\S]*?<\/section>\s*<div class="editor-information">\s*<div class="editor-information-left">\s*<Teleport[^>]*>\s*<section class="cell-inspector"/);
+  assert.match(descriptor.template.content, /<\/canvas><\/div><\/div><div v-if="touchGuide" class="touch-selection-guide"[^>]*><ChevronsLeft[^>]*\/><span[^>]*class="touch-grid-guide"><ChevronsUp[^>]*\/><output>\{\{ controls.snap \}\}[\s\S]*?<ChevronsDown[^>]*\/><\/span><ChevronsRight[^>]*\/><\/div><\/div>\s*<section class="overview">[\s\S]*?<\/section>\s*<div class="editor-information">\s*<div class="editor-information-left">\s*<Teleport[^>]*>\s*<section class="cell-inspector"/);
+  assert.match(descriptor.styles[0].content, /\.timeline-frame #timeline\{[^}]*touch-action:none/);
   const styles = readFileSync(new URL('sound.css', import.meta.url), 'utf8');
   assert.match(styles, /\.timeline-wrap\{[^}]*overflow-x:auto;[^}]*scrollbar-width:none/);
   assert.match(styles, /\.timeline-wrap::-webkit-scrollbar\{display:none\}/);

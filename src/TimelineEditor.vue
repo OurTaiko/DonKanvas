@@ -1,7 +1,7 @@
 <script setup>
 import { t } from './i18n.js';
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue';
-import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map, TriangleAlert, Ellipsis, Check, ChevronRight, ZoomIn, Crosshair, Maximize2, Ruler, ChevronsLeft, ChevronsRight } from '@lucide/vue';
+import { BetweenHorizontalStart, BetweenHorizontalEnd, Trash2, Undo2, Redo2, X, Grid2X2, Map, TriangleAlert, Ellipsis, Check, ChevronRight, ZoomIn, Crosshair, Maximize2, Ruler, ChevronsLeft, ChevronsRight, ChevronsUp, ChevronsDown } from '@lucide/vue';
 import SectionHeading from './SectionHeading.vue';
 import PositionIcon from './PositionIcon.vue';
 import BranchControls from './BranchControls.vue';
@@ -332,6 +332,7 @@ function timelineCell(item, time, x) {
   return selected;
 }
 const touchGuide = ref(false);
+const touchAxis = ref('');
 let touchGesture = null;
 let waveformHold = null;
 function cancelWaveformHold(event) {
@@ -357,14 +358,15 @@ function moveWaveformHold(event) {
 }
 function cancelTouchSelection() {
   const gesture = touchGesture;
-  touchGesture = null; touchGuide.value = false;
+  touchGesture = null; touchGuide.value = false; touchAxis.value = '';
   if (!gesture) return;
   clearTimeout(gesture.timer);
   if (gesture.target.hasPointerCapture(gesture.pointerId)) gesture.target.releasePointerCapture(gesture.pointerId);
 }
 function startTouchSelection(event, allowHold) {
   if (event.pointerType !== 'touch') return;
-  const gesture = { pointerId: event.pointerId, target: event.currentTarget, startX: event.clientX, startY: event.clientY, lastX: event.clientX, scrollLeft: viewport.value.scrollLeft, active: false, timer: null };
+  touchAxis.value = '';
+  const gesture = { pointerId: event.pointerId, target: event.currentTarget, startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY, axis: null, scrollLeft: viewport.value.scrollLeft, active: false, timer: null };
   touchGesture = gesture;
   gesture.target.setPointerCapture(gesture.pointerId);
   if (allowHold) gesture.timer = setTimeout(() => {
@@ -377,6 +379,7 @@ function moveTouchSelection(event) {
   if (!gesture || event.pointerId !== gesture.pointerId) return false;
   if (!gesture.active) {
     gesture.lastX = event.clientX;
+    gesture.lastY = event.clientY;
     const dx = event.clientX - gesture.startX, dy = event.clientY - gesture.startY;
     if (Math.hypot(dx, dy) > 8) {
       clearTimeout(gesture.timer);
@@ -385,9 +388,25 @@ function moveTouchSelection(event) {
     return true;
   }
   event.preventDefault();
-  const steps = Math.trunc((event.clientX - gesture.lastX) / 24);
-  gesture.lastX += steps * 24;
-  for (let step = 0; step < Math.abs(steps); step++) studio.moveCell(Math.sign(steps));
+  const dx = event.clientX - gesture.lastX, dy = event.clientY - gesture.lastY;
+  if (!gesture.axis) {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 24) return true;
+    gesture.axis = Math.abs(dx) >= Math.abs(dy) ? 'horizontal' : 'vertical';
+    touchAxis.value = gesture.axis;
+  }
+  const stepSize = gesture.axis === 'horizontal' ? 24 : 48;
+  const steps = Math.trunc((gesture.axis === 'horizontal' ? dx : dy) / stepSize);
+  if (gesture.axis === 'horizontal') {
+    gesture.lastX += steps * stepSize;
+    for (let step = 0; step < Math.abs(steps); step++) studio.moveCell(Math.sign(steps));
+  } else {
+    gesture.lastY += steps * stepSize;
+    for (let step = 0; step < Math.abs(steps); step++) {
+      const next = steps < 0 ? snaps.find(value => value > controls.snap) ?? snaps.at(-1) : snaps.findLast(value => value < controls.snap) ?? 1;
+      studio.setSnap(next);
+      controls.snapChoice = snaps.includes(next) ? String(next) : 'custom';
+    }
+  }
   return true;
 }
 function finishTouchSelection(event) {
@@ -578,7 +597,7 @@ onUnmounted(() => {
           <div class="delete-measure-actions"><button id="delete-measure-cancel" type="button" autofocus @click="closeDeleteMeasure">{{ t('取消') }}</button><button id="delete-measure-confirm" type="button" @click="confirmDeleteMeasure"><Trash2 aria-hidden="true" />{{ t('删除小节') }}</button></div>
         </dialog>
       </Teleport>
-      <div class="timeline-frame"><div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @pointerup="finishTouchSelection" @pointercancel="finishTouchSelection" @lostpointercapture="finishTouchSelection" @contextmenu.prevent></canvas></div></div><div v-if="touchGuide" class="touch-selection-guide" role="status" :aria-label="t('左右滑动微调选择')"><ChevronsLeft aria-hidden="true" /><ChevronsRight aria-hidden="true" /></div></div>
+      <div class="timeline-frame"><div ref="viewport" class="timeline-wrap" tabindex="0" role="region" :aria-label="t('连续谱面时间轴，可用滚轮左右滚动')" @scroll="scrollTimeline" @wheel="wheelTimeline" @keydown="keydownTimeline" @pointerdown.capture="stopScrolling"><div class="timeline-content" :style="{ width: `${contentWidth}px` }"><canvas id="timeline" ref="timeline" role="img" :aria-label="t('音乐波形与可编辑音符网格')" @pointermove="pointerMove" @pointerleave="hover = null" @pointerdown="pointerDown" @pointerup="finishTouchSelection" @pointercancel="finishTouchSelection" @lostpointercapture="finishTouchSelection" @contextmenu.prevent></canvas></div></div><div v-if="touchGuide" class="touch-selection-guide" :data-axis="touchAxis" role="status" :aria-label="t('左右滑动微调选择，上下滑动调整网格；每次仅操作一个方向')"><ChevronsLeft v-if="touchAxis !== 'vertical'" aria-hidden="true" /><span v-if="touchAxis !== 'horizontal'" class="touch-grid-guide"><ChevronsUp aria-hidden="true" /><output>{{ controls.snap }} {{ t('分') }}</output><ChevronsDown aria-hidden="true" /></span><ChevronsRight v-if="touchAxis !== 'vertical'" aria-hidden="true" /></div></div>
       <section class="overview">
         <div class="overview-caption"><span class="overview-legend" :class="{ 'overview-legend-compact': !mobile || landscape }"><span class="overview-gogo" role="img" aria-label="GOGOTIME" title="GOGOTIME"><i class="gogo">{{ !mobile || landscape ? 'G' : '' }}</i><span class="overview-legend-label">GOGOTIME</span></span><span v-for="route in BRANCH_ROUTES" :key="route" class="overview-route" role="img" :aria-label="t(BRANCH_ROUTE_NAMES[route])" :title="t(BRANCH_ROUTE_NAMES[route])"><i :style="{ '--overview-legend-color': branchColor(route) }">{{ !mobile || landscape ? route : '' }}</i><span class="overview-legend-label">{{ t(BRANCH_ROUTE_NAMES[route]) }}</span></span></span><span id="overview-range">{{ visible ? `${formatTime(visible.start)} — ${formatTime(visible.end)}` : '' }}</span></div>
         <div class="overview-wave">
@@ -675,8 +694,9 @@ onUnmounted(() => {
 .chart-statistics{display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;min-width:0;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.chart-statistics>span{white-space:nowrap}.chart-statistics b{font-weight:500;color:var(--ink)}
 .measure-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.measure-actions{display:inline-flex;max-width:100%;margin-right:6px;border:0;border-radius:5px;background:transparent}.measure-actions button{min-width:0;padding:4px 8px;gap:4px;border:0;border-radius:4px;font-size:11px}.measure-actions button svg{width:14px;height:14px}
 .timeline-content{min-width:100%}
-.timeline-frame #timeline{height:235px;position:sticky;left:0;touch-action:pan-y pinch-zoom}
+.timeline-frame #timeline{height:235px;position:sticky;left:0;touch-action:none}
 .touch-selection-guide{position:absolute;z-index:2;left:0;right:0;bottom:min(16px,10.666667%);height:min(60px,40%);display:flex;align-items:center;justify-content:space-between;padding:0 36px;background:#0006;color:var(--green);pointer-events:none}.touch-selection-guide>svg{width:40px;height:40px;max-height:100%;filter:drop-shadow(1px 0 0 #ccc) drop-shadow(-1px 0 0 #ccc) drop-shadow(0 1px 0 #ccc) drop-shadow(0 -1px 0 #ccc);animation:touch-selection-left .7s ease-in-out infinite alternate}.touch-selection-guide>svg:last-child{animation-name:touch-selection-right}
+.touch-grid-guide{position:absolute;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;justify-content:center;max-height:100%;color:#e2f5e8;font-size:12px;line-height:16px;font-weight:700}.touch-grid-guide svg{width:18px;height:16px;flex-shrink:1;min-height:0}.touch-grid-guide output{white-space:nowrap}
 @keyframes touch-selection-left{to{transform:translateX(-4px)}}
 @keyframes touch-selection-right{to{transform:translateX(4px)}}
 @media(prefers-reduced-motion:reduce){.touch-selection-guide>svg{animation:none}}

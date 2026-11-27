@@ -26,7 +26,7 @@ test('guide opens once, selects a device, navigates and can be reopened', () => 
   assert.equal(model.dialog.value.open, true);
   assert.equal(model.device.value, '');
   model.device.value = 'touch';
-  assert.equal(model.steps.value.length, 8);
+  assert.equal(model.steps.value.length, 9);
   model.next();
   assert.equal(model.step.value, 1);
   model.previous(); model.previous();
@@ -105,7 +105,7 @@ test('touch demonstrations show adjustment overlay, gray edges and hold-to-play 
   assert.equal(scene('hold', 2).playing, true);
   assert.ok(scene('hold', 3).playhead > scene('hold', 2).playhead);
   const { descriptor } = parse(readFileSync(new URL('WelcomeGuide.vue', import.meta.url), 'utf8'));
-  assert.match(descriptor.template.content, /v-if="demo.adjusting" class="mock-adjustment"><ChevronsLeft \/><ChevronsRight \/>/);
+  assert.match(descriptor.template.content, /v-if="demo.adjusting" class="mock-adjustment"[\s\S]*?<template v-else><ChevronsLeft \/><ChevronsRight \/>/);
   assert.match(descriptor.styles.map(item => item.content).join('\n'), /\.mock-adjustment\{[^}]*background:#0006/);
   assert.match(descriptor.styles.map(item => item.content).join('\n'), /\.scene-move \.mock-selection\{transform:translateX\(-50%\);transition:none\}/);
 });
@@ -133,6 +133,39 @@ test('touch distance advances selection only at 24px thresholds, stopping at gri
   assert.equal(frame(112).selection, 37.5);
   assert.equal(frame(112).pointerOffset, 0);
   assert.equal(frame(112).adjusting, false);
+});
+
+test('touch grid lesson follows selection adjustment and changes density only every 48px', () => {
+  const model = guide({ getItem: () => '1' });
+  model.device.value = 'desktop';
+  assert.equal(model.steps.value.some(item => item.scene === 'grid'), false);
+  model.device.value = 'touch';
+  const index = model.steps.value.findIndex(item => item.scene === 'grid');
+  assert.equal(model.steps.value[index - 1].scene, 'move');
+  assert.match(model.steps.value[index].description, /48px[\s\S]*128 分[\s\S]*锁定/);
+  model.step.value = index;
+  function frame(value) { model.moveFrame.value = value; return model.demo.value; }
+  assert.equal(frame(16).adjusting, true);
+  assert.equal(frame(39).pointerLift, 46);
+  assert.equal(frame(39).divisions, 16);
+  assert.equal(frame(40).pointerLift, 48);
+  assert.equal(frame(40).divisions, 24);
+  assert.equal(frame(64).divisions, 32);
+  assert.equal(frame(87).divisions, 32);
+  assert.equal(frame(88).divisions, 24);
+  assert.equal(frame(112).divisions, 16);
+  assert.equal(frame(112).adjusting, false);
+  for (let value = 0; value < 128; value++) {
+    const demo = frame(value);
+    assert.equal(demo.selection, 37.5);
+    assert.equal(demo.playhead, 20);
+    assert.equal(demo.pointer, 37.5);
+    assert.equal(demo.pointerOffset, 0);
+    assert(demo.divisions <= 128);
+  }
+  const { descriptor } = parse(readFileSync(new URL('WelcomeGuide.vue', import.meta.url), 'utf8'));
+  assert.match(descriptor.template.content, /<span class="mock-playhead"><\/span>\s*<GuidePointer v-if="current.scene === 'grid'"/);
+  assert.match(descriptor.template.content, /v-if="demo.pointerTarget === 'track' && current.scene !== 'grid'"/);
 });
 
 test('guide labels the measure strip as global navigation without overlaying shortcut hints', () => {
@@ -285,6 +318,35 @@ test('global waveform drag moves the visible range but preserves playback and no
     assert.equal(dragged.selection, clicked.selection);
     assert.equal(dragged.playing, false);
   }
+});
+
+test('range demonstration holds one pointer through a continuous drag before releasing and double tapping', () => {
+  const model = guide({ getItem: () => '1' });
+  for (const device of ['touch', 'desktop']) {
+    model.device.value = device;
+    model.step.value = model.steps.value.findIndex(item => item.scene === 'range');
+    function frame(value) { model.moveFrame.value = value; return model.demo.value; }
+    assert.equal(frame(0).pressed, false);
+    assert.equal(frame(12).rangeSelected, true);
+    for (let value = 20; value <= 68; value++) {
+      const demo = frame(value);
+      assert.equal(demo.pressed, true);
+      assert.equal(demo.rangePressId, 0);
+      assert.equal(demo.rangePosition, 1 + (value - 20) / 24);
+      assert.equal(demo.rangeEnd, Math.floor(demo.rangePosition + .5));
+    }
+    assert.equal(frame(76).pressed, false);
+    assert.equal(frame(76).rangeSelected, true);
+    assert.equal(frame(90).pressed, true);
+    assert.equal(frame(90).rangePressId, 1);
+    assert.equal(frame(92).pressed, false);
+    assert.equal(frame(96).pressed, true);
+    assert.equal(frame(96).rangePressId, 2);
+    assert.equal(frame(96).rangeSelected, false);
+  }
+  const { descriptor } = parse(readFileSync(new URL('WelcomeGuide.vue', import.meta.url), 'utf8'));
+  assert.match(descriptor.template.content, /<\/span><\/i><GuidePointer v-if="demo.pointerTarget === 'measure'"/);
+  assert.doesNotMatch(descriptor.template.content, /demo.pointerMeasure/);
 });
 
 test('mini notes follow note replacements while viewing and loop selection leave measure backgrounds neutral', () => {

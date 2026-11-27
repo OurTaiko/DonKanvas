@@ -2,7 +2,7 @@ import { message, LocalizedError } from './i18n.js';
 import { resizeNotes } from './chart.js';
 
 export const GRID_DIVISIONS = 16;
-export const SNAP_DIVISIONS = [4, 8, 12, 16, 24, 32, 48, 64, 96, 192];
+export const SNAP_DIVISIONS = [4, 8, 12, 16, 24, 32, 48, 64, 96, 128];
 export const MAX_SNAP_DIVISIONS = 768;
 export const MAX_SOURCE_SLOTS = 65536;
 

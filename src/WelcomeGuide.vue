@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronsLeft, ChevronsRight, Keyboard, Monitor, Mouse, Pause, Play, Smartphone, X } from '@lucide/vue';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronsLeft, ChevronsRight, ChevronsUp, ChevronsDown, Keyboard, Monitor, Mouse, Pause, Play, Smartphone, X } from '@lucide/vue';
 import { t } from './i18n.js';
 import { NOTE_TYPES } from './note-model.js';
 import GuidePointer from './GuidePointer.vue';
@@ -19,6 +19,7 @@ const steps = computed(() => device.value === 'touch' ? [
   { title: '点按落点，放置音符', description: '点按时间轴下方的音符轨道选择落点，再点按音符按钮写入。', hint: '选择落点 → 选择音符', scene: 'note' },
   ...scrollLessons,
   { title: '滑动浏览，长按微调', description: '在时间轴上左右滑动浏览；长按音符轨道的落点，再左右拖动可逐格移动选中位置。', hint: '滑动浏览 · 长按后拖动微调', scene: 'move' },
+  { title: '长按后，上下调整分音', description: '长按音符轨道约 450 毫秒后，上下滑动可调整分音：上滑网格变密，下滑变疏，每移动 48px 切换一档，最高 128 分。首次滑动会锁定上下或左右方向，松手后才能切换；上下调整时选点保持不动。', hint: '上滑变密 · 下滑变疏 · 48px / 档', scene: 'grid' },
   { title: '灰色边缘区，快速跳转', description: '点按波形左右的灰色边缘区，播放位置后退或前进一小节；点按音符轨道两侧的灰色边缘区，可选择边缘落点并将其移入视野。', hint: '上方跳小节 · 下方选落点', scene: 'gutter' },
   { title: '长按波形，从这里播放', description: '点按波形只定位；在波形上按住约 450 毫秒，就会从按住的位置开始播放。松手后继续播放，点暂停可停止。', hint: '按住波形 450 ms → 播放', scene: 'hold' },
   { title: '选择小节并试听', description: '在全局导航中拖动小节选择循环区间，连续点按同一小节两次可取消选择。长按波形可从该处播放。', hint: '拖动选择 · 双击取消', scene: 'range' }
@@ -42,6 +43,8 @@ const demo = computed(() => {
   const frame = moveFrame.value;
   const distance = frame < 16 ? 0 : frame <= 64 ? (frame - 16) * 2 : frame < 112 ? (112 - frame) * 2 : 0;
   const moveSteps = frame <= 64 ? Math.floor(distance / 24) : 4 - Math.floor((96 - distance) / 24);
+  const gridSteps = frame <= 64 ? Math.floor(distance / 48) : 2 - Math.floor((96 - distance) / 48);
+  const rangePosition = Math.max(1, Math.min(3, 1 + (frame - 20) / 24));
   const gutterTarget = ['wave-left', 'wave-right', 'note-left', 'note-right'][Math.floor(index / 2)];
   const gutterPan = index >= 7 ? 100 : index >= 5 ? 18.75 : index >= 3 ? 50 : index >= 1 ? 25 : 0;
   const wheelPan = [0, 12.5, 25, 25, 12.5, 0, 0, 0][index];
@@ -51,19 +54,22 @@ const demo = computed(() => {
     key: scene === 'note' ? noteKey : index === 1 ? current.value.keys?.[0] : index === 4 ? current.value.keys?.at(-1) : '',
     noteValue,
     noteSelected: scene !== 'note' || index >= 2,
-    pointerTarget: scene === 'file' ? (index < 2 ? 'file' : 'new-file') : scene === 'note' ? (device.value === 'touch' && index >= 3 ? 'palette' : 'track') : scene === 'move' ? 'track' : scene === 'wave' || scene === 'hold' && index < 2 ? 'wave' : scene === 'overview' ? 'overview' : scene === 'gutter' ? gutterTarget : scene === 'range' ? 'measure' : '',
-    pointerMeasure: [1, 1, 2, 3, 3, 3, 3, 3][index] ?? 3,
-    rangeSelected: scene === 'range' && index >= 1 && index < 6,
-    pressed: scene === 'note' ? index === 2 || device.value === 'touch' && Boolean(noteKey) : scene === 'file' ? index === 1 : scene === 'gutter' ? index % 2 === 1 : scene === 'hold' ? index === 0 : scene === 'wave' ? index === 1 || index === 2 : scene === 'overview' ? index === 1 || index >= 3 && index <= 5 : scene === 'move' ? frame >= 16 && frame < 112 : scene === 'range' && [1, 2, 3, 5, 6].includes(index),
-    divisions: scene === 'move' ? 32 : scene === 'gutter' ? 16 : scene === 'snap' && index >= 1 && index < 4 ? 12 : 8,
+    pointerTarget: scene === 'file' ? (index < 2 ? 'file' : 'new-file') : scene === 'note' ? (device.value === 'touch' && index >= 3 ? 'palette' : 'track') : ['move', 'grid'].includes(scene) ? 'track' : scene === 'wave' || scene === 'hold' && index < 2 ? 'wave' : scene === 'overview' ? 'overview' : scene === 'gutter' ? gutterTarget : scene === 'range' ? 'measure' : '',
+    rangePosition,
+    rangeEnd: Math.floor(rangePosition + .5),
+    rangePressId: frame < 90 ? 0 : frame < 96 ? 1 : 2,
+    rangeSelected: scene === 'range' && frame >= 12 && frame < 96,
+    pressed: scene === 'note' ? index === 2 || device.value === 'touch' && Boolean(noteKey) : scene === 'file' ? index === 1 : scene === 'gutter' ? index % 2 === 1 : scene === 'hold' ? index === 0 : scene === 'wave' ? index === 1 || index === 2 : scene === 'overview' ? index === 1 || index >= 3 && index <= 5 : ['move', 'grid'].includes(scene) ? frame >= 16 && frame < 112 : scene === 'range' && (frame >= 12 && frame < 76 || frame >= 90 && frame < 92 || frame >= 96 && frame < 98),
+    divisions: scene === 'grid' ? [16, 24, 32][gridSteps] : scene === 'move' ? 32 : scene === 'gutter' ? 16 : scene === 'snap' && index >= 1 && index < 4 ? 12 : 8,
     selection,
     playhead,
     playing: scene === 'play' ? index >= 1 && index < 4 : scene === 'wave' ? index >= 3 : scene === 'hold' && index >= 1,
-    adjusting: scene === 'move' && frame >= 16 && frame < 112,
+    adjusting: ['move', 'grid'].includes(scene) && frame >= 16 && frame < 112,
     holding: scene === 'hold' && index === 0,
     pressedGutter: scene === 'gutter' && index % 2 === 1 ? gutterTarget : '',
-    pointer: scene === 'note' ? (index === 0 ? 62.5 : 37.5) : scene === 'move' ? 37.5 : 30,
+    pointer: scene === 'note' ? (index === 0 ? 62.5 : 37.5) : ['move', 'grid'].includes(scene) ? 37.5 : 30,
     pointerOffset: scene === 'move' ? distance : 0,
+    pointerLift: scene === 'grid' ? distance : 0,
     wheelDirection: scene === 'wheel' ? ([1, 2].includes(index) ? 'forward' : [4, 5].includes(index) ? 'backward' : '') : '',
     overviewPointer: index < 4 ? 24 : index === 4 ? 40 : 56,
     overviewPlayhead: scene === 'overview' ? (index >= 1 ? 24 : 12) : 8 + playhead * .32,
@@ -77,7 +83,7 @@ const miniNotes = computed(() => [demo.value.noteTypes.filter(value => !['0', '8
 function stopAnimation() { clearInterval(animationTimer); }
 watch([device, step, opened], () => {
   stopAnimation(); phase.value = 0; moveFrame.value = 0;
-  if (opened.value && device.value) animationTimer = current.value.scene === 'move'
+  if (opened.value && device.value) animationTimer = ['move', 'grid', 'range'].includes(current.value.scene)
     ? setInterval(() => { moveFrame.value = (moveFrame.value + 1) % 128; }, 50)
     : setInterval(() => { phase.value = (phase.value + 1) % 8; }, ['hold', 'wave'].includes(current.value.scene) ? 450 : 750);
 }, { flush: 'sync' });
@@ -134,15 +140,16 @@ defineExpose({ open });
         <div class="mock-content">
           <div class="mock-timeline">
             <div class="mock-wave"><span class="mock-lane-label">{{ t('时间轴波形') }}</span><div class="mock-wave-bars"><i v-for="index in 84" :key="index" :style="{ height: `${12 + (index * 17 % 32)}%` }"></i></div><span class="mock-gutter left"><ChevronsLeft v-if="demo.pressedGutter === 'wave-left'" /><GuidePointer v-if="demo.pointerTarget === 'wave-left'" :touch="device === 'touch'" :pressed="demo.pressed" :press-id="phase" /></span><span class="mock-gutter right"><ChevronsRight v-if="demo.pressedGutter === 'wave-right'" /><GuidePointer v-if="demo.pointerTarget === 'wave-right'" :touch="device === 'touch'" :pressed="demo.pressed" :press-id="phase" /></span><GuidePointer v-if="demo.pointerTarget === 'wave'" :touch="device === 'touch'" :pressed="demo.pressed" :press-id="phase" style="--pointer-x:30%;--pointer-y:65%" /></div>
-            <div class="mock-track"><span class="mock-lane-label">{{ t('音符轨道') }}</span><template v-for="(position, index) in demo.notes" :key="index"><span v-if="demo.noteTypes[index] !== '0'" class="mock-note" :data-note="demo.noteTypes[index]" :style="{ left: `${position - demo.panOffset}%` }"></span></template><span v-if="demo.noteSelected" class="mock-selection"></span><span class="mock-gutter left"><ChevronsLeft v-if="demo.pressedGutter === 'note-left'" /><GuidePointer v-if="demo.pointerTarget === 'note-left'" :touch="device === 'touch'" :pressed="demo.pressed" :press-id="phase" /></span><span class="mock-gutter right"><ChevronsRight v-if="demo.pressedGutter === 'note-right'" /><GuidePointer v-if="demo.pointerTarget === 'note-right'" :touch="device === 'touch'" :pressed="demo.pressed" :press-id="phase" /></span><div v-if="demo.adjusting" class="mock-adjustment"><ChevronsLeft /><ChevronsRight /></div><GuidePointer v-if="demo.pointerTarget === 'track'" :touch="device === 'touch'" :pressed="demo.pressed" :press-id="phase" :style="{ '--pointer-x': `${demo.pointer}%`, '--pointer-offset': `${demo.pointerOffset}px` }" /></div>
+            <div class="mock-track"><span class="mock-lane-label">{{ t('音符轨道') }}</span><template v-for="(position, index) in demo.notes" :key="index"><span v-if="demo.noteTypes[index] !== '0'" class="mock-note" :data-note="demo.noteTypes[index]" :style="{ left: `${position - demo.panOffset}%` }"></span></template><span v-if="demo.noteSelected" class="mock-selection"></span><span class="mock-gutter left"><ChevronsLeft v-if="demo.pressedGutter === 'note-left'" /><GuidePointer v-if="demo.pointerTarget === 'note-left'" :touch="device === 'touch'" :pressed="demo.pressed" :press-id="phase" /></span><span class="mock-gutter right"><ChevronsRight v-if="demo.pressedGutter === 'note-right'" /><GuidePointer v-if="demo.pointerTarget === 'note-right'" :touch="device === 'touch'" :pressed="demo.pressed" :press-id="phase" /></span><div v-if="demo.adjusting" class="mock-adjustment" :class="{ 'mock-grid-adjustment': current.scene === 'grid' }"><template v-if="current.scene === 'grid'"><ChevronsUp /><output>{{ demo.divisions }} {{ t('分') }}</output><ChevronsDown /></template><template v-else><ChevronsLeft /><ChevronsRight /></template></div><GuidePointer v-if="demo.pointerTarget === 'track' && current.scene !== 'grid'" :touch="device === 'touch'" :pressed="demo.pressed" :press-id="phase" :style="{ '--pointer-x': `${demo.pointer}%`, '--pointer-offset': `${demo.pointerOffset}px` }" /></div>
             <span class="mock-playhead"></span>
+            <GuidePointer v-if="current.scene === 'grid'" touch :pressed="demo.pressed" :press-id="phase" :style="{ '--pointer-x': `${demo.pointer}%`, '--pointer-y': `calc(75% - ${demo.pointerLift}px)` }" />
             <div v-if="current.scene === 'wheel'" class="mock-wheel" :data-direction="demo.wheelDirection"><span class="wheel-mouse"><Mouse /><span v-if="demo.wheelDirection" :key="phase" class="wheel-motion"></span></span><ArrowDown v-if="demo.wheelDirection === 'forward'" /><ArrowUp v-else-if="demo.wheelDirection === 'backward'" /><span v-else class="wheel-idle"></span></div>
           </div>
           <div class="mock-overview-section"><span class="mock-navigation-label">{{ t('全曲概览') }}</span><div class="mock-overview"><i v-for="index in 48" :key="index" :style="{ height: `${18 + (index * 23 % 60)}%` }"></i><span class="mock-overview-window" :style="{ left: `${demo.overviewWindow}%` }"></span><span class="mock-overview-playhead" :style="{ left: `${demo.overviewPlayhead}%` }"></span><GuidePointer v-if="demo.pointerTarget === 'overview'" :touch="device === 'touch'" :pressed="demo.pressed" :press-id="phase" :style="{ '--pointer-x': `${demo.overviewPointer}%` }" /></div></div>
           <div v-if="device === 'touch' && current.scene === 'note'" class="mock-palette"><span v-for="type in NOTE_TYPES" :key="type.value" class="mock-palette-slot" :class="{ chosen: demo.pointerTarget === 'palette' && demo.noteValue === type.value }" :title="t(type.name)"><span class="palette-dot" :data-note="type.value"></span><span class="palette-name">{{ t(type.name) }}</span><GuidePointer v-if="demo.pointerTarget === 'palette' && demo.noteValue === type.value" touch :pressed="demo.pressed" :press-id="phase" style="--pointer-y:12px" /></span></div>
-          <div class="mock-navigation"><span class="mock-navigation-label">{{ t('全局导航') }}</span><i v-for="(notes, index) in miniNotes" :key="index" class="mock-measure" :class="{ selected: demo.rangeSelected && index >= 1 && index <= Math.min(phase, 3), 'in-view': index >= Math.floor(demo.overviewWindow / 100 * 6) && index < Math.ceil((demo.overviewWindow + 32) / 100 * 6) }"><span>{{ String(index + 1).padStart(3, '0') }}</span><span class="mock-mini-notes"><b v-for="(note, noteIndex) in notes" :key="noteIndex" class="mini-note" :data-note="note"></b></span><GuidePointer v-if="demo.pointerTarget === 'measure' && demo.pointerMeasure === index" :touch="device === 'touch'" :pressed="demo.pressed" :press-id="phase" /></i></div>
+          <div class="mock-navigation"><span class="mock-navigation-label">{{ t('全局导航') }}</span><i v-for="(notes, index) in miniNotes" :key="index" class="mock-measure" :class="{ selected: demo.rangeSelected && index >= 1 && index <= demo.rangeEnd, 'in-view': index >= Math.floor(demo.overviewWindow / 100 * 6) && index < Math.ceil((demo.overviewWindow + 32) / 100 * 6) }"><span>{{ String(index + 1).padStart(3, '0') }}</span><span class="mock-mini-notes"><b v-for="(note, noteIndex) in notes" :key="noteIndex" class="mini-note" :data-note="note"></b></span></i><GuidePointer v-if="demo.pointerTarget === 'measure'" :touch="device === 'touch'" :pressed="demo.pressed" :press-id="demo.rangePressId" :style="{ '--pointer-x': `calc(${(demo.rangePosition + .5) / 6 * 100}% + ${demo.rangePosition / 6 - 5 / 12} * var(--measure-gap))`, '--pointer-y': 'calc(100% - var(--measure-height) / 2)' }" /></div>
         </div>
-        <div class="demo-status"><template v-if="current.scene === 'snap'">{{ t('吸附') }} 1/{{ demo.divisions }}</template><Pause v-else-if="demo.playing" /><Play v-else-if="['play', 'hold', 'wave', 'seek', 'gutter'].includes(current.scene)" /><span v-if="demo.holding || current.scene === 'wave' && phase === 2">450 ms</span></div>
+        <div class="demo-status"><template v-if="['snap', 'grid'].includes(current.scene)">{{ t('吸附') }} 1/{{ demo.divisions }}</template><Pause v-else-if="demo.playing" /><Play v-else-if="['play', 'hold', 'wave', 'seek', 'gutter'].includes(current.scene)" /><span v-if="demo.holding || current.scene === 'wave' && phase === 2">450 ms</span></div>
       </div>
       <div class="guide-key" :class="{ 'numeric-keys': current.scene === 'note' && current.keys }"><template v-if="current.keys"><kbd v-for="key in current.keys" :key="key" :class="{ pressed: demo.key === key, 'clear-key': ['Backspace', 'Delete'].includes(key) }">{{ key }}</kbd></template><template v-else><Mouse v-if="current.scene === 'wheel'" /><Keyboard v-else-if="device === 'desktop'" /><span>{{ t(current.hint) }}</span></template></div>
       <div class="guide-copy" aria-live="polite">
@@ -161,6 +168,7 @@ defineExpose({ open });
 
 <style scoped>
 .mock-track{background-size:var(--demo-grid) 100%;background-image:linear-gradient(90deg,#c1d5c7 1px,transparent 1px)}
+.mock-adjustment.mock-grid-adjustment{flex-direction:column;justify-content:center;gap:0;padding:0;color:#e2f5e8}.mock-grid-adjustment svg{width:18px;height:14px;flex-shrink:1;min-height:0}.mock-grid-adjustment output{font-size:11px;line-height:16px;font-weight:700;white-space:nowrap}
 .mock-navigation-label{display:flex;align-items:center;flex:0 1 auto;max-width:32%;font-size:10px;font-weight:700;line-height:1.15;color:#426453;overflow-wrap:anywhere}
 .guide-key{position:static;width:fit-content;max-width:100%;margin-top:8px;box-sizing:border-box}
 .mock-selection{left:var(--demo-selection);transition:left .2s;z-index:2;width:3px;box-shadow:0 0 0 3px #39865d26}
@@ -189,6 +197,7 @@ defineExpose({ open });
 .mock-wave-bars{position:absolute;left:var(--demo-pan);top:0;display:flex;align-items:center;justify-content:space-around;width:250%;height:100%;transition:left .65s ease}
 .mock-wave-bars i{flex:none}
 .mock-track{overflow:hidden;background-position:var(--demo-pan) 0}
+.scene-grid .mock-timeline>.demo-pointer{transition:top .05s linear}
 .mock-track .mock-note{transition:left .65s ease}
 .scene-wave .mock-playhead{display:block}
 .scene-wheel .mock-playhead{display:block;transition:left .65s ease}
@@ -218,7 +227,8 @@ defineExpose({ open });
 .mock-note[data-note="6"]{height:27px}
 .mock-note[data-note="7"]{background:#ee9344}.mock-note[data-note="9"]{background:#d976a1}
 .mock-note[data-note="8"]{width:8px;height:26px;border-radius:2px;background:#7a9987}
-.mock-navigation{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;height:auto;padding:10px 0 0}
+.mock-navigation{--measure-gap:4px;--measure-height:38px;position:relative;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:var(--measure-gap);height:auto;padding:10px 0 0}
+.scene-range .mock-navigation>.demo-pointer{transition:left .05s linear}
 .mock-navigation-label{grid-column:1/-1;max-width:none;min-height:18px;font-size:10px}
 .mock-navigation>.mock-measure{position:relative;display:flex;align-items:center;flex-direction:column;justify-content:center;gap:4px;height:38px;min-width:0;padding:3px 0;border:1px solid #d4e2d7;background:#fff;color:#8da397;font-size:9px;font-style:normal;line-height:1;box-sizing:border-box}
 .mock-navigation>.mock-measure.selected{box-shadow:inset 0 2px #438d64}
@@ -242,7 +252,7 @@ defineExpose({ open });
 @media(max-width:480px){.guide-key.numeric-keys{grid-template-columns:repeat(6,minmax(0,1fr))}.guide-key.numeric-keys .clear-key,.guide-key.numeric-keys .clear-key.pressed{grid-column:span 3}}
 .scene-move :deep(.demo-pointer){transition:left .05s linear}
 .scene-note :deep(.pointer-cursor){fill:#fff}
-@media(max-height:600px){.mock-timeline{height:104px}.mock-wave,.mock-track{height:52px}.mock-content{padding-bottom:10px}.mock-navigation{padding-top:6px;gap:3px}.mock-navigation>.mock-measure{height:32px}.mock-menu-toolbar{height:34px}}
+@media(max-height:600px){.mock-timeline{height:104px}.mock-wave,.mock-track{height:52px}.mock-content{padding-bottom:10px}.mock-navigation{--measure-gap:3px;--measure-height:32px;padding-top:6px}.mock-navigation>.mock-measure{height:32px}.mock-menu-toolbar{height:34px}}
 @keyframes hold-pulse{from{outline-offset:1px}to{outline-offset:7px}}
 @media(prefers-reduced-motion:reduce){.mock-selection,.mock-playhead,.mock-track .mock-note,.mock-wave-bars,.mock-overview-window,.mock-overview-playhead{transition:none!important}}
 </style>

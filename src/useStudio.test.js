@@ -3123,10 +3123,11 @@ test('W/S steps through shared snap presets and custom boundaries without changi
     studio.setSnap(7); press('s'); assert.equal(studio.controls.snap, 4);
     press('s'); assert.equal(studio.controls.snap, 1); assert.equal(studio.controls.snapChoice, 'custom');
     press('s', true); assert.equal(studio.controls.snap, 1);
-    studio.setSnap(200); press('w'); assert.equal(studio.controls.snap, 768);
-    assert.equal(studio.controls.snapChoice, 'custom'); assert.equal(studio.controls.customSnap, 768);
-    press('w', true); assert.equal(studio.controls.snap, 768);
-    press('s'); assert.equal(studio.controls.snap, 192); assert.equal(studio.controls.snapChoice, '192');
+    studio.setSnap(96); press('w'); assert.equal(studio.controls.snap, 128);
+    assert.equal(studio.controls.snapChoice, '128'); assert.equal(studio.controls.customSnap, 128);
+    press('w', true); assert.equal(studio.controls.snap, 128);
+    studio.setSnap(200); press('w'); assert.equal(studio.controls.snap, 128);
+    studio.setSnap(768); press('s'); assert.equal(studio.controls.snap, 128); assert.equal(studio.controls.snapChoice, '128');
     await studio.play();
     press('s'); assert.equal(studio.controls.snap, 96); assert.equal(studio.state.playing, true);
     assert.deepEqual(studio.state.selectedCell, point);

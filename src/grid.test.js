@@ -23,7 +23,7 @@ test('existing off-grid notes can be edited directly without resampling', () => 
 test('erase on an empty grid position does not change source subdivision', () => {
   assert.equal(editGridNote('0'.repeat(24),1/16,'0'),'0'.repeat(24));
 });
-for (const divisions of [3,5,7,12,24,32,48,96,192,768]) test(`mouse placement and erase on ${divisions} divisions`, () => {
+for (const divisions of [3,5,7,12,24,32,48,96,128,192,768]) test(`mouse placement and erase on ${divisions} divisions`, () => {
   const edited = editGridNote('0',1/divisions,'2',0,divisions);
   assert.equal(edited.length,divisions);
   assert.equal(edited[1],'2');
