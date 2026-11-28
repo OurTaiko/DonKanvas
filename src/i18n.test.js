@@ -2649,7 +2649,7 @@ test('landscape keeps top menus and switches open charts through a single-line d
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'landscape-chart-picker' });
   const header = descriptor.template.content.match(/<header>[\s\S]*?<\/header>/)[0];
-  assert.match(header, /<div v-if="mobileLandscape" class="landscape-chart-controls" role="group" :aria-label="t\('已打开谱面'\)">\s*<select id="opened-chart-select" v-model="activeDocument"/);
+  assert.match(header, /<div v-if="mobileLandscape" class="landscape-chart-controls" role="group" :aria-label="t\('已打开谱面'\)">\s*<span class="landscape-chart-label" aria-hidden="true">[\s\S]*?<\/span>\s*<select id="opened-chart-select" v-model="activeDocument"/);
   assert.match(header, /:aria-label="t\(state.documents.length \? '已打开谱面' : '尚未打开谱面'\)"/);
   assert.match(header, /:title="state.documents.length \? state.filename \|\| t\('已打开谱面'\) : t\('尚未打开谱面'\)"/);
   assert.match(header, /<option v-if="!state.documents.length"[^>]*>\{\{ t\('尚未打开谱面'\) \}\}<\/option>/);
@@ -2657,11 +2657,15 @@ test('landscape keeps top menus and switches open charts through a single-line d
   assert.match(header, /<option v-for="document in state.documents"[^>]*:value="document.id"/);
   assert.match(header, /document.dirty \|\| document.invalid/);
   assert.ok(header.indexOf('id="opened-chart-select"') < header.indexOf('ref="settingsMenu"'));
-  assert.match(header, /<button id="landscape-close-chart"[^>]*:disabled="!state.chart \|\| state.saving"[^>]*@click="studio.closeChart\(state.activeId\)"[^>]*><X aria-hidden="true" \/><\/button>\s*<\/div>/);
+  assert.doesNotMatch(header, /id="landscape-close-chart"/);
+  assert.match(header, /<button id="close-chart"[^>]*@click="runFileAction\(\(\) => studio.closeChart\(state.activeId\)\)"/);
   assert.match(descriptor.styles[0].content, /\.file-actions:has\(~\.landscape-chart-controls\)\{flex-shrink:0\}/);
   assert.match(descriptor.styles[0].content, /\.landscape-chart-controls\+\.settings-popover\{margin-left:0\}/);
-  assert.match(descriptor.styles[0].content, /\.landscape-chart-controls\{display:flex;[^}]*min-width:0;[^}]*border:1px solid var\(--line\);border-radius:4px;/);
-  assert.match(descriptor.styles[0].content, /\.landscape-chart-controls>\.icon\{[^}]*border-left:1px solid var\(--line\);/);
+  assert.match(descriptor.styles[0].content, /\.landscape-chart-controls\{position:relative;display:flex;[^}]*flex:0 1 auto;[^}]*min-width:0;[^}]*border:0;border-right:1px solid var\(--line\);background:transparent/);
+  assert.match(descriptor.styles[0].content, /\.landscape-chart-label\{visibility:hidden;[^}]*white-space:nowrap;overflow:hidden/);
+  assert.match(descriptor.styles[0].content, /\.landscape-chart-picker\{position:absolute;/);
+  assert.match(descriptor.styles[0].content, /\.landscape-chart-picker\{[^}]*background:transparent/);
+  assert.match(descriptor.styles[0].content, /\.landscape-chart-picker:focus-visible\{[^}]*outline:2px solid var\(--green\)/);
   assert.match(descriptor.styles[0].content, /\.landscape-chart-picker\{[^}]*max-width:none;/);
   assert.match(descriptor.template.content, /<nav class="chart-tabs" v-show="!mobileLandscape"/);
   assert.doesNotMatch(descriptor.template.content, /mobile-menu-panel/);

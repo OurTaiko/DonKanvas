@@ -449,11 +449,11 @@ async function dropFiles(event) {
       </details>
     </div>
     <div v-if="mobileLandscape" class="landscape-chart-controls" role="group" :aria-label="t('已打开谱面')">
+    <span class="landscape-chart-label" aria-hidden="true">{{ state.documents.length ? state.filename : t('尚未打开谱面') }}{{ state.documents.length && (state.dirty || state.invalid) ? ' *' : '' }}</span>
     <select id="opened-chart-select" v-model="activeDocument" class="landscape-chart-picker" :aria-label="t(state.documents.length ? '已打开谱面' : '尚未打开谱面')" :title="state.documents.length ? state.filename || t('已打开谱面') : t('尚未打开谱面')" :disabled="!state.documents.length">
       <option v-if="!state.documents.length" :value="state.activeId">{{ t('尚未打开谱面') }}</option>
       <option v-for="document in state.documents" :key="document.id" :value="document.id">{{ document.id === state.activeId ? state.filename : document.filename }}{{ (document.id === state.activeId ? state.dirty || state.invalid : document.dirty || document.invalid) ? ' *' : '' }}</option>
     </select>
-    <button id="landscape-close-chart" type="button" class="icon" :aria-label="state.chart ? t('关闭 {p0}', { p0: state.filename }) : t('关闭谱面')" :title="t('关闭谱面（Ctrl+Alt+W）')" :disabled="!state.chart || state.saving" @click="studio.closeChart(state.activeId)"><X aria-hidden="true" /></button>
     </div>
     <details ref="settingsMenu" class="settings-popover" @toggle="positionPopover($event.target)" @keydown="popoverKeydown($event, settingsMenu)">
       <summary id="settings-toggle" class="icon" :title="t('设置')" :aria-label="t('设置')" aria-controls="settings-panel"><Settings2 aria-hidden="true" /><span v-if="draftUnavailable" class="status-dot session-dot error" aria-hidden="true"></span></summary>
@@ -642,9 +642,11 @@ async function dropFiles(event) {
 header{position:relative;z-index:40;height:38px;min-height:38px;padding:3px 8px;gap:6px;flex-shrink:0;flex-wrap:nowrap;justify-content:flex-start;user-select:none}
 header :is(input,textarea){user-select:text}
 .file-actions:has(~.landscape-chart-controls){flex-shrink:0}
-.landscape-chart-controls{display:flex;align-items:center;flex:0 1 280px;width:280px;max-width:280px;min-width:0;margin-left:auto;height:30px;border:1px solid var(--line);border-radius:4px;background:#fff}
-.landscape-chart-picker{flex:1;min-width:0;width:100%;max-width:none;height:28px;padding:4px 8px;border:0;border-radius:3px 0 0 3px;background:#fff;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.landscape-chart-controls>.icon{flex-shrink:0;width:30px;min-width:30px;height:28px;min-height:28px;padding:5px;border:0;border-left:1px solid var(--line);border-radius:0 3px 3px 0}
+.landscape-chart-controls{position:relative;display:flex;align-items:center;flex:0 1 auto;max-width:280px;min-width:0;margin-left:auto;height:30px;padding-right:6px;border:0;border-right:1px solid var(--line);background:transparent}
+.landscape-chart-label{visibility:hidden;min-width:0;padding:4px 28px 4px 8px;font-size:12px;white-space:nowrap;overflow:hidden}
+.landscape-chart-picker{position:absolute;left:0;top:0;min-width:0;width:calc(100% - 6px);max-width:none;height:30px;padding:4px 8px;border:0;border-radius:4px;background:transparent;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.landscape-chart-picker:hover:not(:disabled){background:#edf3ee}
+.landscape-chart-picker:focus-visible{outline:2px solid var(--green);outline-offset:1px;background:#e1ece5}
 .landscape-chart-controls+.settings-popover{margin-left:0}
 .brand{flex-shrink:0}.product-icon{border-radius:5px;display:block}
 .workspace-section-summary{display:flex;align-items:center;gap:7px;padding:12px 14px;cursor:pointer;font-size:12px;list-style:none}.workspace-section-summary::-webkit-details-marker{display:none}.workspace-section-summary>svg{width:14px;height:14px;flex-shrink:0}.workspace-section-summary>svg:first-child{color:var(--green)}.workspace-section-summary>.workspace-section-chevron{width:12px;height:12px;margin-left:auto;transform:rotate(-90deg)}details[open]>.workspace-section-summary{color:var(--green)}details[open]>.workspace-section-summary>.workspace-section-chevron{transform:none}.workspace-section-summary:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
