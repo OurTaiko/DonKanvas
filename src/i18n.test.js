@@ -126,10 +126,12 @@ test('file tabs ellipsize only the filename and retain the full title and separa
   compileScript(descriptor, { id: 'tab-filenames' });
   assert.match(descriptor.template.content, /class="chart-tab-select" :title="document.id === state.activeId \? state.filename : document.filename"/);
   assert.match(descriptor.template.content, /<span class="chart-tab-name">[\s\S]*?<\/span><span v-if=[^>]*class="chart-tab-dirty"/);
+  assert.match(descriptor.template.content, /<LoaderCircle v-if="document\.cloudSaving" class="chart-tab-saving" role="img" :aria-label="t\('保存中…'\)" \/><img v-else-if="storageIcons\[document\.fileHandle\?\.provider\]" class="chart-tab-storage"[^>]*:src="storageIcons\[document\.fileHandle\.provider\]"[^>]*:alt="STORAGE_PROVIDERS\.find\([^"]+\)\?\.name"[^>]*><span class="chart-tab-name">/);
   const styles = descriptor.styles[0].content;
   assert.match(styles, /\.chart-tab-name\{[^}]*overflow:hidden;[^}]*text-overflow:ellipsis;[^}]*white-space:nowrap/);
   assert.match(styles, /\.chart-tab-dirty\{flex-shrink:0\}/);
   assert.match(styles, /\.chart-tab\{[^}]*max-width:320px/);
+  assert.match(styles, /\.chart-tab-storage\{[^}]*width:14px;height:14px;flex-shrink:0/);
 });
 
 test('queued timeline scroll events after switching files cannot access an unmounted viewport', () => {
@@ -741,11 +743,11 @@ test('the header file menu groups file actions and shortcuts without occupying t
   const template = descriptor.template.content, header = template.match(/<header>[\s\S]*?<\/header>/)[0];
   for (const id of ['file-toggle', 'language-toggle', 'project-toggle']) assert.ok(header.includes(`id="${id}"`), id);
   const actions = header.match(/<details ref="fileMenu"[\s\S]*?<\/details>/)[0];
-  for (const id of ['new-chart', 'open-chart', 'save', 'save-as']) {
+  for (const id of ['new-chart', 'open-chart', 'save', 'save-as', 'open-personal-storage', 'save-personal-storage']) {
     assert.ok(actions.includes(`id="${id}"`), id);
     assert.equal([...template.matchAll(new RegExp(`id="${id}"`, 'g'))].length, 1);
   }
-  assert.equal([...actions.matchAll(/:disabled="!state.chart \|\| state.saving"/g)].length, 3);
+  assert.equal([...actions.matchAll(/:disabled="!state.chart \|\| state.saving"/g)].length, 4);
   for (const action of ['studio.newChart', 'chooseCharts', 'studio.saveChart', 'studio.saveAs']) assert.ok(actions.includes(`@click="runFileAction(${action})"`), action);
   assert.match(descriptor.scriptSetup.content, /function runFileAction\(action\) \{\s*closePopover\(fileMenu.value\);\s*return action\(\);/);
   assert.match(actions, /t\('保存（Ctrl\+S）'\)/);
@@ -1044,29 +1046,43 @@ test('audio loading is the rightmost control in the active chart transport', () 
   assert.match(descriptor.styles[0].content, /\.compact-playback \.transport-right\{[^}]*position:absolute;[^}]*overflow:auto/);
 });
 
-test('audio messages dismiss per document and hide after loading while new errors remain visible', () => {
+test('audio notifications are not created on loading or switching and clear on audio loading or closing', async () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   const script = descriptor.scriptSetup.content;
-  const source = script.slice(script.indexOf('const dismissedAudioMessages ='), script.indexOf('let desktopWorkspaceOpen'));
-  const state = reactive({ activeId: null, chart: null, buffer: null, error: false, noticeMessage: 'ready' });
-  const result = runInNewContext(`${source}; ({ showAudioMessage, messageBarError, dismissMessageBar })`, {
-    ref, computed, watch, state
+  const source = script.slice(script.indexOf('watch(() => [state.documents, state.activeId, state.buffer]'), script.indexOf('let desktopWorkspaceOpen'));
+  const state = reactive({ documents: [], activeId: null, buffer: null });
+  let items = [];
+  const stop = [];
+  runInNewContext(source, {
+    watch: (...args) => { stop.push(watch(...args)); }, state,
+    studio: { notifications: {
+      get items() { return items; },
+      push() { assert.fail('Loading or switching documents must not create audio prompts'); },
+      dismiss(id) { items = items.filter(item => item.id !== id); }
+    } }
   });
-  assert.equal(result.showAudioMessage.value, false);
-  state.activeId = 'first'; state.chart = {};
-  assert.equal(result.showAudioMessage.value, true);
-  result.dismissMessageBar(); assert.equal(result.showAudioMessage.value, false);
-  state.noticeMessage = 'saved'; assert.equal(result.showAudioMessage.value, false);
-  state.activeId = 'second'; assert.equal(result.showAudioMessage.value, true);
-  state.buffer = {}; assert.equal(result.showAudioMessage.value, false);
-  state.buffer = null; assert.equal(result.showAudioMessage.value, true);
-  state.activeId = 'first'; assert.equal(result.showAudioMessage.value, false);
-  state.error = true; state.noticeMessage = 'failed';
-  assert.equal(result.messageBarError.value, true);
-  result.dismissMessageBar();
-  assert.equal(result.messageBarError.value, false); assert.equal(state.error, true);
-  state.noticeMessage = 'another failure'; assert.equal(result.messageBarError.value, true);
-  state.error = false; assert.equal(result.messageBarError.value, false);
+  try {
+    state.documents = [{ id: 'first', filename: 'first.tja', chart: {}, buffer: null }]; state.activeId = 'first';
+    await nextTick();
+    assert.equal(items.length, 0);
+    state.activeId = 'other'; await nextTick();
+    state.activeId = 'first'; await nextTick();
+    assert.equal(items.length, 0);
+    items = [{ id: 1, action: { type: 'load-audio', documentId: 'first' } }, { id: 2, error: true }];
+    state.documents = [...state.documents, { id: 'second', filename: 'second.tja', chart: {}, buffer: null }]; state.activeId = 'second';
+    await nextTick();
+    assert.equal(items.length, 2);
+    state.activeId = 'first';
+    state.buffer = {}; await nextTick();
+    assert.deepEqual(items.map(item => item.id), [2]);
+    state.buffer = null; await nextTick();
+    assert.deepEqual(items.map(item => item.id), [2]);
+    state.documents = [...state.documents, { id: 'third', filename: 'third.tja', chart: {}, buffer: null }]; await nextTick();
+    assert.deepEqual(items.map(item => item.id), [2]);
+    items = [...items, { id: 3, action: { type: 'load-audio', documentId: 'third' } }];
+    state.documents = state.documents.filter(item => item.id !== 'third'); await nextTick();
+    assert.deepEqual(items.map(item => item.id), [2]);
+  } finally { stop.forEach(dispose => dispose()); }
 });
 
 test('dropping TJA files anywhere opens them sequentially, preserves native text drags and reports unsupported files or modal guards', async () => {
@@ -1729,7 +1745,7 @@ test('toolbar commands use scoped transparent surfaces with hover, pressed, focu
   compileScript(descriptor, { id: 'compact-toolbar-commands' });
   const styles = descriptor.styles[0].content;
   assert.match(styles, /\.transport\{[^}]*border-top:1px solid var\(--line\);border-bottom:0;box-shadow:none/);
-  assert.match(styles, /\.playback-message-bar\+\.transport\{border-top:0\}/);
+  assert.doesNotMatch(styles, /playback-message-bar/);
   assert.match(styles, /header\{[^}]*user-select:none/);
   assert.match(styles, /header :is\(input,textarea\)\{user-select:text\}/);
   const rules = styles.slice(styles.indexOf(':is(.studio-panel,.transport-host) :is(.document-toolbar'));
@@ -2540,7 +2556,7 @@ test('editor columns are siblings and mobile transport can leave the scrolling c
   const template = descriptor.template.content;
   assert.match(template, /<div class="editor-core" :inert="state.editorBlocked">\s*<section v-if="studio.bar.value" class="document-toolbar">[\s\S]*?<\/section>\s*<div class="editor-scroll">/);
   assert.match(template, /<TimelineEditor v-if="studio.bar.value" :mobile="mobileWorkspace" :landscape="mobileLandscape" \/>/);
-  assert.match(template, /<\/div>\s*<Teleport to="body" :disabled="!mobileWorkspace \|\| mobileLandscape"><div ref="transportHost" class="transport-host" :class="\{ 'landscape-transport': mobileLandscape \}">\s*<div v-if="messageBarError \|\| showAudioMessage"/);
+  assert.match(template, /<\/div>\s*<Teleport to="body" :disabled="!mobileWorkspace \|\| mobileLandscape"><div ref="transportHost" class="transport-host" :class="\{ 'landscape-transport': mobileLandscape \}">\s*<section v-if="studio.bar.value" class="transport">/);
   assert.match(template, /<\/div><\/details><\/section>\s*<\/div><\/Teleport>/);
   assert.match(template, /<Teleport v-if="studio.bar.value" to="#mobile-edit-panel" :disabled="!mobileWorkspace" defer><MeasureEditor :inert="state.editorBlocked" \/><\/Teleport>/);
   assert.doesNotMatch(template, /id="preview-range"|id="loop-summary"|id="apply-loop"|id="loop-current"/);
@@ -2595,7 +2611,7 @@ test('landscape transitions retain mobile inspector routing and restore the desk
   assert.match(styles, /\.song-workspace.workspace-drawer\{position:fixed;[^}]*z-index:60;/);
   assert.match(styles, /\.mobile-landscape>\.mobile-inspector\{grid-column:3;grid-row:1;/);
   assert.match(styles, /\.mobile-landscape \.inspector-tabs\{display:grid;grid-template-columns:repeat\(4,minmax\(0,1fr\)\)\}/);
-  assert.match(styles, /\.landscape-transport>\.playback-message-bar\{position:absolute;left:0;right:0;top:0;bottom:auto;/);
+  assert.doesNotMatch(styles, /playback-message-bar/);
   assert.match(styles, /\.mobile-landscape \.editor>\.timeline-frame\{flex:2 1 165px;height:auto;min-height:72px\}/);
   assert.match(styles, /@container\(min-height:360px\)\{\.mobile-landscape \.document-toolbar\{display:flex\}\}/);
   assert.match(styles, /main:has\(\.mobile-landscape\)\{padding-bottom:0\}/);
@@ -2604,8 +2620,6 @@ test('landscape transitions retain mobile inspector routing and restore the desk
   assert.match(styles, /\.mobile-landscape \.overview-wave\{flex:0 0 40px;min-height:40px;max-height:40px\}/);
   assert.match(styles, /\.mobile-landscape \.overview-caption\{flex:0 0 24px;min-height:24px;flex-wrap:nowrap;/);
   assert.match(styles, /\.landscape-transport\{[^}]*padding-top:0\}/);
-  assert.match(styles, /\.landscape-transport:has\(>\.playback-message-bar\)\{padding-top:32px\}/);
-  assert.match(styles, /\.landscape-transport>\.playback-message-bar\{[^}]*top:0;bottom:auto;[^}]*height:32px;max-height:32px;/);
   assert.match(styles, /@container\(max-width:480px\)\{\.mobile-landscape \.overview-legend-label\{display:none\}\}/);
 });
 
@@ -2757,7 +2771,7 @@ test('compact playback menu closes on Escape and returns focus without changing 
   assert.match(descriptor.styles[0].content, /\.compact-playback:not\(\[open\]\)>\.transport-right\{display:none\}/);
 });
 
-test('dismissible audio and error messages sit above playback with no legacy status bar or audio attention animation', () => {
+test('global messages replace the fixed playback bar and support multiline animated stacking', () => {
   const { descriptor } = parse(readFileSync(new URL('App.vue', import.meta.url), 'utf8'));
   compileScript(descriptor, { id: 'bottom-status' });
   const template = descriptor.template.content;
@@ -2765,15 +2779,31 @@ test('dismissible audio and error messages sit above playback with no legacy sta
   const scrolling = template.slice(template.indexOf('<div class="editor-scroll">'), template.indexOf('<Teleport to="body"'));
   assert.doesNotMatch(scrolling, /id="playback-message-bar"/);
   const host = template.match(/<div ref="transportHost" class="transport-host"[^>]*>[\s\S]*?<\/Teleport>/)[0];
-  assert.match(host, /id="playback-message-bar"[\s\S]*:role="messageBarError \? 'alert' : 'status'"/);
-  assert.match(host, /id="message-load-audio"[^>]*@click="audioFile.click\(\)"/);
-  assert.match(host, /:aria-label="t\('关闭提示'\)" @click="dismissMessageBar"/);
-  assert.ok(host.indexOf('id="playback-message-bar"') < host.indexOf('class="transport"'));
+  assert.doesNotMatch(host, /playback-message-bar|global-messages/);
+  assert.match(template, /<GlobalMessages @load-audio="loadMessageAudio" \/>/);
   assert.match(descriptor.scriptSetup.content, /transportObserver.observe\(transportHost.value\)/);
   const styles = descriptor.styles[0].content;
   assert.doesNotMatch(styles + descriptor.scriptSetup.content, /#notice|audioAttention|audio-entry-attention/);
-  assert.match(styles, /\.playback-message-bar\{[^}]*height:36px;max-height:36px;overflow:hidden;/);
-  assert.match(styles, /\.playback-message-bar.error\{[^}]*color:#bd352b/);
+  assert.doesNotMatch(styles, /playback-message-bar/);
+  const { descriptor: messages } = parse(readFileSync(new URL('GlobalMessages.vue', import.meta.url), 'utf8'));
+  compileScript(messages, { id: 'global-messages' });
+  assert.match(messages.template.content, /<Teleport :to="target">[\s\S]*<TransitionGroup/);
+  assert.match(messages.template.content, /popover="manual"/);
+  assert.match(messages.template.content, /:key="item.id"/);
+  assert.match(messages.template.content, /notifications.dismiss\(item.id\)/);
+  assert.match(messages.template.content, /item.error \? 'alert' : 'status'/);
+  assert.match(messages.template.content, /emit\('load-audio', item.action.documentId\)/);
+  assert.match(messages.styles[0].content, /position:fixed/);
+  assert.match(messages.styles[0].content, /\.global-message\{[^}]*align-items:flex-start;/);
+  assert.match(messages.styles[0].content, /\.global-message-content\{[^}]*padding-block:calc\(\(var\(--message-control-size\) - 1lh\)\/2\)/);
+  assert.match(messages.styles[0].content, /\.global-message>svg\{[^}]*margin-top:calc\(\(var\(--message-control-size\) - 18px\)\/2\)/);
+  assert.match(messages.styles[0].content, /white-space:pre-wrap;overflow-wrap:anywhere/);
+  assert.match(messages.styles[0].content, /global-message-move/);
+  assert.match(messages.styles[0].content, /global-message-leave-to/);
+  assert.match(messages.styles[0].content, /prefers-reduced-motion:reduce/);
+  assert.match(messages.styles[0].content, /\.global-message \.message-action\{[^}]*min-height:28px;/);
+  assert.doesNotMatch(messages.styles[0].content, /\.message-action\{[^}]*min-height:var\(--message-control-size\)/);
+  assert.match(messages.styles[0].content, /@media\(pointer:coarse\)\{[\s\S]*?\.global-message \.message-action::after\{[^}]*position:absolute;[^}]*height:44px;transform:translateY\(-50%\)/);
   assert.match(styles, /\.transport\{padding-bottom:calc\(7px \+ env\(safe-area-inset-bottom,0px\)\)\}/);
 });
 
@@ -2973,7 +3003,9 @@ test('branch creation groups equal-width route and source fields and displays er
   assert.doesNotMatch(descriptor.scriptSetup.content, /\bconfirm\s*\(/);
   const form = template.match(/<form v-if="mode"[\s\S]*?<\/form>/)[0];
   assert.match(form, /class="branch-route-error" role="alert"[\s\S]*?<\/p>\s*<div class="branch-form-actions">/);
-  assert.match(template, /v-if="!mode && \(error \|\| state.error\)" class="branch-route-error"/);
+  assert.match(form, /<p v-if="error" class="branch-route-error" role="alert">\{\{ error \}\}<\/p>/);
+  assert.doesNotMatch(template, /state\.error/);
+  assert.doesNotMatch(template.replace(/<dialog\b[\s\S]*?<\/dialog>/g, ''), /branch-route-error|state\.notice/);
   assert.match(descriptor.styles[0].content, /\.branch-source-fields\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(descriptor.styles[0].content, /\.branch-source-fields select\{[^}]*max-width:none/);
   assert.match(descriptor.styles[0].content, /\.branch-form \.branch-route-error\{color:#bd3b30\}/);

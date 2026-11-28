@@ -2,7 +2,7 @@
 import { t, message, formatMessage, languages, locale, localePreference, initializeLocale, setLocale } from './i18n.js';
 import { getIntroPath, getPageMetadata } from './locales.js';
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue';
-import { Plus, ListPlus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, WandSparkles, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser, ListMusic, SquareMousePointer, ListChecks, TextCursorInput, SquareDashed, ArrowLeftToLine, ArrowLeft, ArrowRight, Map, CircleOff } from '@lucide/vue';
+import { Plus, ListPlus, Keyboard, ChevronDown, FileMusic, FilePlus2, X, AudioLines, Save, FilePenLine, SkipBack, SkipForward, Play, Pause, Square, Volume2, Info, WandSparkles, Languages, Check, Undo2, Redo2, Settings2, RefreshCw, Trash2, Copy, ClipboardPaste, BetweenHorizontalStart, BetweenHorizontalEnd, Eraser, ListMusic, SquareMousePointer, ListChecks, TextCursorInput, SquareDashed, ArrowLeftToLine, ArrowLeft, ArrowRight, Map, CircleOff, LoaderCircle } from '@lucide/vue';
 import { GitBranch } from '@lucide/vue';
 import { useStudio, formatTime } from './useStudio.js';
 import productIcon from './assets/icon.png';
@@ -12,6 +12,12 @@ import SongWorkspace from './SongWorkspace.vue';
 import WelcomeGuide from './WelcomeGuide.vue';
 import DifficultyIcon from './DifficultyIcon.vue';
 import DocumentTitle from './DocumentTitle.vue';
+import PersonalStorage from './PersonalStorage.vue';
+import GlobalMessages from './GlobalMessages.vue';
+import { STORAGE_PROVIDERS } from './personal-storage.js';
+import onedriveIcon from './assets/storage/cloud-storage.svg';
+import googleIcon from './assets/storage/google.png';
+import dropboxIcon from './assets/storage/dropbox.svg';
 import PositionIcon from './PositionIcon.vue';
 import { COURSE_NAMES, COURSE_LABELS } from './courses.js';
 import { NOTE_TYPES } from './note-model.js';
@@ -24,6 +30,8 @@ provide('studio', studio);
 const { state, controls, range, duration } = studio;
 const chartFile = ref(null), audioFile = ref(null);
 const welcomeGuide = ref(null);
+const personalStorage = ref(null);
+const storageIcons = { onedrive: onedriveIcon, google: googleIcon, dropbox: dropboxIcon };
 const activeDocument = computed({ get: () => state.activeId, set: id => studio.switchChart(id) });
 const transportHost = ref(null), transportHeight = ref(0);
 const playbackMenu = ref(null), compactTransport = ref(true), playbackMenuOpen = ref(false);
@@ -45,13 +53,17 @@ const fileMenu = ref(null), editMenu = ref(null), selectionMenu = ref(null), set
 const landscapeQuery = '(max-width:1100px) and (max-height:600px) and (orientation:landscape)';
 const mobileLandscape = ref(matchMedia(landscapeQuery).matches);
 const mobileWorkspace = ref(matchMedia('(max-width:900px)').matches || mobileLandscape.value), workspaceOpen = ref(!mobileWorkspace.value), workspaceSidebar = ref(null), workspaceTop = ref(0);
-const dismissedAudioMessages = ref(new Set()), errorMessageDismissed = ref(false);
-const showAudioMessage = computed(() => Boolean(state.chart && !state.buffer && !dismissedAudioMessages.value.has(state.activeId)));
-const messageBarError = computed(() => state.error && !errorMessageDismissed.value);
-watch(() => [state.noticeMessage, state.error], () => { errorMessageDismissed.value = false; }, { flush: 'sync' });
-function dismissMessageBar() {
-  if (messageBarError.value) errorMessageDismissed.value = true;
-  else dismissedAudioMessages.value.add(state.activeId);
+watch(() => [state.documents, state.activeId, state.buffer], () => {
+  const documents = state.documents;
+  for (const item of studio.notifications.items) {
+    if (item.action?.type !== 'load-audio') continue;
+    const target = documents.find(document => document.id === item.action.documentId);
+    if (!target || (target.id === state.activeId ? state.buffer : target.buffer)) studio.notifications.dismiss(item.id);
+  }
+});
+function loadMessageAudio(documentId) {
+  studio.switchChart(documentId);
+  audioFile.value.click();
 }
 let desktopWorkspaceOpen = true;
 function toggleWorkspace() {
@@ -396,9 +408,11 @@ async function dropFiles(event) {
           <button id="new-chart" type="button" :title="t('新建谱面（Ctrl+Alt+N）')" :aria-label="t('新建谱面')" aria-keyshortcuts="Control+Alt+n" @click="runFileAction(studio.newChart)"><FilePlus2 aria-hidden="true" /><span>{{ t('新建') }}</span><kbd aria-hidden="true">Ctrl+Alt+N</kbd></button>
           <button id="open-chart" type="button" :title="t('打开谱面（Ctrl+O）')" :aria-label="t('打开谱面')" aria-keyshortcuts="Control+o Meta+o" @click="runFileAction(chooseCharts)"><FileMusic aria-hidden="true" /><span>{{ t('打开谱面') }}</span><kbd aria-hidden="true">Ctrl+O</kbd></button>
           <button id="menu-open-audio" type="button" :disabled="!state.chart" @click="runFileAction(() => audioFile.click())"><AudioLines aria-hidden="true" /><span>{{ t('载入音频') }}</span></button>
+          <button id="open-personal-storage" type="button" @click="runFileAction(() => personalStorage.open())"><FileMusic aria-hidden="true" /><span>{{ t('从个人存储打开') }}</span></button>
           <hr>
           <button id="save" type="button" :title="t('保存（Ctrl+S）')" :aria-label="t('保存')" :disabled="!state.chart || state.saving" @click="runFileAction(studio.saveChart)"><Save aria-hidden="true" /><span>{{ t('保存') }}</span><kbd aria-hidden="true">Ctrl+S</kbd></button>
           <button id="save-as" type="button" :title="t('另存为（Ctrl+Shift+S）')" :aria-label="t('另存为')" :disabled="!state.chart || state.saving" @click="runFileAction(studio.saveAs)"><FilePenLine aria-hidden="true" /><span>{{ t('另存为') }}</span><kbd aria-hidden="true">Ctrl+Shift+S</kbd></button>
+          <button id="save-personal-storage" type="button" :disabled="!state.chart || state.saving" @click="runFileAction(() => personalStorage.open('save'))"><Save aria-hidden="true" /><span>{{ t('保存到个人存储') }}</span></button>
           <hr>
           <button id="close-chart" type="button" :disabled="!state.chart || state.saving" @click="runFileAction(() => studio.closeChart(state.activeId))"><X aria-hidden="true" /><span>{{ t('关闭谱面') }}</span><kbd aria-hidden="true">Ctrl+Alt+W</kbd></button>
         </div>
@@ -518,6 +532,8 @@ async function dropFiles(event) {
     </template>
     <div class="selection-dialog-actions"><button type="button" @click="fileErrorDialog.close()">{{ t('关闭') }}</button></div>
   </dialog>
+  <PersonalStorage ref="personalStorage" />
+  <GlobalMessages @load-audio="loadMessageAudio" />
   <input id="chart-file" ref="chartFile" type="file" multiple hidden @change="openFile($event)"><input id="audio-file" ref="audioFile" type="file" accept="audio/*,.mp3,.ogg,.wav,.flac,.m4a,.aac,.opus,.webm" hidden @change="openFile($event, true)">
   <main :style="{ '--transport-height': `${transportHeight}px` }">
     <section class="studio-panel" :aria-label="t('谱面编辑器')">
@@ -525,7 +541,7 @@ async function dropFiles(event) {
       <div id="chart-tabs-viewport" ref="tabsViewport" class="chart-tabs-viewport" @scroll="measureTabs">
         <div ref="tabsContent" class="chart-tabs-content">
           <div v-for="document in state.documents" :key="document.id" class="chart-tab" :class="{ active: document.id === state.activeId }">
-            <button class="chart-tab-select" :title="document.id === state.activeId ? state.filename : document.filename" :aria-current="document.id === state.activeId ? 'page' : undefined" @click="studio.switchChart(document.id)"><span class="chart-tab-name">{{ document.id === state.activeId ? state.filename : document.filename }}</span><span v-if="document.id === state.activeId ? state.dirty || state.invalid : document.dirty || document.invalid" class="chart-tab-dirty" :aria-label="t('未保存')">*</span></button>
+            <button class="chart-tab-select" :title="document.id === state.activeId ? state.filename : document.filename" :aria-current="document.id === state.activeId ? 'page' : undefined" :aria-busy="document.cloudSaving" @click="studio.switchChart(document.id)"><LoaderCircle v-if="document.cloudSaving" class="chart-tab-saving" role="img" :aria-label="t('保存中…')" /><img v-else-if="storageIcons[document.fileHandle?.provider]" class="chart-tab-storage" :src="storageIcons[document.fileHandle.provider]" :alt="STORAGE_PROVIDERS.find(item => item.id === document.fileHandle.provider)?.name" width="14" height="14"><span class="chart-tab-name">{{ document.id === state.activeId ? state.filename : document.filename }}</span><span v-if="document.id === state.activeId ? state.dirty || state.invalid : document.dirty || document.invalid" class="chart-tab-dirty" :aria-label="t('未保存')">*</span></button>
             <button class="icon" :aria-label="t('关闭 {p0}', { p0: document.id === state.activeId ? state.filename : document.filename })" :title="document.id === state.activeId ? t('关闭谱面（Ctrl+Alt+W）') : t('关闭谱面')" :aria-keyshortcuts="document.id === state.activeId ? 'Control+Alt+W' : undefined" :disabled="document.saving" @click="studio.closeChart(document.id)"><X /></button>
           </div>
           <button id="new-chart-tab" type="button" class="icon new-chart-tab" :title="t('新建谱面（Ctrl+Alt+N）')" :aria-label="t('新建谱面')" @click="studio.newChart"><Plus aria-hidden="true" /></button>
@@ -570,11 +586,6 @@ async function dropFiles(event) {
     </section>
     </div>
     <Teleport to="body" :disabled="!mobileWorkspace || mobileLandscape"><div ref="transportHost" class="transport-host" :class="{ 'landscape-transport': mobileLandscape }">
-    <div v-if="messageBarError || showAudioMessage" id="playback-message-bar" class="playback-message-bar" :class="{ error: messageBarError }" :role="messageBarError ? 'alert' : 'status'">
-      <Info aria-hidden="true" /><p>{{ messageBarError ? state.notice : t('尚未载入音频') }}</p>
-      <button v-if="!messageBarError && showAudioMessage" id="message-load-audio" type="button" class="message-action" @click="audioFile.click()"><AudioLines aria-hidden="true" />{{ t('载入音频') }}</button>
-      <button type="button" class="icon message-dismiss" :title="t('关闭提示')" :aria-label="t('关闭提示')" @click="dismissMessageBar"><X aria-hidden="true" /></button>
-    </div>
     <section v-if="studio.bar.value" class="transport"><div class="transport-left">
       <button id="previous" class="icon" :title="t('播放位置后退 / 前进一小节')" :aria-label="t('上一小节')" :disabled="!state.chart || state.invalid" @click="studio.seekMeasure(-1)"><SkipBack /></button>
       <button id="play" class="play icon primary" :class="{ playing: state.playing }" :title="t('播放 / 暂停（空格）')" aria-keyshortcuts="Space" :aria-label="state.playing ? t('暂停') : t('播放')" :disabled="!state.chart" @click="state.playing ? studio.pause() : studio.play()"><Pause v-if="state.playing" /><Play v-else /></button>
@@ -654,11 +665,8 @@ main{display:flex;flex:1;min-height:0;max-width:none;margin:0;padding:0}
 @media(max-width:900px){.editor-core>.document-toolbar{display:none}}
 .document-toolbar #encoding{margin-left:0;font-size:10px;white-space:nowrap;flex-shrink:0}
 .transport{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;z-index:5;flex-shrink:0;padding:7px 12px;gap:6px 12px;background:#fff;border-top:1px solid var(--line);border-bottom:0;box-shadow:none}.transport-left{min-width:0;gap:4px;flex-wrap:nowrap}.transport-right{width:auto;margin-left:0;gap:8px;flex-wrap:nowrap;justify-content:flex-end}.transport button{min-height:30px;padding:4px 8px}.transport-left>.icon{width:30px;min-width:30px}.transport .play{width:36px;height:34px}.time{margin-left:4px;gap:4px;white-space:nowrap}
-.playback-message-bar+.transport{border-top:0}
 .time b{font-size:16px}
 .transport-host{flex-shrink:0;min-width:0;container-type:inline-size}
-.playback-message-bar{display:flex;align-items:center;gap:8px;height:36px;max-height:36px;overflow:hidden;padding:4px 8px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:#edf5ef;color:var(--ink);font-size:12px}.playback-message-bar>p{flex:1;min-width:0;max-height:24px;overflow:auto;margin:0;color:inherit;font:inherit;line-height:1.5;overflow-wrap:anywhere}.playback-message-bar>button{flex-shrink:0;min-height:24px;padding:2px 6px;font:inherit}.playback-message-bar>.message-dismiss{width:24px;min-width:24px;padding:3px;border:0;background:transparent}.playback-message-bar.error{background:#fff0ed;color:#bd352b}
-.playback-message-bar>.message-action{min-height:24px;padding:2px 6px;border:1px solid #95b9a9;border-radius:3px;background:transparent;color:var(--green);font-size:11px;gap:4px;white-space:nowrap}.playback-message-bar>.message-action:hover{background:#16745b14}.playback-message-bar>.message-action>svg{width:14px;height:14px}
 .volume-popover{position:relative;font-size:12px}.volume-popover summary{display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--line);border-radius:4px;cursor:pointer;list-style:none;background:#fff}.volume-popover summary::-webkit-details-marker{display:none}.volume-popover summary:focus-visible{outline:2px solid var(--green);outline-offset:3px}
 .volume-panel{position:absolute;right:0;bottom:calc(100% + 6px);z-index:20;width:310px;max-width:85vw;padding:15px;border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 6px 24px #202a2820;display:grid;gap:14px}.volume-panel>label:not(.check){display:grid;grid-template-columns:minmax(58px,max-content) minmax(0,1fr) 36px;gap:8px}.volume-panel input[type=range]{width:100%;margin:0}.volume-panel output{text-align:right;font-size:11px;color:var(--muted)}.volume-panel p{overflow-wrap:anywhere;line-height:1.5}
 .overview{position:relative;padding:0;border-top:1px solid var(--line)}.overview-wave>#overview-hover{position:absolute;z-index:2;pointer-events:none;width:max-content;max-width:100%;padding:6px 9px;border:1px solid var(--line);border-radius:5px;background:#fff;font-size:11px;font-variant-numeric:tabular-nums;color:var(--ink);box-shadow:0 3px 12px #202a2826;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.overview canvas{height:40px;margin-top:0;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(10% - 1px),#c5d3c9 10%) #e5ece7;border-radius:0;touch-action:none;cursor:grab}.overview canvas:active{cursor:grabbing}.measure-section{padding:16px 12px}
@@ -709,9 +717,6 @@ main:has(.mobile-landscape){padding-bottom:0}
 .mobile-landscape .overview-wave{flex:0 0 40px;min-height:40px;max-height:40px}
 .mobile-landscape .overview canvas{height:100%}
 .landscape-transport{position:relative;left:auto;right:auto;bottom:auto;z-index:25;padding-top:0}
-.landscape-transport:has(>.playback-message-bar){padding-top:32px}
-.landscape-transport>.playback-message-bar{position:absolute;left:0;right:0;top:0;bottom:auto;z-index:1;height:32px;max-height:32px;padding:3px 8px}
-.landscape-transport .playback-message-bar button{min-height:24px;padding:2px 6px}
 .landscape-transport>.transport{border-top:1px solid var(--line);padding-bottom:calc(7px + env(safe-area-inset-bottom,0px))}
 .chart-tabs{position:relative;flex-shrink:0;min-width:0;margin:0;border-bottom:1px solid var(--line);background:#edf1ee}
 .chart-tabs .new-chart-tab{width:30px;min-width:30px;min-height:30px;padding:4px;flex-shrink:0;align-self:stretch;border:0;border-right:1px solid var(--line);border-radius:0;background:transparent;color:var(--muted)}.chart-tabs .new-chart-tab:hover{background:#dfe8e2;color:var(--green)}
@@ -730,6 +735,10 @@ main:has(.mobile-landscape){padding-bottom:0}
 .chart-tab button{border:0;background:transparent;min-width:0;min-height:28px;padding:3px 8px;font-size:11px;line-height:16px;white-space:nowrap;overflow-wrap:normal}
 .chart-tab .icon{width:28px;min-width:28px;padding:4px}.chart-tabs .icon svg{width:14px;height:14px}
 .chart-tab-select{flex:1}.chart-tab-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chart-tab-dirty{flex-shrink:0}
+.chart-tab-storage{width:14px;height:14px;flex-shrink:0;object-fit:contain}
+.chart-tab-saving{width:14px;height:14px;flex-shrink:0;color:var(--green);animation:chart-tab-spin 1s linear infinite}
+@keyframes chart-tab-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.chart-tab-saving{animation:none}}
 .chart-tab.active button{color:var(--green)}
 .chart-tab .icon{flex-shrink:0;opacity:0;pointer-events:none}
 .chart-tab.active .icon,.chart-tab:hover .icon,.chart-tab:focus-within .icon{opacity:1;pointer-events:auto}

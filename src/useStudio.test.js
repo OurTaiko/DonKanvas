@@ -7,8 +7,191 @@ import { drawNote, noteHitRadius } from './note-render.js';
 import { createTimelineViewport } from './timeline.js';
 import { COURSE_NAMES, courseLevel } from './courses.js';
 import { balloonCounts } from './balloon.js';
+import { createStorageHandle } from './personal-storage.js';
 
 const chart = 'TITLE:Vue session\nBPM:120\nOFFSET:0\nCOURSE:Oni\nLEVEL:1\n#START\n1000,\n2000,\n#END\n';
+
+test('global notices suppress ordinary messages while retaining independent errors without persisting them in drafts', () => {
+  const { studio, saved, cleanup } = mountStudio();
+  try {
+    studio.newChart();
+    assert.equal(studio.notifications.items.length, 0);
+    studio.notice('saved', false, { duration: 0 });
+    assert.equal(studio.notifications.items.length, 0);
+    assert.equal(studio.state.noticeMessage, 'saved'); assert.equal(studio.state.error, false);
+    studio.notice('failed', true, { duration: 0 });
+    studio.notice('failed', true);
+    assert.deepEqual(studio.notifications.items.map(item => [item.message, item.error]), [['failed', true], ['failed', true]]);
+    assert.equal(studio.state.noticeMessage, 'failed'); assert.equal(studio.state.error, true);
+    studio.notice('copied');
+    assert.equal(studio.state.noticeMessage, 'copied'); assert.equal(studio.state.error, false);
+    assert.equal(studio.notifications.items.length, 2);
+    assert.equal(workspace(saved).notifications, undefined);
+    studio.notifications.dismiss(studio.notifications.items[1].id);
+    assert.equal(studio.notifications.items.length, 1);
+  } finally { cleanup(); }
+  assert.equal(studio.notifications.items.length, 0);
+});
+
+test('personal storage opens metadata-only songs, writes UTF-8 BOM, preserves modifications made during saves and does not persist cloud connections', async () => {
+  const { studio, saved, cleanup } = mountStudio();
+  try {
+    const original = 'TITLE:Cloud song\nBPM:120\nOFFSET:0\n';
+    let stored = original, uploaded, finish;
+    const storage = {
+      provider: 'test',
+      read: async value => ({ entry: { ...value, revision: 'read' }, bytes: new TextEncoder().encode(stored).buffer }),
+      write: async (value, blob) => {
+        uploaded = new Uint8Array(await blob.arrayBuffer());
+        await new Promise(resolve => { finish = resolve; });
+        stored = new TextDecoder().decode(uploaded);
+        return { ...value, id: 'cloud-file', revision: 'written' };
+      }
+    };
+    const handle = createStorageHandle(storage, { id: 'cloud-file', name: 'cloud.tja' });
+    assert.equal(await studio.openStorageChart(handle), true);
+    assert.equal(studio.state.chart.bars.length, 0);
+    assert.equal(studio.state.fileHandle, handle);
+    studio.setMetadata({ TITLE: 'Edited' });
+    const text = studio.state.text;
+    const saving = studio.saveChart();
+    while (!finish) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(studio.state.saving, true);
+    assert.equal(studio.state.cloudSaving, true);
+    studio.setMetadata({ TITLE: 'Newer' });
+    finish();
+    assert.equal(await saving, true);
+    assert.equal(studio.state.cloudSaving, false);
+    assert.deepEqual([...uploaded.slice(0, 3)], [239, 187, 191]);
+    assert.equal(studio.state.savedText, text);
+    assert.equal(studio.state.dirty, true);
+    assert.match(studio.state.notice, /保存期间的新修改/);
+    assert.equal(workspace(saved).documents[0].fileHandle, undefined);
+    studio.restore();
+    assert.equal(studio.state.fileHandle, null);
+    assert.match(studio.state.text, /TITLE:Newer/);
+  } finally { cleanup(); }
+});
+
+test('cloud save cancellation, write conflicts and invalid-source or open failures retain edits and local destinations; successful cloud saves become the default destination', async () => {
+  const { studio, mock, cleanup } = mountStudio();
+  try {
+    const disk = diskFile();
+    await studio.openChart(await disk.handle.getFile(), disk.handle);
+    studio.setBpm(150);
+    const text = studio.state.text;
+    let writes = 0, fail = true;
+    const storage = {
+      provider: 'test',
+      read: async value => ({ entry: { ...value, revision: 'read' }, bytes: new TextEncoder().encode(chart.replace('TITLE:Vue session', 'TITLE:Other')).buffer }),
+      write: async value => {
+        writes++;
+        if (fail) throw new Error('412 cloud conflict');
+        return { ...value, id: 'cloud', revision: 'saved' };
+      }
+    };
+    let handle = createStorageHandle(storage, { id: 'cloud', name: 'cloud.tja' });
+    mock('confirm', prompt => { assert.match(prompt, /云端内容/); return false; });
+    assert.equal(await studio.saveToStorage(handle), false);
+    assert.equal(studio.state.cloudSaving, false);
+    assert.equal(writes, 0); assert.equal(studio.state.fileHandle, disk.handle);
+    mock('confirm', () => true);
+    assert.equal(await studio.saveToStorage(handle), false);
+    assert.equal(studio.state.cloudSaving, false);
+    assert.equal(writes, 1); assert.equal(studio.state.text, text); assert.equal(studio.state.dirty, true);
+    assert.equal(studio.state.fileHandle, disk.handle); assert.match(studio.state.notice, /412 cloud conflict/);
+    const before = studio.state.activeId;
+    assert.equal(await studio.openStorageChart({ name: 'broken.tja', getFile: async () => { throw new Error('Offline'); } }), false);
+    assert.equal(studio.state.activeId, before); assert.equal(studio.state.text, text);
+    fail = false;
+    handle = createStorageHandle(storage, { id: null, name: 'new.tja' });
+    assert.equal(await studio.saveToStorage(handle), true);
+    assert.equal(studio.state.fileHandle, handle); assert.equal(studio.state.filename, 'new.tja');
+    assert.equal(studio.state.dirty, false); assert.equal(disk.text, chart);
+    studio.editSource('broken'); studio.state.invalid = true;
+    const count = writes;
+    assert.equal(await studio.saveToStorage(handle), false);
+    assert.equal(writes, count);
+  } finally { cleanup(); }
+});
+
+test('first cloud saves retain their busy indicator on the target tab when switching tabs and clear it after success or failure', async () => {
+  const { studio, saved, cleanup } = mountStudio();
+  try {
+    await studio.openChart(file('local.tja', chart));
+    const targetId = studio.state.activeId;
+    for (const fail of [false, true]) {
+      let finish;
+      const storage = {
+        provider: 'onedrive',
+        write: async value => {
+          await new Promise(resolve => { finish = resolve; });
+          if (fail) throw new Error('Upload failed');
+          return { ...value, id: 'cloud', revision: 'written' };
+        }
+      };
+      const handle = createStorageHandle(storage, { id: null, name: 'cloud.tja' });
+      const saving = studio.saveToStorage(handle);
+      while (!finish) await new Promise(resolve => setImmediate(resolve));
+      assert.equal(studio.state.cloudSaving, true);
+      assert.notEqual(studio.state.fileHandle, handle);
+      studio.newChart();
+      const target = studio.state.documents.find(item => item.id === targetId);
+      assert.equal(target.cloudSaving, true);
+      assert.equal(studio.state.cloudSaving, false);
+      assert.equal(workspace(saved).documents.find(item => item.id === targetId).cloudSaving, undefined);
+      finish();
+      assert.equal(await saving, !fail);
+      assert.equal(target.cloudSaving, false);
+      assert.equal(studio.state.cloudSaving, false);
+      studio.switchChart(targetId);
+      assert.equal(studio.state.cloudSaving, false);
+    }
+  } finally { cleanup(); }
+});
+
+test('explicit cloud saves always confirm existing targets even with identical saved content, while normal saves and new files do not', async () => {
+  const { studio, mock, cleanup } = mountStudio();
+  try {
+    const disk = diskFile();
+    await studio.openChart(await disk.handle.getFile(), disk.handle);
+    studio.setBpm(150);
+    let writes = 0, accepted = false, stored = chart;
+    const prompts = [];
+    mock('confirm', prompt => { prompts.push(prompt); return accepted; });
+    const storage = {
+      provider: 'test',
+      read: async value => ({ entry: { ...value, revision: 'read' }, bytes: new TextEncoder().encode(stored).buffer }),
+      write: async (value, blob) => {
+        writes++; stored = new TextDecoder().decode(await blob.arrayBuffer());
+        return { ...value, id: value.id || 'new', revision: 'written' };
+      }
+    };
+    const handle = createStorageHandle(storage, { id: 'other', name: 'other.tja' });
+    assert.equal(await studio.saveToStorage(handle), false);
+    assert.equal(writes, 0);
+    assert.equal(studio.state.fileHandle, disk.handle);
+    assert.equal(studio.state.dirty, true);
+    assert.match(studio.state.notice, /已取消覆盖/);
+    assert.match(prompts[0], /other\.tja/);
+    assert.match(prompts[0], /确认没有选错文件/);
+    accepted = true;
+    assert.equal(await studio.saveToStorage(handle), true);
+    assert.equal(writes, 1);
+    assert.equal(prompts.length, 2);
+    assert.equal(studio.state.fileHandle, handle);
+    studio.setBpm(160);
+    assert.equal(await studio.saveChart(), true);
+    assert.equal(prompts.length, 2);
+    accepted = false;
+    assert.equal(await studio.saveToStorage(handle), false);
+    assert.equal(writes, 2);
+    assert.equal(prompts.length, 3);
+    assert.equal(await studio.saveToStorage(createStorageHandle(storage, { id: null, name: 'new.tja' })), true);
+    assert.equal(writes, 3);
+    assert.equal(prompts.length, 3);
+  } finally { cleanup(); }
+});
 
 test('global branch management targets explicit measures, synchronizes routes and persists undoable creation and deletion', async () => {
   const { studio, saved, cleanup } = mountStudio();
@@ -2355,6 +2538,68 @@ function fakeAudio(mock) {
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < .000001, `${actual} should equal ${expected}`);
 const audioFile = (name = 'song.mp3', path = '', marker = 1) => ({ name, webkitRelativePath: path, arrayBuffer: async () => new Uint8Array([marker]).buffer });
 const waveChart = wave => chart.replace('BPM:120', `WAVE:${wave}\nBPM:120`);
+
+test('missing-audio prompts appear only on the first unaccompanied play of each document, not on loading or draft restoration', async () => {
+  const { studio, mock, cleanup } = mountStudio();
+  fakeAudio(mock);
+  try {
+    await studio.openChart(file('first.tja'));
+    const first = studio.state.activeId;
+    await studio.openChart(file('second.tja'));
+    const second = studio.state.activeId;
+    assert.equal(studio.notifications.items.length, 0);
+    studio.restore();
+    assert.equal(studio.notifications.items.length, 0);
+    await studio.play();
+    assert.equal(studio.state.playing, true);
+    assert.equal(studio.notifications.items.length, 1);
+    const prompt = studio.notifications.items[0];
+    assert.equal(formatMessage(prompt.message), '谱面“second.tja”尚未载入音频');
+    assert.deepEqual(prompt.action, { type: 'load-audio', documentId: second });
+    studio.pause(); studio.notifications.dismiss(prompt.id);
+    await studio.play();
+    assert.equal(studio.notifications.items.length, 0);
+    studio.switchChart(first);
+    assert.equal(studio.notifications.items.length, 0);
+    await studio.play();
+    assert.equal(studio.notifications.items.length, 1);
+    assert.equal(formatMessage(studio.notifications.items[0].message), '谱面“first.tja”尚未载入音频');
+    assert.equal(studio.notifications.items[0].action.documentId, first);
+  } finally { cleanup(); }
+});
+
+test('audio prompts do not appear for accompanied playback, failed starts or cancelled pending playback', async () => {
+  const { studio, mock, cleanup } = mountStudio();
+  const { context } = fakeAudio(mock);
+  try {
+    await studio.openChart(file('with-audio.tja'));
+    const accompanied = studio.state.activeId;
+    await studio.openAudio(audioFile());
+    await studio.play();
+    assert.equal(studio.state.playing, true);
+    assert.equal(studio.notifications.items.length, 0);
+    await studio.openChart(file('silent.tja'));
+    const silent = studio.state.activeId;
+    context.resume = async () => { throw new Error('Playback blocked'); };
+    await studio.play();
+    assert.equal(studio.state.playing, false);
+    assert.equal(studio.notifications.items.length, 1);
+    assert.equal(studio.notifications.items[0].error, true);
+    assert.equal(studio.notifications.items[0].action, null);
+    studio.notifications.dismiss(studio.notifications.items[0].id);
+    let resume;
+    context.resume = () => new Promise(resolve => { resume = resolve; });
+    const pending = studio.play();
+    studio.switchChart(accompanied); resume(); await pending;
+    assert.equal(studio.notifications.items.length, 0);
+    studio.switchChart(silent);
+    context.resume = async () => {};
+    await studio.play();
+    assert.equal(studio.state.playing, true);
+    assert.equal(studio.notifications.items.length, 1);
+    assert.equal(studio.notifications.items[0].action.documentId, silent);
+  } finally { cleanup(); }
+});
 
 test('charts play synthesized notes without music, advance their own clock and stop at chart end', async () => {
   const { studio, mock, ticks, cleanup } = mountStudio();

@@ -13,7 +13,7 @@ const content = {
     stepsTitle: '如何在线编辑 TJA 文件',
     steps: ['打开编辑器，通过“文件”菜单新建歌曲或打开本地 TJA 文件，也可以拖入 TJA 文件。', '新建歌曲后创建难度谱面；按需载入伴奏，在音符编辑与小节源码中编排谱面。', '播放预览检查音符与伴奏的配合，再通过“保存”或“另存为”导出 TJA 文件。'],
     faqTitle: '常见问题',
-    faq: [['是否免费，需要安装吗？', '咚咔绘板免费且开源，可直接在线使用。支持的浏览器也可将它安装为 PWA。'], ['谱面和音频会上传吗？', '不会。谱面解析、音频处理和编辑在浏览器本地完成，音频文件不会被修改。'], ['可以离线使用吗？', '首次联网加载完成后可离线编辑。音频刷新后需要重新载入；请主动保存谱面，不要把本地草稿当作文件备份。']],
+    faq: [['是否免费，需要安装吗？', '咚咔绘板免费且开源，可直接在线使用。支持的浏览器也可将它安装为 PWA。'], ['谱面和音频会上传吗？', '默认不会，解析和编辑在浏览器本地完成。仅在你使用个人存储保存时，谱面直接上传到你授权的网盘，不经过 DonKanvas 服务器。音频不上传、不修改。'], ['可以离线使用吗？', '首次联网加载完成后可离线编辑。音频刷新后需要重新载入；请主动保存谱面，不要把本地草稿当作文件备份。']],
     languages: '其他语言',
     project: '开源项目'
   },
@@ -29,7 +29,7 @@ const content = {
     stepsTitle: 'How to edit a TJA file online',
     steps: ['Open the editor and use the File menu to create a song or open a local TJA file. You can also drag in a TJA file.', 'Create a difficulty chart for a new song, load backing audio if needed, and arrange notes using visual editing and measure source.', 'Preview playback to check notes against the backing audio, then export the TJA file with Save or Save as.'],
     faqTitle: 'Frequently asked questions',
-    faq: [['Is it free? Do I need to install it?', 'DonKanvas is free and open source. Use it online or install it as a PWA in supported browsers.'], ['Are my charts or audio uploaded?', 'No. Chart parsing, audio processing and editing happen locally in your browser. Audio files are not modified.'], ['Can I work offline?', 'After the first complete online load, you can edit offline. Reload audio after refreshing, and explicitly save your charts: local drafts are not file backups.']],
+    faq: [['Is it free? Do I need to install it?', 'DonKanvas is free and open source. Use it online or install it as a PWA in supported browsers.'], ['Are my charts or audio uploaded?', 'Not by default: parsing and editing are local. When you save to personal storage, charts upload directly to your authorized provider, not through a DonKanvas server. Audio is never uploaded or modified.'], ['Can I work offline?', 'After the first complete online load, you can edit offline. Reload audio after refreshing, and explicitly save your charts: local drafts are not file backups.']],
     languages: 'Other languages',
     project: 'Open-source project'
   },
@@ -45,7 +45,7 @@ const content = {
     stepsTitle: 'オンラインで TJA ファイルを編集する方法',
     steps: ['エディタのファイルメニューから曲を新規作成するか、ローカルの TJA ファイルを開きます。ドラッグして開くこともできます。', '新しい曲に難易度の譜面を作成し、必要に応じて音声を読み込み、音符編集と小節ソースで譜面を作ります。', '再生プレビューで音符と音声を確認し、保存または名前を付けて保存で TJA ファイルを書き出します。'],
     faqTitle: 'よくある質問',
-    faq: [['無料ですか？インストールは必要ですか？', '無料のオープンソースアプリです。オンラインで利用でき、対応ブラウザーでは PWA としてインストールもできます。'], ['譜面や音声はアップロードされますか？', 'されません。譜面の解析、音声処理、編集はブラウザー内で行います。音声ファイルは変更しません。'], ['オフラインでも使えますか？', '初回のオンライン読み込み完了後はオフラインで編集できます。再読み込み後は音声を読み込み直してください。下書きはバックアップではないため、譜面を明示的に保存してください。']],
+    faq: [['無料ですか？インストールは必要ですか？', '無料のオープンソースアプリです。オンラインで利用でき、対応ブラウザーでは PWA としてインストールもできます。'], ['譜面や音声はアップロードされますか？', '通常はされません。解析と編集はブラウザー内で行います。個人ストレージに保存する場合のみ、譜面を許可したサービスに直接送信し、DonKanvas サーバーを経由しません。音声はアップロードも変更もしません。'], ['オフラインでも使えますか？', '初回のオンライン読み込み完了後はオフラインで編集できます。再読み込み後は音声を読み込み直してください。下書きはバックアップではないため、譜面を明示的に保存してください。']],
     languages: '他の言語',
     project: 'オープンソースプロジェクト'
   },
@@ -61,7 +61,7 @@ const content = {
     stepsTitle: '如何線上編輯 TJA 檔案',
     steps: ['開啟編輯器，透過檔案選單新增歌曲或開啟本機 TJA 檔案，也可以拖入 TJA 檔案。', '新增歌曲後建立難度譜面；按需載入伴奏，在音符編輯與小節原始碼中編排譜面。', '播放預覽檢查音符與伴奏的配合，再透過儲存或另存新檔匯出 TJA 檔案。'],
     faqTitle: '常見問題',
-    faq: [['是否免費，需要安裝嗎？', '咚咔繪板免費且開源，可直接線上使用。支援的瀏覽器也可將它安裝為 PWA。'], ['譜面和音訊會上傳嗎？', '不會。譜面解析、音訊處理和編輯在瀏覽器本機完成，音訊檔案不會被修改。'], ['可以離線使用嗎？', '首次連線載入完成後可離線編輯。音訊重新整理後需要重新載入；請主動儲存譜面，不要把本機草稿當作檔案備份。']],
+    faq: [['是否免費，需要安裝嗎？', '咚咔繪板免費且開源，可直接線上使用。支援的瀏覽器也可將它安裝為 PWA。'], ['譜面和音訊會上傳嗎？', '預設不會，解析和編輯在瀏覽器本機完成。僅在你使用個人儲存空間儲存時，譜面直接上傳到你授權的網盤，不經過 DonKanvas 伺服器。音訊不上傳、不修改。'], ['可以離線使用嗎？', '首次連線載入完成後可離線編輯。音訊重新整理後需要重新載入；請主動儲存譜面，不要把本機草稿當作檔案備份。']],
     languages: '其他語言',
     project: '開源專案'
   },
@@ -77,7 +77,7 @@ const content = {
     stepsTitle: '온라인에서 TJA 파일을 편집하는 방법',
     steps: ['편집기의 파일 메뉴에서 곡을 새로 만들거나 로컬 TJA 파일을 여세요. TJA 파일을 끌어다 놓을 수도 있습니다.', '새 곡의 난이도 채보를 만들고 필요한 경우 반주를 불러온 뒤 음표 편집과 마디 소스로 채보를 작성하세요.', '재생 미리보기로 음표와 반주를 확인한 뒤 저장 또는 다른 이름으로 저장으로 TJA 파일을 내보내세요.'],
     faqTitle: '자주 묻는 질문',
-    faq: [['무료인가요? 설치해야 하나요?', '동캇보드는 무료 오픈 소스 앱입니다. 온라인으로 사용하거나 지원되는 브라우저에서 PWA로 설치할 수 있습니다.'], ['채보나 오디오가 업로드되나요?', '아니요. 채보 분석, 오디오 처리와 편집은 브라우저에서 로컬로 이루어집니다. 오디오 파일은 수정하지 않습니다.'], ['오프라인에서도 사용할 수 있나요?', '처음 온라인으로 로딩을 완료한 뒤에는 오프라인 편집이 가능합니다. 새로고침 후에는 오디오를 다시 불러오세요. 로컬 초안은 파일 백업이 아니므로 채보를 직접 저장하세요.']],
+    faq: [['무료인가요? 설치해야 하나요?', '동캇보드는 무료 오픈 소스 앱입니다. 온라인으로 사용하거나 지원되는 브라우저에서 PWA로 설치할 수 있습니다.'], ['채보나 오디오가 업로드되나요?', '기본적으로 업로드하지 않으며 분석과 편집은 로컬에서 처리합니다. 개인 저장소에 저장할 때만 채보를 승인한 서비스로 직접 업로드하며 DonKanvas 서버를 거치지 않습니다. 오디오는 업로드하거나 수정하지 않습니다.'], ['오프라인에서도 사용할 수 있나요?', '처음 온라인으로 로딩을 완료한 뒤에는 오프라인 편집이 가능합니다. 새로고침 후에는 오디오를 다시 불러오세요. 로컬 초안은 파일 백업이 아니므로 채보를 직접 저장하세요.']],
     languages: '다른 언어',
     project: '오픈 소스 프로젝트'
   }

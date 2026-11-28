@@ -13,11 +13,12 @@ import { songMetadata, setSongMetadata } from './metadata.js';
 import { addCourse, deleteCourse, addPlayerCharts, setCourseLevel } from './courses.js';
 import { createBeatTimeline, TIMELINE_GUTTER } from './timeline.js';
 import { noteHitRadius } from './note-render.js';
+import { createNotifications } from './notifications.js';
 
 const WORKSPACE_KEY = 'tja-wave-workspace';
 const chartFileTypes = () => [{ description: t('TJA 谱面'), accept: { 'text/plain': ['.tja'] } }];
-const documentFields = ['text', 'chart', 'selected', 'course', 'branchRoutes', 'buffer', 'peaks', 'position', 'viewStart', 'followPlayback', 'undo', 'redo', 'filename', 'savedText', 'fileHandle', 'saving', 'dirty', 'invalid', 'selectedCell', 'commandCell', 'source', 'sourceState', 'encoding', 'audioName', 'customLoop'];
-const emptyDocument = () => ({ text: '', chart: null, selected: 0, course: 0, branchRoutes: [], buffer: null, peaks: [], position: 0, viewStart: 0, followPlayback: true, undo: [], redo: [], filename: 'chart.tja', savedText: null, fileHandle: null, saving: false, dirty: false, invalid: false, selectedCell: null, commandCell: null, source: '', sourceState: '已同步', encoding: '', audioName: '无伴奏 · 可直接播放谱面', customLoop: null });
+const documentFields = ['text', 'chart', 'selected', 'course', 'branchRoutes', 'buffer', 'peaks', 'position', 'viewStart', 'followPlayback', 'undo', 'redo', 'filename', 'savedText', 'fileHandle', 'saving', 'cloudSaving', 'dirty', 'invalid', 'selectedCell', 'commandCell', 'source', 'sourceState', 'encoding', 'audioName', 'customLoop'];
+const emptyDocument = () => ({ text: '', chart: null, selected: 0, course: 0, branchRoutes: [], buffer: null, peaks: [], position: 0, viewStart: 0, followPlayback: true, undo: [], redo: [], filename: 'chart.tja', savedText: null, fileHandle: null, saving: false, cloudSaving: false, dirty: false, invalid: false, selectedCell: null, commandCell: null, source: '', sourceState: '已同步', encoding: '', audioName: '无伴奏 · 可直接播放谱面', customLoop: null });
 function chartFilename(name) {
   name = name.trim();
   if (!name || /[\\/:*?"<>|\r\n]/.test(name)) throw new LocalizedError(message('请输入有效的谱面文件名。'));
@@ -31,6 +32,7 @@ export const formatTime = value => {
 };
 
 export function useStudio() {
+  const notifications = createNotifications();
   const state = shallowReactive({ ...emptyDocument(), documents: [], activeId: null, playing: false, copiedMeasures: null, pasteRequest: 0, deleteRequest: 0, closeRequest: null, editorBlocked: false, fileErrors: [], branchRouteWarning: null, saveState: '尚未打开谱面', noticeMessage: '请选择 TJA 谱面，可无伴奏播放或载入对应音频。', get notice() { return formatMessage(this.noticeMessage); }, error: false });
   let nextDocumentId = 1, viewAnimation = null, reloadApproved = false;
   const controls = reactive({ hits: true, rate: 1, volume: MIX_DEFAULTS.music, hitVolume: MIX_DEFAULTS.hits, view: 'auto', zoom: 1, snap: GRID_DIVISIONS, snapChoice: '16', customSnap: GRID_DIVISIONS });
@@ -111,7 +113,8 @@ export function useStudio() {
   let context, music, gain, musicDuck, hitGain, output, anchor = 0, origin = 0, loopStart = 0, loopEnd = 0, scheduledUntil = 0, playbackRate = 1, looping = false;
   let sourceTimer, scheduler, frame, disposed = false, audioRequest = 0, playRequest = 0;
   const voices = new Set(), hitBuffers = new Map();
-  const notice = (message, error = false) => { state.branchRouteWarning = null; state.noticeMessage = message; state.error = error; };
+  const audioMessageDocuments = new Set();
+  const notice = (message, error = false, options) => { state.branchRouteWarning = null; state.noticeMessage = message; state.error = error; if (error) return notifications.push(message, true, options); };
   const reportFileError = (error, filename = '') => { state.fileErrors = [...state.fileErrors, { error, filename }]; };
   const guard = action => { try { return action(); } catch (error) { notice(error, true); } };
   function audioContext() {
@@ -165,7 +168,13 @@ export function useStudio() {
       music.loop = looping; music.loopStart = loopStart; music.loopEnd = loopEnd;
       music.onended = () => { if (state.playing) { pause(); state.position = loopEnd; } };
       music.start(anchor, position);
-    } else notice(controls.hits && controls.hitVolume > 0 ? message('无伴奏播放：正在播放谱面音符音。') : message('无伴奏播放：音符音已关闭或音量为零，当前仅运行播放头。'));
+    } else {
+      notice(controls.hits && controls.hitVolume > 0 ? message('无伴奏播放：正在播放谱面音符音。') : message('无伴奏播放：音符音已关闭或音量为零，当前仅运行播放头。'));
+      if (!audioMessageDocuments.has(state.activeId)) {
+        audioMessageDocuments.add(state.activeId);
+        notifications.push(message('谱面“{p0}”尚未载入音频', { p0: state.filename }), false, { action: { type: 'load-audio', documentId: state.activeId } });
+      }
+    }
     schedule();
   }
   function tone(note, when) {
@@ -621,6 +630,7 @@ export function useStudio() {
     const index = state.documents.indexOf(document);
     if (active) { viewAnimation = null; clearTimeout(sourceTimer); ++audioRequest; }
     state.documents = state.documents.filter(item => item.id !== id);
+    audioMessageDocuments.delete(id);
     if (active) {
       const next = state.documents[Math.min(index, state.documents.length - 1)];
       if (next) activate(next);
@@ -681,6 +691,18 @@ export function useStudio() {
       const bytes = await file.arrayBuffer(); if (disposed) return;
       loadChart(bytes, file.name, fileHandle);
     } catch (error) { if (!disposed) reportFileError(error, file.name); }
+  }
+  async function openStorageChart(handle) {
+    try {
+      if (!/\.tja$/i.test(handle.name)) throw new LocalizedError('请选择 .tja 谱面文件：{p0}', { p0: handle.name });
+      const file = await handle.getFile(), bytes = await file.arrayBuffer();
+      if (disposed) return false;
+      loadChart(bytes, file.name, handle);
+      return true;
+    } catch (error) {
+      if (!disposed) notice(message('打开谱面失败：{p0}', { p0: error }), true);
+      return false;
+    }
   }
   async function openCharts() {
     try {
@@ -755,7 +777,7 @@ export function useStudio() {
     Object.assign(document, values);
     if (state.activeId === document.id) Object.assign(state, values);
   }
-  async function saveChart(as = false) {
+  async function saveChart(as = false, storageHandle = null) {
     if (!state.chart) { notice(message('请先打开谱面。'), true); return false; }
     if (state.saving) { notice(message('此谱面正在保存，请稍候。'), true); return false; }
     flushSource();
@@ -768,8 +790,8 @@ export function useStudio() {
     if (input?.dataset?.songField && !setMetadata({ [input.dataset.songField]: input.value })) return false;
     snapshot();
     const target = state.documents.find(item => item.id === state.activeId), text = state.text;
-    let handle = as ? null : target.fileHandle, choosing = false;
-    updateDocument(target, { saving: true });
+    let handle = storageHandle || (as ? null : target.fileHandle), choosing = false;
+    updateDocument(target, { saving: true, cloudSaving: Boolean(handle?.provider) });
     try {
       const blob = new Blob(['\ufeff', text], { type: 'text/plain;charset=utf-8' });
       if (!handle && typeof window.showSaveFilePicker !== 'function') {
@@ -788,10 +810,11 @@ export function useStudio() {
         choosing = true;
         handle = await window.showSaveFilePicker({ suggestedName: target.filename, types: chartFileTypes() });
         choosing = false;
-      } else {
+      } else if (!handle.provider || handle.existing) {
         const diskText = decodeChart(await (await handle.getFile()).arrayBuffer()).text;
         if (disposed) return false;
-        if (diskText !== target.savedText && !confirm(t('{p0} 在磁盘上已发生变化。继续保存将覆盖磁盘内容，是否继续？', { p0: target.filename }))) {
+        const prompt = storageHandle ? '确认覆盖云端文件“{p0}”？该文件的云端内容将被当前谱面替换，请确认没有选错文件。' : handle.provider ? '{p0} 的云端内容与当前保存版本不同。继续保存将覆盖云端内容，是否继续？' : '{p0} 在磁盘上已发生变化。继续保存将覆盖磁盘内容，是否继续？';
+        if ((storageHandle || diskText !== target.savedText) && !confirm(t(prompt, { p0: handle.name }))) {
           notice(message('已取消覆盖，修改仍保留。')); return false;
         }
       }
@@ -810,9 +833,10 @@ export function useStudio() {
     } catch (error) {
       if (!disposed) notice(choosing && error.name === 'AbortError' ? message('已取消保存，修改仍保留。') : message('保存 {p0} 失败：{p1}', { p0: target.filename, p1: error }), !(choosing && error.name === 'AbortError'));
       return false;
-    } finally { updateDocument(target, { saving: false }); }
+    } finally { updateDocument(target, { saving: false, cloudSaving: false }); }
   }
   function saveAs() { return saveChart(true); }
+  function saveToStorage(handle) { return saveChart(false, handle); }
   function setOffset(value) {
     return guard(() => { requireValid(); if (!Number.isFinite(value)) throw new LocalizedError(message('偏移无效')); commit(/^OFFSET:/mi.test(state.text) ? state.text.replace(/^OFFSET:[^\r\n]*/mi, `OFFSET:${value}`) : `OFFSET:${value}\n${state.text}`); return true; });
   }
@@ -945,8 +969,9 @@ export function useStudio() {
   });
   onUnmounted(() => {
     disposed = true; clearTimeout(sourceTimer); clearInterval(scheduler); cancelAnimationFrame(frame);
+    notifications.dispose();
     pause(); void context?.close(); document.removeEventListener('keydown', keydown); document.removeEventListener('keyup', keyup);
     window.removeEventListener('blur', clearShortcutKeys); window.removeEventListener('beforeunload', beforeUnload);
   });
-  return { state, controls, bar, spans, visible, viewSpan, viewBeats, timelineWidth, timelineScale, timelineBounds, timelineScrollBounds, chartStats, stats, cell, command, measureCommand, selectedTiming, currentTiming, range, deleteRange, canDeleteMeasures, duration, metadata, notice, reportFileError, pause, play, stop, seek, seekMeasure, panTimeline, select, selectCell, moveCell, selectNote, selectAdjacentNote, clearNoteSelection, setCommandPosition, applySettings, applyBranchSource, applyMeasureBranch, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, clearLoop, loopCurrent, setSnap, changeCourse, createCourse, removeCourse, createPlayerCharts, setLevel, changeAllBranches, changeBranch, openChart, openCharts, openAudio, newChart, switchChart, closeChart, insertBar, appendBar, requestDeleteBar, deleteBar, copyMeasures, requestPaste, pasteMeasures, reloadForUpdate, renameChart, restore, saveChart, saveAs, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
+  return { state, notifications, controls, bar, spans, visible, viewSpan, viewBeats, timelineWidth, timelineScale, timelineBounds, timelineScrollBounds, chartStats, stats, cell, command, measureCommand, selectedTiming, currentTiming, range, deleteRange, canDeleteMeasures, duration, metadata, notice, reportFileError, pause, play, stop, seek, seekMeasure, panTimeline, select, selectCell, moveCell, selectNote, selectAdjacentNote, clearNoteSelection, setCommandPosition, applySettings, applyBranchSource, applyMeasureBranch, clearSettings, removeCommand, chooseNote, editSource, history, setLoop, clearLoop, loopCurrent, setSnap, changeCourse, createCourse, removeCourse, createPlayerCharts, setLevel, changeAllBranches, changeBranch, openChart, openCharts, openStorageChart, openAudio, newChart, switchChart, closeChart, insertBar, appendBar, requestDeleteBar, deleteBar, copyMeasures, requestPaste, pasteMeasures, reloadForUpdate, renameChart, restore, saveChart, saveAs, saveToStorage, chartFilename, setOffset, setBpm, setMetadata, setDivision, clearBar, setBalloon };
 }

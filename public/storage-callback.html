@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DonKanvas storage authorization</title>
+<p id="status">Returning to DonKanvas...</p>
+<script>
+  const params = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
+  const result = { type: 'donkanvas-storage-auth' };
+  for (const key of ['state', 'code', 'error']) result[key] = params.get(key);
+  history.replaceState(null, '', location.pathname);
+  if (window.opener) window.opener.postMessage(result, location.origin);
+  else document.getElementById('status').textContent = 'Return to DonKanvas and connect again. This window has no opener.';
+</script>
+</html>

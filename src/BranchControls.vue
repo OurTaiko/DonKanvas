@@ -176,7 +176,7 @@ function keydown(event) {
               <button id="branch-delete-empty" type="button" class="delete-action" @click="removeBranch('')"><Trash2 aria-hidden="true" />{{ t('删除分歧并清空音符') }}</button>
             </div>
           </template>
-          <p v-if="error || state.error" class="branch-route-error" role="alert">{{ error || state.notice }}</p>
+          <p v-if="error" class="branch-route-error" role="alert">{{ error }}</p>
           <div class="branch-form-actions"><button id="branch-cancel" type="button" @click="close">{{ t('取消') }}</button><button v-if="mode === 'create' || mode === 'remove-route'" id="branch-apply" type="submit" :class="{ 'delete-action': mode === 'remove-route' }" :disabled="mode === 'create' && !selectedMeasures.length"><Trash2 v-if="mode === 'remove-route'" aria-hidden="true" />{{ mode === 'remove-route' ? t('删除分歧') : t('确定') }}</button></div>
         </fieldset>
       </form>
@@ -207,13 +207,12 @@ function keydown(event) {
         </article>
         <p v-if="!sortedBranches.length" class="no-branches"><GitBranch aria-hidden="true" :stroke-width="1.5" /><span>{{ t('暂无分歧') }}</span></p>
       </div>
-      <p v-if="!mode && (error || state.error)" class="branch-route-error" role="alert">{{ error || state.notice }}</p>
     </div>
   </section>
 </template>
 
 <style scoped>
-.branch-manager{flex-basis:100%;min-width:0;max-width:100%}.branch-manager>.branch-route-error{margin-top:12px}.branch-manager .branch-route-list{max-height:none;overflow:visible;display:flex;flex-direction:column;gap:10px;border:0;border-radius:0}.branch-manager .branch-row-heading>.branch-jump{min-width:0}
+.branch-manager{flex-basis:100%;min-width:0;max-width:100%}.branch-manager .branch-route-list{max-height:none;overflow:visible;display:flex;flex-direction:column;gap:10px;border:0;border-radius:0}.branch-manager .branch-row-heading>.branch-jump{min-width:0}
 .branch-manager .branch-route-row{gap:0;padding:0;border:1px solid var(--line);border-radius:8px;background:#fff;overflow:hidden}
 .branch-manager .branch-route-row+.branch-route-row{border-top:1px solid var(--line)}
 .branch-manager .branch-row-heading{padding:6px 8px;border-bottom:1px solid var(--line);background:#f4f7f5}

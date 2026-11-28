@@ -39,6 +39,12 @@ jobs:
         run: npm ci --registry=https://registry.npmjs.org/
 
       - name: Build
+        env:
+          VITE_ONEDRIVE_CLIENT_ID: 68300dbc-b11e-4131-af28-2463c375b832
+          VITE_GOOGLE_CLIENT_ID: 707073593802-idq0vkvqif7f2r2lf36lmo5md0hv2cpr.apps.googleusercontent.com
+          VITE_GOOGLE_API_KEY: AIzaSyBCbZkfq6KazJmuTZuG6qldrJeiT3f2Rqk
+          VITE_GOOGLE_APP_ID: 707073593802
+          VITE_DROPBOX_CLIENT_ID: dvda5ci0x0hzb6v
         run: npm run build
 
       - name: Configure Pages

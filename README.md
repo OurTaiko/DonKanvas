@@ -1,6 +1,6 @@
 # 咚咔绘板 · DonKanvas
 
-支持**手机、平板和桌面**的在线 TJA 太鼓谱面编辑器。通过 Canvas 波形与音符时间轴制谱，兼顾触屏手势和键盘快捷键；谱面、音频与历史均在浏览器处理，不上传文件，无需后端。
+支持**手机、平板和桌面**的在线 TJA 太鼓谱面编辑器。通过 Canvas 波形与音符时间轴制谱，兼顾触屏手势和键盘快捷键；谱面、音频与历史均在浏览器处理，默认不上传文件，无需自建后端。可选连接用户自己的个人存储，直接打开和保存谱面。
 
 [在线编辑器](https://ourtaiko.github.io/DonKanvas/) · [应用介绍](https://ourtaiko.github.io/DonKanvas/about.html) · [GitHub](https://github.com/OurTaiko/DonKanvas) · [MIT](./LICENSE)
 
@@ -68,6 +68,76 @@ macOS 的文件、剪贴板和历史组合键也支持 Command。完整列表和
 - 多文件独立保留内容、伴奏与最多 50 步撤销历史。草稿自动恢复；刷新后音频和文件写回授权需重新载入，选择状态不恢复。
 - WAVE 仅作为元数据保留，不自动读取文件、匹配目录或请求网络。修改 WAVE（包括撤销 / 重做）会解除旧伴奏。
 - 音频不上传、不修改、不写入草稿；未载入伴奏也能试听。存储空间不足或不可用时会明确提示，请及时保存。
+- 分歧管理列表下方不显示通用消息区域；保存等全局错误不混入分歧面板，分歧操作弹窗仅显示自身操作错误。
+- 全局弹出消息仅保留未载入音频的载入提示和错误；保存成功、复制、切换谱面等普通操作消息仍更新内部状态，但不弹出。消息以页面底部浮动堆栈显示，不占播放条或编辑器空间；新消息从下方进入，旧消息向上移动，关闭和超时退出均有动画，并遵循减少动态效果设置。支持多行、手动关闭，载入提示和错误默认均在 8 秒后消失；悬停或键盘焦点停留时暂停计时。错误消息调用 `studio.notice(message, true, { duration })` 可单独指定毫秒时长，`duration: 0` 表示常驻。支持 Popover 的浏览器中，消息使用顶层展示，在原生模态框打开时仍可查看和关闭。打开谱面、恢复草稿和切换标签不弹音频提示；每份谱面在本次页面会话首次无伴奏播放时提示“谱面‘文件名’尚未载入音频”，不显示载入成功文案，并保留载入按钮（桌面和触屏的可见高度均为 28px、上间距 6px；触屏通过透明区域扩大到 44px 点击高度，不增加布局占用）。暂停后继续或再次播放不重复提示，已载入音频、启动失败或启动被取消时不提示；载入音频或关闭谱面后移除该提示。消息不写入草稿。
+
+- 消息框的图标、首行文字和关闭按钮垂直居中对齐，单行上下间距一致；自动换行、显式多行和带操作按钮的消息均对齐首行。
+
+### 个人存储
+
+“文件 → 从个人存储打开 / 保存到个人存储”支持 **OneDrive、Google Drive、Dropbox**。浏览器直接访问用户授权的存储，不使用集中存储或 DonKanvas 文件代理；只传输 TJA，不上传音频。没有后台自动同步。
+
+- 入口使用三个服务图标按钮，桌面和手机均一行排列，点击即连接；连接期间所选图标显示 spinner，所有操作按钮暂时禁用。连接和传输状态仅在对应存储图标上图形化显示，不显示底部进度文字；文件管理界面使用顶部存储图标上的 spinner。授权成功后进入对应服务的文件界面，已连接且未过期的服务直接复用当前连接；返回箭头可以重新选择服务。打开入口不会预载 Google SDK，也不会预先禁用 Google Drive 按钮；点击后才依次加载 SDK、发起 Google 登录并读取列表。载入和授权失败统一显示连接错误，再次点击同一服务按钮即重试，没有独立的 SDK 重载按钮或提示区域。同一页面已成功加载的脚本会复用，重试仅重新加载失败的脚本；SDK 已就绪时点击直接发起授权，避免额外异步等待。首次冷加载较慢时浏览器仍可能拦截授权弹窗，请允许本站弹窗后再次点击 Google Drive。未配置服务在点击时显示配置错误，不发起授权或 SDK 请求。
+- 存储说明直接显示在服务选择界面的模态框头部描述中，进入文件管理界面后不再显示，也不保留底部说明区域。打开/保存弹窗采用 520px 最大宽度、16px 内边距（小屏 12px），服务按钮和区块间距紧凑排列，保存文件名标签、输入框和保存按钮位于同一行。文件界面将搜索、刷新、Google 文件选择器和断开连接收于紧凑工具栏；列表区域（包含分页栏）使用固定高度 `min(360px, 40dvh)`，加载、空列表及不同文件数量均保持相同高度。文件在区域内滚动，分页栏固定在底部，不额外显示进度文字。文件类型标签、逐文件删除与分页保持原有行为。
+- 个人存储的配置、SDK 载入、授权、列表、文件选择器、打开、保存和删除错误统一显示在全局 message 中，不在存储弹窗内重复显示；模态框打开时仍可查看和关闭消息。打开和保存流程已报告的错误不会重复弹出，取消覆盖不作为错误提示；失败后保留原来的重试入口。
+- 服务图标本地打包，不在运行时从第三方图床加载。Google Drive™ 使用[官方品牌指南](https://developers.google.com/workspace/drive/api/guides/branding)链接的[产品图标 PNG](https://www.gstatic.com/images/branding/productlogos/drive_2026/v2/web-64dp/logo_drive_2026_color_2x_web_64dp.png)；Dropbox 使用[官方品牌站](https://brand.dropbox.com/logo)提供的 Logos/Dropbox/Glyph/Glyph_128.svg，遵循[开发者品牌规范](https://docs.dropboxapi.com/dropbox-api/docs/developer-resources/branding-guide)。这两份图形保留原始颜色、比例和留白，仅缩放显示；入口按钮的 tooltip 标明打开或保存操作。OneDrive 使用项目原创的蓝色渐变底、白色云朵通用图标，搭配服务名称表示接入，不使用或仿制官方标志；改用 Microsoft 官方产品图标前须确认[相应使用许可](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks)。品牌及商标归各自所有者，不表示官方背书。
+- 云端打开或保存后，“保存 / Ctrl+S”写回该云端文件；“另存为 / Ctrl+Shift+S”仍使用原有本地保存流程。要另存到云端，使用“保存到个人存储”，输入新文件名或选择已有文件。
+- 关联云端保存位置的谱面标签在文件名前显示对应云盘图标；本地文件及刷新后恢复的未关联草稿不显示。图标表示文件保存关联，不表示授权仍有效。云端保存期间（包括首次另存到云端），目标谱面标签显示 spinner，完成、取消或失败后恢复；切换标签不会把保存状态移到其他谱面。
+- 写入成功才更新保存状态；保存期间的新修改继续标记未保存。“保存到个人存储”覆盖已有文件时始终提示目标文件名并要求确认，包含点击列表文件、Google 文件选择器以及输入同名文件保存；取消不会写入或改变保存关联。新建文件无需覆盖确认；普通“保存 / Ctrl+S”仍仅在远端内容与上次保存版本不同时提示。条件写入检测传输期间的版本冲突，不自动重试覆盖。
+- 单份云端谱面最多 **5 MiB（包含 UTF-8 BOM）**，超出请本地保存。三种存储的列表均显示应用可访问的所有类型文件，非 TJA 文件仅供列表查看和删除，不能作为谱面打开或覆盖保存；不提供文件夹导航、文件夹删除或音频匹配。OneDrive / Dropbox 仍限原有应用目录，Google Drive 仍限已授权文件，不扩大账户访问权限；选择器授权非 TJA 文件后会刷新列表，不作为谱面打开。
+- 每个文件旁提供删除按钮，确认提示说明恢复限制。OneDrive 移入回收站，Google Drive 移入垃圾桶，Dropbox 使用普通删除（能否恢复取决于账户保留策略）。删除使用列表中的版本号作为条件，版本变化时拒绝删除，需刷新后再次确认。不会关闭已打开的谱面或清除本地修改；云端文件被删除后，原保存关联可能失效，请另存或重新打开远端文件。删除成功后刷新列表，OneDrive 清除分页缓存并回到当前搜索的第一页；刷新失败会同时显示删除成功提示和刷新错误。
+- 桌面删除图标仅在悬停或键盘焦点进入文件行时显示，保留占位以避免布局跳动；触屏或无 hover 设备改为每行“⋯”菜单，点击后选择删除，触控目标至少 44×44 像素。菜单会在点击外部、焦点离开、滚动或切换文件页时关闭；Esc 先关闭菜单并返回触发按钮，不会直接关闭存储窗口。菜单中的删除仍需确认。
+- 文件列表支持按文件名搜索（不区分大小写），搜索结果每页 **10 个**，使用“上一页 / 下一页”切换。
+- **OneDrive 按需分页**：每次目录请求使用 `$top=10`，过滤文件夹，必要时继续请求以凑满当页 10 个文件，然后暂停；点击下一页才继续读取 `@odata.nextLink`，上一页使用缓存。目录到末尾时可能不足 10 个，不预取下一页，不显示未知的总页数或总文件数。
+- OneDrive 搜索需点击“搜索”或按 Enter：从应用目录第一页起按 10 个目录项一批扫描，找到当前页 10 个匹配文件即暂停；搜索下一页时继续扫描。不递归子目录，不请求文件正文。关键词稀疏或无匹配时，单次搜索可能需要读取整个目录；不会静默改为只搜索已加载文件。刷新会清除分页缓存并重新请求搜索结果第一页；保存时按完整文件名查询远端，避免遗漏未加载页中的同名文件。
+- 其他存储暂时保留完整列表加载和前端分页搜索；更改搜索条件、重新打开对话框或切换存储会回到第一页。
+- 授权令牌和云端写回关联仅在当前页面内存中保留，不写入草稿。刷新后重新连接并打开云端文件；本地草稿不自动绑定到云端。授权过期或断开连接后，原云端文件需重新打开，避免重新授权到另一账户后误写。
+- “断开连接”清除当前页面的连接，不撤销提供商账户中的应用授权；彻底撤销请到网盘的授权应用管理页面操作。
+- HTTPS 静态托管即可，包括 GitHub Pages；仍需网络、允许授权弹窗，以及下面的公开应用配置。**无自建后端不代表零配置或提供商服务免费、在所有地区可用。**
+
+#### 部署配置
+
+本地开发或自行构建时，在仓库根目录的 `.env.local` 设置公开配置后重启 Vite；GitHub Pages 使用仓库或 `github-pages` 环境的 **Actions Variables**，部署工作流会传给构建：
+
+```dotenv
+VITE_ONEDRIVE_CLIENT_ID=Microsoft应用客户端ID
+VITE_GOOGLE_CLIENT_ID=Google网页OAuth客户端ID
+VITE_GOOGLE_API_KEY=受网站和API限制的GooglePicker公开APIKey
+VITE_GOOGLE_APP_ID=GoogleCloud项目编号
+VITE_DROPBOX_CLIENT_ID=Dropbox应用AppKey
+```
+
+这些值会公开在网页构建中。**不要填写应用密钥、访问令牌或刷新令牌。** 未配置的提供商明确显示缺少哪些配置，不影响本地功能和其他提供商。
+
+OneDrive 和 Dropbox 的回调地址是部署目录下的 `storage-callback.html`，不随界面语言变化。例如：
+
+- 生产：`https://ourtaiko.github.io/DonKanvas/storage-callback.html`
+- 本地：`http://127.0.0.1:4173/storage-callback.html`
+
+**OneDrive**
+
+1. 在 Microsoft Entra 注册允许个人 Microsoft 账户的应用；当前使用 `consumers` 授权端点，不支持工作或学校账户及中国区独立云。
+2. 在 **Single-page application（SPA）** 平台注册上述回调地址，使浏览器能使用授权码 + PKCE 换取令牌。不要创建客户端密钥。
+3. 配置 Microsoft Graph 委托权限 `Files.ReadWrite.AppFolder`，填写应用 Client ID。文件存入 OneDrive 应用目录；已有谱面请放入该目录。
+4. 参考：[应用目录](https://learn.microsoft.com/en-us/graph/onedrive-sharepoint-appfolder)、[SPA 授权码流程](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow)。
+
+**Google Drive**
+
+1. 在同一 Google Cloud 项目启用 **Google Drive API 和 Google Picker API**，配置 OAuth 同意屏幕、受众与测试用户。
+2. 创建 **Web application** OAuth 客户端，将网站来源加入 Authorized JavaScript origins，例如 `https://ourtaiko.github.io` 和 `http://127.0.0.1:4173`（不是带目录的页面 URL）。
+3. 创建受限制的 Picker API Key，按官方要求配置网站来源限制（包括 Picker iframe 的 `https://docs.google.com/*`）和 API 限制；填写客户端 ID、API Key、数字项目编号。
+4. 使用 `drive.file` 最小权限：列表只显示应用创建或用户已授权的文件；已有文件通过“选择 Google Drive 文件”授权。新文件存入“我的云端硬盘”。同名文件可能有多个，覆盖时需明确选择。
+5. 使用 Google Identity Services 的浏览器令牌流程，无客户端密钥或后端；仅在用户点击 Google Drive 后载入授权组件并发起登录。内容接口使用仍支持的 Drive v2，以取得文件 ETag 做条件更新；Picker 不受此版本选择影响。
+6. 公开上线前按 Google 要求完成应用发布、品牌或 OAuth 验证；测试模式不是公开可用状态。参考：[浏览器授权](https://developers.google.com/identity/oauth2/web/guides/use-token-model)、[Picker 配置](https://developers.google.com/workspace/drive/picker/guides/web-picker)。
+
+**Dropbox**
+
+1. 在 [App Console](https://www.dropbox.com/developers/apps) 创建 **Scoped access / App folder** 应用。
+2. 启用 `files.metadata.read`、`files.content.read`、`files.content.write`，注册回调地址，填写 **App key**，不填写 App secret。
+3. 使用授权码 + PKCE 获取短期令牌，不申请后台离线访问。访问范围由 Dropbox 应用设置决定；请使用 App folder，避免不必要的全网盘权限。
+4. 开发模式只允许受限数量的关联账户，公开使用前按提供商要求申请生产状态。参考：[OAuth](https://docs.dropboxapi.com/dropbox-api/docs/oauth)。
+
+接口行为由自动化模拟测试覆盖。配置真实应用后还需分别验证授权、已有文件打开、新建与覆盖保存、取消授权、断开重连及跨设备冲突；未提供真实应用配置时不能宣称已完成实账户验收。
 
 ## 支持与限制
 
