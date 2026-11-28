@@ -2804,6 +2804,9 @@ test('global messages replace the fixed playback bar and support multiline anima
   assert.match(messages.styles[0].content, /\.global-message \.message-action\{[^}]*min-height:28px;/);
   assert.doesNotMatch(messages.styles[0].content, /\.message-action\{[^}]*min-height:var\(--message-control-size\)/);
   assert.match(messages.styles[0].content, /@media\(pointer:coarse\)\{[\s\S]*?\.global-message \.message-action::after\{[^}]*position:absolute;[^}]*height:44px;transform:translateY\(-50%\)/);
+  assert.match(messages.styles[0].content, /\.global-message \.message-dismiss\{[^}]*position:relative;/);
+  assert.match(messages.styles[0].content, /@media\(pointer:coarse\)\{[\s\S]*?\.global-message \.message-dismiss::after\{[^}]*position:absolute;[^}]*width:44px;height:44px;transform:translate\(-50%,-50%\)/);
+  assert.doesNotMatch(messages.styles[0].content, /--message-control-size:44px/);
   assert.match(styles, /\.transport\{padding-bottom:calc\(7px \+ env\(safe-area-inset-bottom,0px\)\)\}/);
 });
 

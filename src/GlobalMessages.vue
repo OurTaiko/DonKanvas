@@ -49,11 +49,11 @@ function resumeAfterFocus(event, id) {
 <style scoped>
 .global-messages{position:fixed;left:auto;top:auto;right:0;bottom:env(safe-area-inset-bottom,0px);z-index:1000;display:flex;flex-direction:column;gap:10px;width:min(452px,100vw);max-height:calc(100dvh - 16px);margin:0;padding:16px;border:0;background:transparent;overflow:auto;pointer-events:none}
 .global-messages[popover]:not(:popover-open){display:none}
-.global-message{--message-control-size:28px;display:flex;align-items:flex-start;gap:10px;flex-shrink:0;min-width:0;max-height:min(360px,60dvh);overflow:auto;padding:12px;border:1px solid #b9d2c2;border-radius:8px;background:#edf5ef;color:var(--ink);box-shadow:0 4px 20px #202a2826;pointer-events:auto;font-size:12px;line-height:1.6}
+.global-message{--message-control-size:28px;display:flex;align-items:flex-start;gap:8px;flex-shrink:0;min-width:0;max-height:min(360px,60dvh);overflow:auto;padding:8px 10px;border:1px solid #b9d2c2;border-radius:8px;background:#edf5ef;color:var(--ink);box-shadow:0 4px 20px #202a2826;pointer-events:auto;font-size:12px;line-height:1.6}
 .global-message.error{border-color:#efb9b2;background:#fff0ed;color:#bd352b}
 .global-message>svg{flex-shrink:0;width:18px;height:18px;margin-top:calc((var(--message-control-size) - 18px)/2)}
 .global-message-content{flex:1;min-width:0;padding-block:calc((var(--message-control-size) - 1lh)/2)}.global-message-content p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:inherit;font:inherit}
-.global-message .message-dismiss{flex-shrink:0;width:var(--message-control-size);min-width:var(--message-control-size);height:var(--message-control-size);min-height:var(--message-control-size);padding:5px;border:0;background:transparent;color:inherit}
+.global-message .message-dismiss{position:relative;flex-shrink:0;width:var(--message-control-size);min-width:var(--message-control-size);height:var(--message-control-size);min-height:var(--message-control-size);padding:5px;border:0;background:transparent;color:inherit}
 .global-message .message-dismiss>svg{width:18px;height:18px}
 .global-message .message-action{position:relative;margin-top:6px;min-height:28px;padding:2px 8px;border:1px solid #95b9a9;border-radius:4px;background:transparent;color:var(--green);font:inherit}
 .global-message .message-action>svg{width:14px;height:14px}
@@ -61,6 +61,6 @@ function resumeAfterFocus(event, id) {
 .global-message-enter-from,.global-message-leave-to{opacity:0;transform:translateY(30px)}
 .global-message-leave-active{position:absolute;right:16px;width:calc(100% - 32px)}
 @media(prefers-reduced-motion:reduce){.global-message-move,.global-message-enter-active,.global-message-leave-active{transition:none}}
-/* Expand the touch target without enlarging the visible action button. */
-@media(pointer:coarse){.global-message{--message-control-size:44px}.global-message .message-action::after{content:"";position:absolute;top:50%;left:0;right:0;height:44px;transform:translateY(-50%)}}
+/* Expand touch targets without enlarging the visible controls. */
+@media(pointer:coarse){.global-message .message-dismiss::after{content:"";position:absolute;top:50%;left:50%;width:44px;height:44px;transform:translate(-50%,-50%)}.global-message .message-action::after{content:"";position:absolute;top:50%;left:0;right:0;height:44px;transform:translateY(-50%)}}
 </style>

@@ -817,6 +817,30 @@ test('personal storage components compile, all new messages are translated and t
   assert.equal(messages[0].value.code, 'test');
 });
 
+test('PWA navigation fallback excludes authorization callbacks with query parameters at root and subdirectory deployments', () => {
+  const source = readFileSync(new URL('../vite.config.js', import.meta.url), 'utf8').replace(/^import .*;\r?\n/gm, '').replace('export default ', '');
+  const config = runInNewContext(source, {
+    defineConfig: value => value, vue: () => ({}), VitePWA: value => value, getPageMetadata: () => ({})
+  });
+  const { navigateFallbackDenylist } = config.plugins[2].workbox;
+  const denied = address => {
+    const url = new URL(address, 'https://editor.example');
+    return navigateFallbackDenylist.some(pattern => pattern.test(url.pathname + url.search));
+  };
+  for (const path of [
+    '/storage-callback.html',
+    '/storage-callback.html?code=test-code&state=test-state',
+    '/DonKanvas/storage-callback.html?state=test-state&code=test-code',
+    '/DonKanvas/storage-callback.html?error=access_denied&state=test-state',
+    '/api/files', '/media/audio'
+  ]) assert.equal(denied(path), true, path);
+  for (const path of [
+    '/', '/DonKanvas/', '/DonKanvas/index.en.html?language=en',
+    '/DonKanvas/storage-callback.html.backup?code=test-code',
+    '/DonKanvas/index.html?next=/storage-callback.html'
+  ]) assert.equal(denied(path), false, path);
+});
+
 test('browser OAuth exchanges PKCE codes without secrets and ignores untrusted messages', async () => {
   const originals = new Map(['window', 'location', 'fetch'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   try {
